@@ -3098,7 +3098,7 @@ def run_setup_wizard(args):
                         Colors.MAGENTA,
                     )
                 )
-                print(color(f"│     ⚕ Hermes Setup — {label:<34s} │", Colors.MAGENTA))
+                print(color(f"│   ⚕ Laia Arch Setup — {label:<33s} │", Colors.MAGENTA))
                 print(
                     color(
                         "└─────────────────────────────────────────────────────────┘",
@@ -3134,7 +3134,7 @@ def run_setup_wizard(args):
     )
     print(
         color(
-            "│             ⚕ Hermes Agent Setup Wizard                │", Colors.MAGENTA
+            "│               ⚕ Laia Arch Setup Wizard                 │", Colors.MAGENTA
         )
     )
     print(
@@ -3145,7 +3145,7 @@ def run_setup_wizard(args):
     )
     print(
         color(
-            "│  Let's configure your Hermes Agent installation.       │", Colors.MAGENTA
+            "│  Let's configure your Laia Arch installation.          │", Colors.MAGENTA
         )
     )
     print(

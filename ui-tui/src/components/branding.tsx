@@ -48,12 +48,12 @@ export function Banner({ t }: { t: Theme }) {
       {cols >= (t.bannerLogo ? artWidth(logoLines) : LOGO_WIDTH) ? (
         <ArtLines lines={logoLines} />
       ) : (
-        <Text bold color={t.color.primary}>
-          {t.brand.icon} NOUS HERMES
+        <Text bold color={t.color.gold}>
+          {t.brand.icon} LAIA ARCH
         </Text>
       )}
 
-      <Text color={t.color.muted}>{t.brand.icon} Nous Research · Messenger of the Digital Gods</Text>
+      <Text color={t.color.dim}>{t.brand.icon} Laia Arch · Messenger of the Digital Gods</Text>
     </Box>
   )
 }

@@ -2245,6 +2245,7 @@ def _resolve_delegation_credentials(cfg: dict, parent_agent) -> dict:
     configured_provider = str(cfg.get("provider") or "").strip() or None
     configured_base_url = str(cfg.get("base_url") or "").strip() or None
     configured_api_key = str(cfg.get("api_key") or "").strip() or None
+    configured_api_mode = str(cfg.get("api_mode") or "").strip() or None
 
     if configured_base_url:
         api_key = configured_api_key or os.getenv("OPENAI_API_KEY", "").strip()
@@ -2269,6 +2270,19 @@ def _resolve_delegation_credentials(cfg: dict, parent_agent) -> dict:
         elif "api.kimi.com/coding" in base_lower:
             provider = "custom"
             api_mode = "anthropic_messages"
+        elif configured_api_mode:
+            try:
+                from hermes_cli.runtime_provider import _VALID_API_MODES
+                valid = _VALID_API_MODES
+            except ImportError:
+                valid = {"chat_completions", "codex_responses", "anthropic_messages", "bedrock_converse"}
+            api_mode = configured_api_mode if configured_api_mode in valid else "chat_completions"
+        else:
+            try:
+                from hermes_cli.runtime_provider import _detect_api_mode_for_url
+                api_mode = _detect_api_mode_for_url(configured_base_url) or "chat_completions"
+            except ImportError:
+                api_mode = "chat_completions"
 
         return {
             "model": configured_model,

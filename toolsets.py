@@ -60,6 +60,8 @@ _HERMES_CORE_TOOLS = [
     "send_message",
     # Home Assistant smart home control (gated on HASS_TOKEN via check_fn)
     "ha_list_entities", "ha_get_state", "ha_list_services", "ha_call_service",
+    # Command Center PTY terminal management (workspace-ui multi-agent control)
+    "command_center_list", "command_center_spawn", "command_center_inject", "command_center_kill",
 ]
 
 
@@ -94,6 +96,12 @@ TOOLSETS = {
     "terminal": {
         "description": "Terminal/command execution and process management tools",
         "tools": ["terminal", "process"],
+        "includes": []
+    },
+
+    "command_center": {
+        "description": "Command Center PTY terminal management — spawn, inject, list, and kill agent terminals in the workspace-ui",
+        "tools": ["command_center_list", "command_center_spawn", "command_center_inject", "command_center_kill"],
         "includes": []
     },
     
@@ -319,11 +327,12 @@ TOOLSETS = {
             "cronjob",
             # Home Assistant smart home control (gated on HASS_TOKEN via check_fn)
             "ha_list_entities", "ha_get_state", "ha_list_services", "ha_call_service",
-
+            # Command Center PTY terminal management
+            "command_center_list", "command_center_spawn", "command_center_inject", "command_center_kill",
         ],
         "includes": []
     },
-    
+
     "hermes-cli": {
         "description": "Full interactive CLI toolset - all default tools plus cronjob management",
         "tools": _HERMES_CORE_TOOLS,
