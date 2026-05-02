@@ -1,0 +1,194 @@
+#!/usr/bin/env zsh
+# gsave — guardado guiado de proyectos LAIA en GitHub
+
+YEL='\033[1;33m'; CYN='\033[1;36m'; GRN='\033[1;32m'
+RED='\033[1;31m'; DIM='\033[2m'; RST='\033[0m'; BLD='\033[1m'
+
+header() { echo "\n${YEL}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RST}"; echo "${BLD}  $1${RST}"; echo "${YEL}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RST}" }
+ok()     { echo "${GRN}  ✓ $1${RST}" }
+info()   { echo "${CYN}  → $1${RST}" }
+warn()   { echo "${YEL}  ⚠ $1${RST}" }
+err()    { echo "${RED}  ✕ $1${RST}" }
+ask()    { printf "${BLD}  $1 ${DIM}$2${RST} "; read -r REPLY }
+
+LAIA_INFRA="$HOME/laia-arch"
+WS_UI="$HOME/.hermes/workspace-ui"
+HERMES="$HOME/.hermes/hermes-agent"
+
+# ── Guarda un proyecto individual ────────────────────────────────────────────
+# NOTA: no usar 'path' como nombre de variable — es reservada en zsh ($PATH)
+save_project() {
+  local _name="$1"
+  local _dir="$2"
+  local _remote="$3"
+  local _branch="$4"
+
+  if [[ ! -e "$_dir/.git" ]]; then
+    err "$_name: directorio no encontrado ($_dir)"
+    return 1
+  fi
+
+  local _changed
+  _changed=$(git -C "$_dir" status --short 2>/dev/null)
+
+  if [[ -z "$_changed" ]]; then
+    ok "$_name — sin cambios"
+    return 0
+  fi
+
+  info "Archivos modificados en $_name:"
+  git -C "$_dir" status --short | while read -r line; do
+    echo "     ${DIM}$line${RST}"
+  done
+
+  echo ""
+  ask "Mensaje del commit (Enter = 'actualización'):" ""
+  local _msg="${REPLY:-actualización}"
+
+  ask "¿Confirmar commit en $_name → $_branch? (s/n)" ""
+  [[ "$REPLY" =~ ^[Ss]$ ]] || { info "Saltado."; return 0 }
+
+  git -C "$_dir" add -A
+  git -C "$_dir" commit -m "$_msg" -q
+
+  local _push_out
+  _push_out=$(git -C "$_dir" push "$_remote" "$_branch" 2>&1 | grep -v "failed to get\|failed to store")
+  if [[ $? -eq 0 ]]; then
+    ok "$_name subido a GitHub ✓"
+  else
+    err "$_name: falló el push. Revisa conexión o token."
+    [[ -n "$_push_out" ]] && echo "  ${DIM}$_push_out${RST}"
+    return 1
+  fi
+}
+
+# ── Sincroniza archivos de config importantes a laia-infra ───────────────────
+sync_hermes_config() {
+  local _base="$HOME/.hermes"
+  local _dest="$LAIA_INFRA/hermes-config"
+  mkdir -p "$_dest"
+
+  # Skills: excluir repos git embebidos y cachés
+  rsync -a --delete \
+    --exclude='__pycache__/' --exclude='*.pyc' \
+    --exclude='.hub/' --exclude='.git/' \
+    "$_base/skills/" "$_dest/skills/" 2>/dev/null
+
+  # Memorias
+  rsync -a --delete --exclude='*.lock' \
+    "$_base/memories/" "$_dest/memories/" 2>/dev/null
+
+  # Scripts Python
+  rsync -a --delete \
+    --exclude='__pycache__/' --exclude='*.pyc' \
+    "$_base/scripts/" "$_dest/scripts/" 2>/dev/null
+
+  # Hooks
+  rsync -a --delete \
+    "$_base/hooks/" "$_dest/hooks/" 2>/dev/null || true
+
+  # Scripts del sistema (~/bin)
+  rsync -a --delete \
+    "$HOME/bin/" "$LAIA_INFRA/bin/" 2>/dev/null
+
+  # Archivos sueltos
+  [[ -f "$_base/ai-agents.json" ]] && \
+    cp "$_base/ai-agents.json" "$_dest/ai-agents.json" 2>/dev/null || true
+  [[ -f "$_base/SOUL.md" ]] && \
+    cp "$_base/SOUL.md" "$LAIA_INFRA/SOUL.md" 2>/dev/null || true
+}
+
+# ── Actualiza laia-infra (config + submodulos) ───────────────────────────────
+update_infra() {
+  header "🔗  laia-infra — sincronizando"
+
+  if [[ ! -d "$LAIA_INFRA/.git" ]]; then
+    err "laia-infra no encontrado en $LAIA_INFRA"
+    return 1
+  fi
+
+  # 1. Sincronizar archivos de config
+  sync_hermes_config
+
+  # 2. Actualizar punteros de submodulos al último commit de GitHub
+  git -C "$LAIA_INFRA" submodule update --remote --merge -q 2>&1 \
+    | grep -v "failed to get\|failed to store\|untracked content" || true
+
+  # 3. Comprobar si hay cambios para commitear
+  local _changed
+  _changed=$(git -C "$LAIA_INFRA" status --short 2>/dev/null \
+    | grep -v "workhard")   # ignorar el skill con .git propio
+
+  if [[ -z "$_changed" ]]; then
+    ok "laia-infra ya está al día"
+    return 0
+  fi
+
+  git -C "$LAIA_INFRA" add -A
+  # Asegurar que workhard no se trackea
+  git -C "$LAIA_INFRA" rm --cached hermes-config/skills/openclaw-imports/workhard -r -q 2>/dev/null || true
+  git -C "$LAIA_INFRA" commit -m "chore: sync config + submodules" -q
+
+  git -C "$LAIA_INFRA" push origin main -q 2>&1 \
+    | grep -v "failed to get\|failed to store" || true
+  ok "laia-infra actualizado en GitHub ✓"
+}
+
+# ── Estado rápido ─────────────────────────────────────────────────────────────
+_status_line() {
+  local _name="$1" _dir="$2"
+  local _n
+  _n=$(git -C "$_dir" status --short 2>/dev/null | wc -l | tr -d ' ')
+  if [[ "$_n" -gt 0 ]]; then
+    echo "  ${YEL}●${RST} ${BLD}$_name${RST} ${DIM}($_n cambios pendientes)${RST}"
+  else
+    echo "  ${GRN}●${RST} ${BLD}$_name${RST} ${DIM}(al día)${RST}"
+  fi
+}
+
+# ── Menú ─────────────────────────────────────────────────────────────────────
+clear
+echo ""
+echo "${YEL}  ██████╗ ███████╗ █████╗ ██╗   ██╗███████╗${RST}"
+echo "${YEL}  ██╔════╝██╔════╝██╔══██╗██║   ██║██╔════╝${RST}"
+echo "${YEL}  ██║  ███╗███████╗███████║██║   ██║█████╗  ${RST}"
+echo "${YEL}  ██║   ██║╚════██║██╔══██║╚██╗ ██╔╝██╔══╝  ${RST}"
+echo "${YEL}  ╚██████╔╝███████║██║  ██║ ╚████╔╝ ███████╗${RST}"
+echo "${YEL}   ╚═════╝ ╚══════╝╚═╝  ╚═╝  ╚═══╝  ╚══════╝${RST}"
+echo ""
+echo "${DIM}  Guardado guiado · github.com/JorgeMP-3${RST}"
+echo ""
+
+_status_line "workspace-ui" "$WS_UI"
+_status_line "hermes-agent" "$HERMES"
+_status_line "laia-infra"   "$LAIA_INFRA"
+
+echo ""
+echo "  ${BLD}1)${RST}  workspace-ui     ${DIM}(app web LAIA)${RST}"
+echo "  ${BLD}2)${RST}  hermes-agent     ${DIM}(agente + CLI)${RST}"
+echo "  ${BLD}3)${RST}  Todo             ${DIM}(los dos + actualiza laia-infra)${RST}"
+echo "  ${BLD}q)${RST}  Salir"
+echo ""
+ask "Elige una opción:" ""
+
+case "$REPLY" in
+  1)
+    save_project "workspace-ui" "$WS_UI" "origin" "master"
+    update_infra
+    ;;
+  2)
+    save_project "hermes-agent" "$HERMES" "origin" "local-customizations"
+    update_infra
+    ;;
+  3)
+    save_project "workspace-ui" "$WS_UI" "origin" "master"
+    save_project "hermes-agent" "$HERMES" "origin" "local-customizations"
+    update_infra
+    ;;
+  q|Q)
+    echo ""; info "Hasta luego." ;;
+  *)
+    err "Opción no válida." ;;
+esac
+
+echo ""

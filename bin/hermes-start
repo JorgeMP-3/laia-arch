@@ -1,0 +1,30 @@
+#!/bin/bash
+set -euo pipefail
+
+HERMES="$HOME/.hermes"
+VENV="$HERMES/hermes-agent/venv"
+UI="$HERMES/workspace-ui"
+LOG_DIR="$HERMES/logs"
+
+mkdir -p "$LOG_DIR"
+
+if [ ! -f "$VENV/bin/activate" ]; then
+    echo "ERROR: venv no encontrado en $VENV" >&2
+    exit 1
+fi
+
+# Workspace UI backend en background
+if ! lsof -ti:8077 >/dev/null 2>&1; then
+    echo "→ Arrancando workspace-ui en http://localhost:8077 ..."
+    cd "$UI/backend"
+    "$VENV/bin/uvicorn" main:app --host 0.0.0.0 --port 8077 \
+        > "$LOG_DIR/workspace-ui.log" 2>&1 &
+    echo "  PID $! (log: $LOG_DIR/workspace-ui.log)"
+else
+    echo "→ workspace-ui ya escucha en :8077"
+fi
+
+# Hermes en primer plano
+echo "→ Arrancando hermes..."
+source "$VENV/bin/activate"
+exec hermes "$@"

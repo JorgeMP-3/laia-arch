@@ -2065,12 +2065,42 @@ def resolve_provider_client(
     # ── Custom endpoint (OPENAI_BASE_URL + OPENAI_API_KEY) ───────────
     if provider == "custom":
         if explicit_base_url:
-            custom_base = _to_openai_base_url(explicit_base_url).strip()
             custom_key = (
                 (explicit_api_key or "").strip()
                 or os.getenv("OPENAI_API_KEY", "").strip()
                 or "no-key-required"  # local servers don't need auth
             )
+            # For Anthropic-messages endpoints (e.g. MiniMax /anthropic),
+            # do NOT rewrite the URL — the /v1 conversion would turn
+            # https://host/anthropic → https://host/v1, and the Anthropic
+            # client would then call https://host/v1/messages (404).
+            if api_mode == "anthropic_messages":
+                raw_base = explicit_base_url.strip().rstrip("/")
+                if not raw_base:
+                    logger.warning(
+                        "resolve_provider_client: explicit custom endpoint requested "
+                        "but base_url is empty"
+                    )
+                    return None, None
+                final_model = _normalize_resolved_model(
+                    model or (main_runtime.get("model") if main_runtime else None) or "gpt-4o-mini",
+                    provider,
+                )
+                try:
+                    from agent.anthropic_adapter import build_anthropic_client
+                    real_client = build_anthropic_client(custom_key, raw_base)
+                except ImportError:
+                    logger.warning(
+                        "Custom endpoint declares api_mode=anthropic_messages but the "
+                        "anthropic SDK is not installed — falling back to OpenAI-wire."
+                    )
+                    real_client = OpenAI(api_key=custom_key, base_url=raw_base)
+                    return (_to_async_client(real_client, final_model, is_vision=is_vision) if async_mode
+                            else (real_client, final_model))
+                wrapped = AnthropicAuxiliaryClient(real_client, final_model, custom_key, raw_base, is_oauth=False)
+                return (_to_async_client(wrapped, final_model, is_vision=is_vision) if async_mode
+                        else (wrapped, final_model))
+            custom_base = _to_openai_base_url(explicit_base_url).strip()
             if not custom_base:
                 logger.warning(
                     "resolve_provider_client: explicit custom endpoint requested "

@@ -1,0 +1,94 @@
+# ─────────────────────────────────────────────
+#  LAIA Arch — Starship prompt
+#  Colores: amber (#ffc45a) · cyan · verde · rojo
+# ─────────────────────────────────────────────
+
+format = """
+[╭─](bold color_amber)[ ⚕ ](bold color_amber)$directory$git_branch$git_status$python$nodejs$docker_context$cmd_duration
+[╰─](bold color_amber)$character"""
+
+palette = "laia"
+
+[palettes.laia]
+color_amber  = "#ffc45a"
+color_cyan   = "#38bdf8"
+color_green  = "#4ade80"
+color_red    = "#f87171"
+color_dim    = "#6b7280"
+color_white  = "#e5e7eb"
+
+# ── Carácter de entrada ───────────────────────
+[character]
+success_symbol = "[❯](bold color_amber)"
+error_symbol   = "[❯](bold color_red)"
+vimcmd_symbol  = "[❮](bold color_cyan)"
+
+# ── Directorio ───────────────────────────────
+[directory]
+style            = "bold color_cyan"
+read_only        = " 󰌾"
+read_only_style  = "color_red"
+truncation_length = 3
+truncate_to_repo  = true
+format           = "[$path]($style)[$read_only]($read_only_style) "
+
+# ── Git ──────────────────────────────────────
+[git_branch]
+symbol = " "
+style  = "bold color_amber"
+format = "on [$symbol$branch(:$remote_branch)]($style) "
+
+[git_status]
+style     = "color_red"
+format    = "([$all_status$ahead_behind]($style) )"
+modified  = "✎$count"
+untracked = "?$count"
+staged    = "+$count"
+deleted   = "✗$count"
+ahead     = "⇡$count"
+behind    = "⇣$count"
+diverged  = "⇕⇡$ahead_count⇣$behind_count"
+conflicted = "=$count"
+
+# ── Python ───────────────────────────────────
+[python]
+symbol = " "
+style  = "bold color_green"
+format = "via [$symbol$version( \\($virtualenv\\))]($style) "
+detect_files = ["*.py", "requirements.txt", "pyproject.toml", "setup.py"]
+
+# ── Node.js ──────────────────────────────────
+[nodejs]
+symbol = " "
+style  = "bold color_green"
+format = "via [$symbol$version]($style) "
+detect_files = ["package.json", ".nvmrc"]
+
+# ── Docker ───────────────────────────────────
+[docker_context]
+symbol = " "
+style  = "color_cyan"
+format = "via [$symbol$context]($style) "
+only_with_files = true
+
+# ── Duración del comando ─────────────────────
+[cmd_duration]
+min_time  = 2_000
+style     = "color_dim"
+format    = "took [$duration]($style) "
+
+# ── Hora (desactivada por defecto) ───────────
+[time]
+disabled = true
+format   = "[$time]($style) "
+style    = "color_dim"
+
+# ── Módulos desactivados (limpieza) ──────────
+[package]
+disabled = true
+
+[username]
+disabled = true
+
+[hostname]
+disabled = true

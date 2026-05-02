@@ -37,8 +37,9 @@ from typing import Any
 
 
 DEFAULT_TUI_DIR = Path(os.environ.get("HERMES_TUI_DIR", "/home/bb/hermes-agent/ui-tui"))
-DEFAULT_LOG = Path(os.environ.get("HERMES_PERF_LOG", str(Path.home() / ".hermes" / "perf.log")))
-DEFAULT_STATE_DB = Path.home() / ".hermes" / "state.db"
+_hermes_home = Path(os.environ.get("HERMES_HOME", str(Path.home() / ".hermes")))
+DEFAULT_LOG = Path(os.environ.get("HERMES_PERF_LOG", str(_hermes_home / "perf.log")))
+DEFAULT_STATE_DB = _hermes_home / "state.db"
 
 # Keystroke escape sequences.  Matches what xterm/VT220 send when the
 # terminal has bracketed-paste disabled and the key-repeat handler fires.
