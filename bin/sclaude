@@ -1,15 +1,15 @@
 #!/bin/bash
 # sclaude — ejecuta Claude Code dentro del contenedor claude-secondary
 # Abre Claude en el mismo directorio del host, mapeado a Docker.
-# Las sesiones se guardan en /home/claude/.hermes/.claude (montado persistente).
+# Las sesiones se guardan en /home/claude/LAIA/.claude (montado persistente).
 
 set -euo pipefail
 
 HOST_PWD="$(pwd -P)"
 CONTAINER_PWD="$HOST_PWD"
 
-if [[ "$HOST_PWD" == "$HOME/.hermes"* ]]; then
-    CONTAINER_PWD="/home/claude/.hermes${HOST_PWD#$HOME/.hermes}"
+if [[ "$HOST_PWD" == "$HOME/LAIA"* ]]; then
+    CONTAINER_PWD="/home/claude/LAIA${HOST_PWD#$HOME/LAIA}"
 elif [[ "$HOST_PWD" == "$HOME"* ]]; then
     CONTAINER_PWD="/home/claude/host_home${HOST_PWD#$HOME}"
 else
@@ -20,10 +20,10 @@ fi
 # Crear ~/.claude como symlink al directorio persistente en .hermes
 # Así las sesiones survive reinicios del contenedor
 docker exec claude-secondary bash -c '
-    mkdir -p /home/claude/.hermes/.claude
+    mkdir -p /home/claude/LAIA/.claude
     if [ ! -L /home/claude/.claude ]; then
         rm -rf /home/claude/.claude 2>/dev/null || true
-        ln -sf /home/claude/.hermes/.claude /home/claude/.claude
+        ln -sf /home/claude/LAIA/.claude /home/claude/.claude
     fi
 '
 

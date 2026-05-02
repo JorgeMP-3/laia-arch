@@ -11,9 +11,10 @@ warn()   { echo "${YEL}  ⚠ $1${RST}" }
 err()    { echo "${RED}  ✕ $1${RST}" }
 ask()    { printf "${BLD}  $1 ${DIM}$2${RST} "; read -r REPLY }
 
-LAIA_INFRA="$HOME/laia-arch"
-WS_UI="$HOME/.hermes/workspace-ui"
-HERMES="$HOME/.hermes/hermes-agent"
+LAIA_CODE="$HOME/LAIA/.laia-arch"
+LAIA_PRIVATE="$HOME/LAIA"
+WS_UI="$LAIA_CODE/workspace-ui"
+HERMES="$LAIA_CODE"
 
 # ── Guarda un proyecto individual ────────────────────────────────────────────
 # NOTA: no usar 'path' como nombre de variable — es reservada en zsh ($PATH)
@@ -63,75 +64,47 @@ save_project() {
 }
 
 # ── Sincroniza archivos de config importantes a laia-infra ───────────────────
-sync_hermes_config() {
-  local _base="$HOME/.hermes"
-  local _dest="$LAIA_INFRA/hermes-config"
-  mkdir -p "$_dest"
+sync_laia_config() {
+  local _base="$LAIA_PRIVATE"
 
-  # Skills: excluir repos git embebidos y cachés
-  rsync -a --delete \
-    --exclude='__pycache__/' --exclude='*.pyc' \
-    --exclude='.hub/' --exclude='.git/' \
-    "$_base/skills/" "$_dest/skills/" 2>/dev/null
-
-  # Memorias
+  # Memorias → laia-private
   rsync -a --delete --exclude='*.lock' \
-    "$_base/memories/" "$_dest/memories/" 2>/dev/null
+    "$HOME/LAIA/memories/" "$_base/memories/" 2>/dev/null
 
-  # Scripts Python
+  # Scripts del sistema (~/bin) → .laia-arch/bin
   rsync -a --delete \
-    --exclude='__pycache__/' --exclude='*.pyc' \
-    "$_base/scripts/" "$_dest/scripts/" 2>/dev/null
+    "$HOME/bin/" "$LAIA_CODE/bin/" 2>/dev/null
 
-  # Hooks
-  rsync -a --delete \
-    "$_base/hooks/" "$_dest/hooks/" 2>/dev/null || true
-
-  # Scripts del sistema (~/bin)
-  rsync -a --delete \
-    "$HOME/bin/" "$LAIA_INFRA/bin/" 2>/dev/null
-
-  # Archivos sueltos
-  [[ -f "$_base/ai-agents.json" ]] && \
-    cp "$_base/ai-agents.json" "$_dest/ai-agents.json" 2>/dev/null || true
-  [[ -f "$_base/SOUL.md" ]] && \
-    cp "$_base/SOUL.md" "$LAIA_INFRA/SOUL.md" 2>/dev/null || true
+  # Archivos sueltos config
+  [[ -f "$HOME/LAIA/config/ai-agents.json" ]] && \
+    cp "$HOME/LAIA/ai-agents.json" "$_base/config/ai-agents.json" 2>/dev/null || true
 }
 
-# ── Actualiza laia-infra (config + submodulos) ───────────────────────────────
-update_infra() {
-  header "🔗  laia-infra — sincronizando"
+# ── Actualiza laia-private (datos personales) ────────────────────────────────
+update_private() {
+  header "🔒  laia-private — sincronizando"
 
-  if [[ ! -d "$LAIA_INFRA/.git" ]]; then
-    err "laia-infra no encontrado en $LAIA_INFRA"
+  if [[ ! -d "$LAIA_PRIVATE/.git" ]]; then
+    err "laia-private no encontrado en $LAIA_PRIVATE"
     return 1
   fi
 
-  # 1. Sincronizar archivos de config
-  sync_hermes_config
+  sync_laia_config
 
-  # 2. Actualizar punteros de submodulos al último commit de GitHub
-  git -C "$LAIA_INFRA" submodule update --remote --merge -q 2>&1 \
-    | grep -v "failed to get\|failed to store\|untracked content" || true
-
-  # 3. Comprobar si hay cambios para commitear
   local _changed
-  _changed=$(git -C "$LAIA_INFRA" status --short 2>/dev/null \
-    | grep -v "workhard")   # ignorar el skill con .git propio
+  _changed=$(git -C "$LAIA_PRIVATE" status --short 2>/dev/null)
 
   if [[ -z "$_changed" ]]; then
-    ok "laia-infra ya está al día"
+    ok "laia-private ya está al día"
     return 0
   fi
 
-  git -C "$LAIA_INFRA" add -A
-  # Asegurar que workhard no se trackea
-  git -C "$LAIA_INFRA" rm --cached hermes-config/skills/openclaw-imports/workhard -r -q 2>/dev/null || true
-  git -C "$LAIA_INFRA" commit -m "chore: sync config + submodules" -q
+  git -C "$LAIA_PRIVATE" add -A
+  git -C "$LAIA_PRIVATE" commit -m "chore: sync personal data" -q
 
-  git -C "$LAIA_INFRA" push origin main -q 2>&1 \
+  git -C "$LAIA_PRIVATE" push origin main -q 2>&1 \
     | grep -v "failed to get\|failed to store" || true
-  ok "laia-infra actualizado en GitHub ✓"
+  ok "laia-private actualizado en GitHub ✓"
 }
 
 # ── Estado rápido ─────────────────────────────────────────────────────────────
@@ -159,31 +132,28 @@ echo ""
 echo "${DIM}  Guardado guiado · github.com/JorgeMP-3${RST}"
 echo ""
 
-_status_line "workspace-ui" "$WS_UI"
-_status_line "hermes-agent" "$HERMES"
-_status_line "laia-infra"   "$LAIA_INFRA"
+_status_line "laia-arch (código)"   "$HERMES"
+_status_line "workspace-ui"         "$WS_UI"
+_status_line "LAIA (personal)"      "$LAIA_PRIVATE"
 
 echo ""
-echo "  ${BLD}1)${RST}  workspace-ui     ${DIM}(app web LAIA)${RST}"
-echo "  ${BLD}2)${RST}  hermes-agent     ${DIM}(agente + CLI)${RST}"
-echo "  ${BLD}3)${RST}  Todo             ${DIM}(los dos + actualiza laia-infra)${RST}"
+echo "  ${BLD}1)${RST}  laia-arch        ${DIM}(código, hermes + workspace-ui)${RST}"
+echo "  ${BLD}2)${RST}  LAIA personal    ${DIM}(memorias, docs, config)${RST}"
+echo "  ${BLD}3)${RST}  Todo             ${DIM}(los dos repos)${RST}"
 echo "  ${BLD}q)${RST}  Salir"
 echo ""
 ask "Elige una opción:" ""
 
 case "$REPLY" in
   1)
-    save_project "workspace-ui" "$WS_UI" "origin" "master"
-    update_infra
+    save_project "laia-arch" "$HERMES" "origin" "local-customizations"
     ;;
   2)
-    save_project "hermes-agent" "$HERMES" "origin" "local-customizations"
-    update_infra
+    update_private
     ;;
   3)
-    save_project "workspace-ui" "$WS_UI" "origin" "master"
-    save_project "hermes-agent" "$HERMES" "origin" "local-customizations"
-    update_infra
+    save_project "laia-arch" "$HERMES" "origin" "local-customizations"
+    update_private
     ;;
   q|Q)
     echo ""; info "Hasta luego." ;;

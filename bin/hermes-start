@@ -1,10 +1,10 @@
 #!/bin/bash
 set -euo pipefail
 
-HERMES="$HOME/.hermes"
-VENV="$HERMES/hermes-agent/venv"
-UI="$HERMES/workspace-ui"
-LOG_DIR="$HERMES/logs"
+HERMES_HOME="${HERMES_HOME:-$HOME/LAIA}"
+VENV="$HOME/LAIA/.laia-arch/venv"
+UI="$HOME/LAIA/.laia-arch/workspace-ui"
+LOG_DIR="$HERMES_HOME/logs"
 
 mkdir -p "$LOG_DIR"
 
