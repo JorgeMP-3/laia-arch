@@ -293,3 +293,62 @@ registry.register(
     handler=_handle_kill,
     emoji="🗑️",
 )
+
+
+# ---------------------------------------------------------------------------
+# command_center_read
+# ---------------------------------------------------------------------------
+
+def _handle_read(args, **_kw):
+    terminal_id = args.get("terminal_id", "").strip()
+    tail_bytes = int(args.get("tail_bytes", 8192))
+    if not terminal_id:
+        return tool_error("terminal_id is required")
+    try:
+        resp = _req("GET", f"/terminals/{terminal_id}/output?tail_bytes={tail_bytes}")
+        output = resp.get("output", "")
+        lines = output.splitlines()
+        # Return last 120 lines to keep context manageable
+        visible = "\n".join(lines[-120:]) if len(lines) > 120 else output
+        return tool_result(
+            terminal_id=terminal_id,
+            agent_type=resp.get("agent_type"),
+            alive=resp.get("alive"),
+            output=visible,
+            total_lines=len(lines),
+            message=f"Output of terminal {terminal_id[:8]} ({resp.get('agent_type')}):",
+        )
+    except RuntimeError as e:
+        return tool_error(str(e))
+
+
+registry.register(
+    name="command_center_read",
+    toolset="command_center",
+    schema={
+        "name": "command_center_read",
+        "description": (
+            "Read the recent output of a PTY terminal in the Command Center UI. "
+            "Returns the last N bytes of terminal output as clean text (ANSI stripped). "
+            "Use this to check what a sub-agent is doing, whether it finished, or if it's stuck. "
+            "Call command_center_list first to get the terminal id."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "terminal_id": {
+                    "type": "string",
+                    "description": "Full terminal UUID returned by command_center_spawn or command_center_list.",
+                },
+                "tail_bytes": {
+                    "type": "integer",
+                    "description": "How many bytes of recent output to return (default: 8192, max: 65536).",
+                    "default": 8192,
+                },
+            },
+            "required": ["terminal_id"],
+        },
+    },
+    handler=_handle_read,
+    emoji="👁️",
+)

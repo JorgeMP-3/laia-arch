@@ -73,6 +73,7 @@ from tools.tool_backend_helpers import (
     managed_nous_tools_enabled,
     resolve_modal_backend_state,
 )
+from tools.workspace_edit_guard import block_terminal_if_readonly
 
 
 def _safe_parse_import_env(
@@ -864,6 +865,7 @@ Do NOT use ls to list directories — use search_files(target='files') instead.
 Do NOT use sed/awk to edit files — use patch instead.
 Do NOT use echo/cat heredoc to create files — use write_file instead.
 Reserve terminal for: builds, installs, git, processes, scripts, network, package managers, and anything that needs a shell.
+Workspace edit policy: before modifying workspace files or databases, use workspace_list_workspaces and only edit active_workspaces. Read-only workspaces may be searched/read, but must not be modified through terminal, Python/sqlite, shell redirection, migrations, sync scripts, write_file, or patch.
 
 Foreground (default): Commands return INSTANTLY when done, even if the timeout is high. Set timeout=300 for long builds/scripts — you'll still get the result in seconds if it's fast. Prefer foreground for short commands.
 Background: Set background=true to get a session_id. Two patterns:
@@ -1673,6 +1675,10 @@ def terminal_tool(
         cwd = overrides.get("cwd") or config["cwd"]
         default_timeout = config["timeout"]
         effective_timeout = timeout or default_timeout
+
+        workspace_guard = block_terminal_if_readonly(command, workdir=workdir or cwd)
+        if workspace_guard:
+            return workspace_guard
 
         # Reject foreground commands where the model explicitly requests
         # a timeout above FOREGROUND_MAX_TIMEOUT — nudge it toward background.

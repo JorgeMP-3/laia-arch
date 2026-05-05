@@ -1550,6 +1550,14 @@ def _make_agent(sid: str, key: str, session_id: str | None = None):
 
     cfg = _load_cfg()
     system_prompt = ((cfg.get("agent") or {}).get("system_prompt", "") or "").strip()
+
+    # Prepend app_context stored at session.create time so tool-specific context
+    # lives in the system prompt (persistent across all turns) rather than as a
+    # one-off user message that the workspace-context plugin can override.
+    app_context = str((_sessions.get(sid) or {}).get("app_context", "") or "").strip()
+    if app_context:
+        system_prompt = f"{app_context}\n\n---\n\n{system_prompt}" if system_prompt else app_context
+
     model, requested_provider = _resolve_startup_runtime()
     runtime = resolve_runtime_provider(
         requested=requested_provider,
@@ -1578,9 +1586,11 @@ def _make_agent(sid: str, key: str, session_id: str | None = None):
 
 
 def _init_session(sid: str, key: str, agent, history: list, cols: int = 80):
+    existing = _sessions.get(sid) or {}
     _sessions[sid] = {
         "agent": agent,
         "session_key": key,
+        "app_context": str(existing.get("app_context", "") or ""),
         "history": history,
         "history_lock": threading.Lock(),
         "history_version": 0,
@@ -1718,6 +1728,7 @@ def _(rid, params: dict) -> dict:
     sid = uuid.uuid4().hex[:8]
     key = _new_session_key()
     cols = int(params.get("cols", 80))
+    app_context = str(params.get("app_context", "") or "").strip()
     _enable_gateway_prompts()
 
     ready = threading.Event()
@@ -1726,6 +1737,7 @@ def _(rid, params: dict) -> dict:
         "agent": None,
         "agent_error": None,
         "agent_ready": ready,
+        "app_context": app_context,
         "attached_images": [],
         "cols": cols,
         "edit_snapshots": {},
@@ -1877,6 +1889,7 @@ def _(rid, params: dict) -> dict:
         else:
             return _err(rid, 4007, "session not found")
     sid = uuid.uuid4().hex[:8]
+    app_context = str(params.get("app_context", "") or "").strip()
     _enable_gateway_prompts()
     try:
         db.reopen_session(target)
@@ -1887,6 +1900,8 @@ def _(rid, params: dict) -> dict:
         messages = _history_to_messages(display_history)
         tokens = _set_session_context(target)
         try:
+            if app_context:
+                _sessions[sid] = {"app_context": app_context}
             agent = _make_agent(sid, target, session_id=target)
         finally:
             _clear_session_context(tokens)
@@ -2446,6 +2461,9 @@ def _(rid, params: dict) -> dict:
 @method("prompt.submit")
 def _(rid, params: dict) -> dict:
     sid, text = params.get("session_id", ""), params.get("text", "")
+    persist_user_message = params.get("persist_user_message")
+    if not isinstance(persist_user_message, str):
+        persist_user_message = None
     session, err = _sess_nowait(params, rid)
     if err:
         return err
@@ -2463,13 +2481,30 @@ def _(rid, params: dict) -> dict:
             with session["history_lock"]:
                 session["running"] = False
             return
-        _run_prompt_submit(rid, sid, session, text)
+        _run_prompt_submit(rid, sid, session, text, persist_user_message)
 
     threading.Thread(target=run_after_agent_ready, daemon=True).start()
     return _ok(rid, {"status": "streaming"})
 
 
-def _run_prompt_submit(rid, sid: str, session: dict, text: Any) -> None:
+@method("prompt.btw")
+def _(rid, params: dict) -> dict:
+    params = dict(params or {})
+    text = str(params.get("text", "") or "").strip()
+    if text:
+        if not isinstance(params.get("persist_user_message"), str):
+            params["persist_user_message"] = f"(btw) {text}"
+        params["text"] = f"(btw) {text}"
+    return _methods["prompt.submit"](rid, params)
+
+
+def _run_prompt_submit(
+    rid,
+    sid: str,
+    session: dict,
+    text: Any,
+    persist_user_message: str | None = None,
+) -> None:
     with session["history_lock"]:
         history = list(session["history"])
         history_version = int(session.get("history_version", 0))
@@ -2586,6 +2621,7 @@ def _run_prompt_submit(rid, sid: str, session: dict, text: Any) -> None:
                 run_message,
                 conversation_history=list(history),
                 stream_callback=_stream,
+                persist_user_message=persist_user_message,
             )
 
             last_reasoning = None

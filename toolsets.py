@@ -61,7 +61,7 @@ _HERMES_CORE_TOOLS = [
     # Home Assistant smart home control (gated on HASS_TOKEN via check_fn)
     "ha_list_entities", "ha_get_state", "ha_list_services", "ha_call_service",
     # Command Center PTY terminal management (workspace-ui multi-agent control)
-    "command_center_list", "command_center_spawn", "command_center_inject", "command_center_kill",
+    "command_center_list", "command_center_spawn", "command_center_inject", "command_center_read", "command_center_kill",
 ]
 
 
@@ -100,8 +100,8 @@ TOOLSETS = {
     },
 
     "command_center": {
-        "description": "Command Center PTY terminal management — spawn, inject, list, and kill agent terminals in the workspace-ui",
-        "tools": ["command_center_list", "command_center_spawn", "command_center_inject", "command_center_kill"],
+        "description": "Command Center PTY terminal management — spawn, inject, read, list, and kill agent terminals in the workspace-ui",
+        "tools": ["command_center_list", "command_center_spawn", "command_center_inject", "command_center_read", "command_center_kill"],
         "includes": []
     },
     
@@ -328,7 +328,7 @@ TOOLSETS = {
             # Home Assistant smart home control (gated on HASS_TOKEN via check_fn)
             "ha_list_entities", "ha_get_state", "ha_list_services", "ha_call_service",
             # Command Center PTY terminal management
-            "command_center_list", "command_center_spawn", "command_center_inject", "command_center_kill",
+            "command_center_list", "command_center_spawn", "command_center_inject", "command_center_read", "command_center_kill",
         ],
         "includes": []
     },

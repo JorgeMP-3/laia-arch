@@ -1,0 +1,15 @@
+#!/bin/bash
+# LAIA Server Control Panel Launcher
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
+
+export PATH="$HOME/.nvm/nvm.sh:$PATH"
+
+if [ -t 0 ]; then
+    python3 "$SCRIPT_DIR/launcher.py"
+else
+    echo "Error: This script must be run in a terminal (not via cron or ssh without -t)"
+    echo "Usage: ./serverpanel"
+    exit 1
+fi
