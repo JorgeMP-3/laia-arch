@@ -369,12 +369,35 @@ mkdir -p "$RUNTIME_DIR/memories" "$RUNTIME_DIR/skills" "$RUNTIME_DIR/sessions" "
 # ══════════════════════════════════════════════════════════════════════════════
 step "7  Scripts del sistema"
 
+mkdir -p "$BIN_DIR"
+
+# Copiar scripts del repo (sin symlinks rotos)
 if [[ -d "$CODE_DIR/bin" ]]; then
-  mkdir -p "$BIN_DIR"
-  rsync -a --delete "$CODE_DIR/bin/" "$BIN_DIR/"
+  for script in "$CODE_DIR/bin/"*; do
+    [[ -f "$script" && ! -L "$script" ]] || continue
+    cp -f "$script" "$BIN_DIR/"
+  done
   chmod +x "$BIN_DIR/"* 2>/dev/null || true
-  ok "Scripts en ~/bin/"
+  ok "Scripts del repo copiados a ~/bin/"
 fi
+
+# Wrappers para binarios del venv (rutas dinámicas, no hardcodeadas)
+_create_wrapper() {
+  local name="$1"
+  local target="$2"
+  cat > "$BIN_DIR/$name" <<EOF
+#!/usr/bin/env bash
+# Wrapper generado por install-laia — apunta al venv actual
+exec "$target" "\$@"
+EOF
+  chmod +x "$BIN_DIR/$name"
+}
+
+[[ -x "$VENV/bin/hermes" ]] && { _create_wrapper "hermes" "$VENV/bin/hermes"; ok "Wrapper hermes → venv"; }
+[[ -x "$VENV/bin/uvicorn" ]] && { _create_wrapper "uvicorn" "$VENV/bin/uvicorn"; ok "Wrapper uvicorn → venv"; }
+
+# Alias laia-arch → hermes
+[[ -x "$BIN_DIR/hermes" ]] && { ln -sf "$BIN_DIR/hermes" "$BIN_DIR/laia-arch" 2>/dev/null || true; }
 
 # ══════════════════════════════════════════════════════════════════════════════
 # PASO 8 — Variables de entorno
