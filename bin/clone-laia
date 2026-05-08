@@ -179,10 +179,19 @@ if [[ "$OPT_DEPS" == true && "$OS" == "linux" && "$DISTRO" == "debian" ]]; then
   PKGS=()
   command -v git     &>/dev/null || PKGS+=("git")
   command -v python3 &>/dev/null || PKGS+=("python3")
-  python3 -m venv --help &>/dev/null 2>&1 || PKGS+=("python3-venv" "python3-pip")
   command -v curl    &>/dev/null || PKGS+=("curl")
   command -v rsync   &>/dev/null || PKGS+=("rsync")
   command -v sudo    &>/dev/null || warn "sudo no encontrado — algunos pasos pueden fallar"
+
+  # python3-venv: necesitamos el paquete específico de la versión (ej. python3.14-venv)
+  if ! python3 -m venv --help &>/dev/null 2>&1; then
+    PY_VER=$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")' 2>/dev/null || echo "")
+    if [[ -n "$PY_VER" ]]; then
+      PKGS+=("python${PY_VER}-venv" "python3-pip")
+    else
+      PKGS+=("python3-venv" "python3-pip")
+    fi
+  fi
 
   if [[ ${#PKGS[@]} -gt 0 ]]; then
     warn "Faltan paquetes: ${PKGS[*]}"
@@ -303,7 +312,10 @@ step "4  Entorno Python"
 
 if [[ ! -d "$VENV/bin" ]]; then
   info "Creando venv en $VENV ..."
-  python3 -m venv "$VENV" || err "No se pudo crear el entorno virtual"
+  if ! python3 -m venv "$VENV" 2>/dev/null; then
+    PY_VER=$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")' 2>/dev/null || echo "3")
+    err "No se pudo crear el entorno virtual.\n  Asegúrate de que el paquete 'python${PY_VER}-venv' está instalado:\n    sudo apt-get install -y python${PY_VER}-venv python3-pip"
+  fi
   register_rollback "rm -rf '$VENV'"
 fi
 
