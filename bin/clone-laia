@@ -310,7 +310,12 @@ fi
 # ══════════════════════════════════════════════════════════════════════════════
 step "4  Entorno Python"
 
-if [[ ! -d "$VENV/bin" ]]; then
+if [[ ! -x "$VENV/bin/pip" ]]; then
+  # Si existe pero está roto (sin pip), eliminar primero
+  if [[ -d "$VENV" ]]; then
+    warn "Venv existente incompleto — recreando..."
+    rm -rf "$VENV"
+  fi
   info "Creando venv en $VENV ..."
   if ! python3 -m venv "$VENV" 2>/dev/null; then
     PY_VER=$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")' 2>/dev/null || echo "3")
