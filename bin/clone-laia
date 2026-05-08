@@ -25,7 +25,7 @@
 set -euo pipefail
 
 # ── Metadata ─────────────────────────────────────────────────────────────────
-readonly INSTALLER_VERSION="2.1.0"
+readonly INSTALLER_VERSION="2.2.0"
 readonly INSTALLER_DATE="2026-05-08"
 
 # ── Colores ──────────────────────────────────────────────────────────────────
@@ -86,6 +86,7 @@ OPT_SERVICES=true
 OPT_NGINX=""
 OPT_DEPS=true
 OPT_YES=false
+OPT_BACKUP_LOCAL=false
 LAIA_DIR="${LAIA_INSTALL_DIR:-$HOME/LAIA}"
 
 while [[ $# -gt 0 ]]; do
@@ -101,6 +102,7 @@ while [[ $# -gt 0 ]]; do
     --dir)
       [[ $# -ge 2 && -n "$2" ]] || err "--dir requiere RUTA"
       LAIA_DIR="$2"; shift 2 ;;
+    --backup-local) OPT_BACKUP_LOCAL=true; shift ;;
     --yes|-y) OPT_YES=true; shift ;;
     --help|-h)
       sed -n '/^# ══/,/^# ══/p;/^# Uso:/,/^# ══/p' "$0" | sed 's/^# //;s/^#//'
@@ -531,36 +533,99 @@ EOF
 fi
 
 # ══════════════════════════════════════════════════════════════════════════════
-# PASO 11 — Restaurar estado
+# PASO 11 — Tailscale (red privada)
 # ══════════════════════════════════════════════════════════════════════════════
-if [[ -n "$OPT_RESTORE" ]]; then
-  step "11  Restaurar estado desde ${OPT_RESTORE}"
+if [[ -n "$OPT_RESTORE" && "$OS" == "linux" ]]; then
+  step "11  Red privada (Tailscale)"
 
-  if ! ssh -o ConnectTimeout=10 -o BatchMode=yes "$OPT_RESTORE" 'echo ok' &>/dev/null; then
-    err "No se puede conectar por SSH a ${OPT_RESTORE}"
+  if ! command -v tailscale &>/dev/null; then
+    warn "Tailscale no encontrado — instalando..."
+    curl -fsSL https://tailscale.com/install.sh | sh || warn "Instalación de Tailscale falló"
   fi
 
-  for item in memories config auth.json state.db sessions skills; do
-    info "Restaurando ${item}..."
-    src="${OPT_RESTORE}:${LAIA_DIR}/${item}"
-    dst="$LAIA_DIR/"
-    if ssh -o ConnectTimeout=10 "$OPT_RESTORE" "test -e ${LAIA_DIR}/${item}" 2>/dev/null; then
-      if [[ "$item" == "auth.json" || "$item" == "state.db" ]]; then
-        rsync -az --progress "$src" "$dst" && ok "$item OK" || warn "$item falló"
-      else
-        rsync -az --progress "${src}/" "${dst}${item}/" && ok "$item OK" || warn "$item falló"
-      fi
+  if command -v tailscale &>/dev/null; then
+    if tailscale status &>/dev/null; then
+      ok "Tailscale activo ($(tailscale ip -4 2>/dev/null || echo '?'))"
     else
-      warn "$item no encontrado — omitido"
+      warn "Tailscale instalado pero no conectado"
+      echo -e "  ${DIM}Ejecuta: sudo tailscale up${RST}"
+      echo -e "  ${DIM}Abre el enlace en tu navegador e inicia sesión${RST}"
     fi
-  done
+  else
+    warn "Tailscale no disponible — el restore puede fallar"
+  fi
 fi
 
 # ══════════════════════════════════════════════════════════════════════════════
-# PASO 12 — Arrancar servicios
+# PASO 12 — Claves SSH
+# ══════════════════════════════════════════════════════════════════════════════
+if [[ -n "$OPT_RESTORE" ]]; then
+  step "12  Claves SSH"
+
+  if [[ ! -f "$HOME/.ssh/id_ed25519" ]]; then
+    info "Generando clave SSH..."
+    mkdir -p "$HOME/.ssh"
+    ssh-keygen -t ed25519 -C "${CURRENT_USER}@$(hostname)" -f "$HOME/.ssh/id_ed25519" -N "" || err "No se pudo generar clave SSH"
+    ok "Clave SSH generada"
+  else
+    ok "Clave SSH ya existe"
+  fi
+
+  # Intentar ssh-copy-id si la conexión funciona pero requiere password
+  if ssh -o ConnectTimeout=10 -o BatchMode=yes -o StrictHostKeyChecking=accept-new "$OPT_RESTORE" 'echo ok' &>/dev/null; then
+    ok "SSH sin contraseña — conectividad OK"
+  else
+    warn "SSH requiere autenticación"
+    echo ""
+    echo -e "  ${BLD}Ejecuta manualmente:${RST}"
+    echo -e "  ${DIM}  ssh-copy-id ${OPT_RESTORE}${RST}"
+    echo -e "  ${DIM}  (introduce la contraseña del servidor origen una vez)${RST}"
+    echo ""
+    echo -e "  ${BLD}Alternativa sin SSH:${RST}"
+    echo -e "  ${DIM}  clone-laia --backup-local  (en el servidor origen)${RST}"
+    echo -e "  ${DIM}  scp backup.tar.gz ${CURRENT_USER}@IP_VM:/tmp/${RST}"
+    echo ""
+    # No fallamos — el usuario puede arreglarlo y re-ejecutar
+  fi
+fi
+
+# ══════════════════════════════════════════════════════════════════════════════
+# PASO 13 — Restaurar estado
+# ══════════════════════════════════════════════════════════════════════════════
+if [[ -n "$OPT_RESTORE" ]]; then
+  step "13  Restaurar estado desde ${OPT_RESTORE}"
+
+  if ssh -o ConnectTimeout=10 -o BatchMode=yes "$OPT_RESTORE" 'echo ok' &>/dev/null; then
+    info "Conexión SSH verificada — restaurando..."
+
+    for item in memories config auth.json state.db sessions skills; do
+      info "Restaurando ${item}..."
+      src="${OPT_RESTORE}:${LAIA_DIR}/${item}"
+      dst="$LAIA_DIR/"
+      if ssh -o ConnectTimeout=10 "$OPT_RESTORE" "test -e ${LAIA_DIR}/${item}" 2>/dev/null; then
+        if [[ "$item" == "auth.json" || "$item" == "state.db" ]]; then
+          rsync -az --progress "$src" "$dst" && ok "$item OK" || warn "$item falló"
+        else
+          rsync -az --progress "${src}/" "${dst}${item}/" && ok "$item OK" || warn "$item falló"
+        fi
+      else
+        warn "$item no encontrado — omitido"
+      fi
+    done
+  else
+    warn "No se puede conectar por SSH a ${OPT_RESTORE}"
+    echo -e "  ${DIM}1. Asegúrate de que Tailscale está activo: sudo tailscale up${RST}"
+    echo -e "  ${DIM}2. Configura SSH sin contraseña: ssh-copy-id ${OPT_RESTORE}${RST}"
+    echo -e "  ${DIM}3. Re-ejecuta: clone-laia --restore ${OPT_RESTORE} --yes${RST}"
+    echo ""
+  fi
+fi
+
+# ══════════════════════════════════════════════════════════════════════════════
+# PASO 14 — Arrancar servicios
 # ══════════════════════════════════════════════════════════════════════════════
 if [[ "$OPT_SERVICES" == true && "$OS" == "linux" ]]; then
-  step "12  Arrancando servicios"
+  step "14  Arrancando servicios"
 
   if systemctl is-system-running &>/dev/null || [[ "$(systemctl is-system-running 2>/dev/null)" == "degraded" ]]; then
     for svc in hermes workspace-ui; do
@@ -572,6 +637,39 @@ if [[ "$OPT_SERVICES" == true && "$OS" == "linux" ]]; then
     done
   else
     warn "systemd no disponible — omite arranque"
+  fi
+fi
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Backup local (opcional)
+# ══════════════════════════════════════════════════════════════════════════════
+if [[ "$OPT_BACKUP_LOCAL" == true ]]; then
+  step "Backup local"
+
+  BACKUP_FILE="$HOME/laia-backup-$(date +%Y%m%d_%H%M%S).tar.gz"
+  info "Creando backup en $BACKUP_FILE..."
+
+  tar -czf "$BACKUP_FILE" \
+    -C "$HOME" \
+    .hermes/auth.json \
+    .hermes/config.yaml \
+    .hermes/state.db \
+    .hermes/memories/ \
+    .hermes/sessions/ \
+    .hermes/skills/ \
+    LAIA/memories/ \
+    LAIA/config/ 2>/dev/null || true
+
+  if [[ -f "$BACKUP_FILE" ]]; then
+    size=$(du -h "$BACKUP_FILE" | cut -f1)
+    ok "Backup creado: $BACKUP_FILE ($size)"
+    echo ""
+    echo -e "  ${BLD}Para transferir a otra máquina:${RST}"
+    echo -e "  ${DIM}  scp $BACKUP_FILE usuario@IP_VM:/tmp/${RST}"
+    echo -e "  ${DIM}  ssh usuario@IP_VM 'tar -xzf /tmp/$(basename "$BACKUP_FILE") -C ~/'${RST}"
+    echo ""
+  else
+    warn "No se pudo crear el backup"
   fi
 fi
 
@@ -602,7 +700,7 @@ if [[ "$OS" == "linux" && "$OPT_SERVICES" == true ]]; then
   echo ""
 fi
 
-if [[ -f "$LAIA_DIR/auth.json" ]]; then
+if [[ -f "$LAIA_DIR/auth.json" || -f "$RUNTIME_DIR/auth.json" ]]; then
   echo -e "  ${GRN}✓ auth.json presente${RST}"
 else
   echo -e "  ${YEL}⚠  auth.json no encontrado${RST}"
@@ -612,7 +710,7 @@ fi
 echo ""
 echo -e "  ${BLD}Próximos pasos:${RST}"
 echo -e "  ${DIM}  source ~/.bashrc  — activar HERMES_HOME${RST}"
-[[ -z "$OPT_RESTORE" ]] && \
+[[ -z "$OPT_RESTORE" && "$OPT_BACKUP_LOCAL" == false ]] && \
   echo -e "  ${DIM}  clone-laia --restore usuario@host  — migrar datos${RST}"
 [[ "$OS" == "linux" && "$OPT_SERVICES" == true ]] && \
   echo -e "  ${DIM}  journalctl -u hermes -f  — logs en tiempo real${RST}"
