@@ -1,0 +1,116 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import sys
+import urllib.error
+import urllib.parse
+import urllib.request
+
+
+def _api_base() -> str:
+    return os.environ.get("COMMAND_CENTER_API", "http://127.0.0.1:8077/api").rstrip("/")
+
+
+def _token() -> str:
+    token = os.environ.get("COMMAND_CENTER_AGENT_TOKEN", "").strip()
+    if not token:
+        raise SystemExit("COMMAND_CENTER_AGENT_TOKEN is not set; this command only works inside Command Center PTY agents.")
+    return token
+
+
+def _request(method: str, path: str, body: dict | None = None) -> dict:
+    data = json.dumps(body).encode("utf-8") if body is not None else None
+    req = urllib.request.Request(
+        f"{_api_base()}{path}",
+        data=data,
+        method=method,
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {_token()}",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        text = exc.read().decode("utf-8", errors="replace")
+        try:
+            payload = json.loads(text)
+        except Exception:
+            payload = {"error": text}
+        raise SystemExit(json.dumps({"status": exc.code, **payload}, ensure_ascii=False, indent=2))
+
+
+def _print(payload: dict) -> None:
+    print(json.dumps(payload, ensure_ascii=False, indent=2))
+
+
+def main(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(prog="ccw", description="Command Center Workspace Synapse CLI")
+    sub = parser.add_subparsers(dest="cmd", required=True)
+
+    sub.add_parser("workspaces", help="List readable workspaces and the active append-only workspace")
+
+    search = sub.add_parser("search", help="Search workspace nodes")
+    search.add_argument("query")
+    search.add_argument("--workspace", default=os.environ.get("COMMAND_CENTER_ACTIVE_WORKSPACE", ""))
+    search.add_argument("--kind", default="")
+    search.add_argument("--limit", type=int, default=25)
+
+    node = sub.add_parser("node", help="Read one workspace node")
+    node.add_argument("ref")
+    node.add_argument("--workspace", default=os.environ.get("COMMAND_CENTER_ACTIVE_WORKSPACE", ""))
+
+    events = sub.add_parser("events", help="Read recent workspace events")
+    events.add_argument("--workspace", default=os.environ.get("COMMAND_CENTER_ACTIVE_WORKSPACE", ""))
+    events.add_argument("--limit", type=int, default=50)
+
+    plan = sub.add_parser("plan", help="Append an agent-plan node in the active workspace")
+    plan.add_argument("--title", required=True)
+    plan.add_argument("--body", required=True)
+    plan.add_argument("--summary", default="")
+    plan.add_argument("--task-id", default="")
+
+    log = sub.add_parser("log", help="Append an agent log entry in the active workspace")
+    log.add_argument("--summary", required=True)
+    log.add_argument("--details", default="")
+    log.add_argument("--task-id", default="")
+    log.add_argument("--node-ref", default="")
+
+    args = parser.parse_args(argv)
+
+    if args.cmd == "workspaces":
+        _print(_request("GET", "/agent-workspace/workspaces"))
+    elif args.cmd == "search":
+        workspace = args.workspace or os.environ.get("COMMAND_CENTER_ACTIVE_WORKSPACE", "")
+        query = urllib.parse.urlencode({"query": args.query, "kind": args.kind, "limit": args.limit})
+        _print(_request("GET", f"/agent-workspace/{urllib.parse.quote(workspace)}/nodes?{query}"))
+    elif args.cmd == "node":
+        workspace = args.workspace or os.environ.get("COMMAND_CENTER_ACTIVE_WORKSPACE", "")
+        _print(_request("GET", f"/agent-workspace/{urllib.parse.quote(workspace)}/nodes/{urllib.parse.quote(args.ref)}"))
+    elif args.cmd == "events":
+        workspace = args.workspace or os.environ.get("COMMAND_CENTER_ACTIVE_WORKSPACE", "")
+        query = urllib.parse.urlencode({"limit": args.limit})
+        _print(_request("GET", f"/agent-workspace/{urllib.parse.quote(workspace)}/events?{query}"))
+    elif args.cmd == "plan":
+        _print(_request("POST", "/agent-workspace/plan", {
+            "title": args.title,
+            "body": args.body,
+            "summary": args.summary,
+            "task_id": args.task_id,
+        }))
+    elif args.cmd == "log":
+        _print(_request("POST", "/agent-workspace/log", {
+            "summary": args.summary,
+            "details": args.details,
+            "task_id": args.task_id,
+            "node_ref": args.node_ref or None,
+        }))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))
