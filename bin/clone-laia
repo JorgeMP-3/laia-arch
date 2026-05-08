@@ -183,8 +183,9 @@ if [[ "$OPT_DEPS" == true && "$OS" == "linux" && "$DISTRO" == "debian" ]]; then
   command -v rsync   &>/dev/null || PKGS+=("rsync")
   command -v sudo    &>/dev/null || warn "sudo no encontrado — algunos pasos pueden fallar"
 
-  # python3-venv: necesitamos el paquete específico de la versión (ej. python3.14-venv)
-  if ! python3 -m venv --help &>/dev/null 2>&1; then
+  # python3-venv: verificar ensurepip de la versión ACTUAL (ej. python3.14)
+  # 'python3 -m venv --help' puede pasar con otra versión; probamos ensurepip directamente
+  if ! python3 -c "import ensurepip" &>/dev/null 2>&1; then
     PY_VER=$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")' 2>/dev/null || echo "")
     if [[ -n "$PY_VER" ]]; then
       PKGS+=("python${PY_VER}-venv" "python3-pip")
