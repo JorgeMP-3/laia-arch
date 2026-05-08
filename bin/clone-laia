@@ -604,11 +604,11 @@ if [[ -n "$OPT_RESTORE" ]]; then
     info "Origen: HERMES_HOME=${SRC_HERMES_HOME}  LAIA_DIR=${SRC_LAIA_DIR}"
 
     # ── Items en ~/.hermes/ (runtime) ──
-    for item in auth.json state.db sessions skills; do
+    for item in state.db sessions skills; do
       info "Restaurando ${item}..."
       src="${OPT_RESTORE}:${SRC_HERMES_HOME}/${item}"
       if ssh -o ConnectTimeout=10 "$OPT_RESTORE" "test -e ${SRC_HERMES_HOME}/${item}" 2>/dev/null; then
-        if [[ "$item" == "auth.json" || "$item" == "state.db" ]]; then
+        if [[ "$item" == "state.db" ]]; then
           rsync -az --progress "$src" "$RUNTIME_DIR/" && ok "$item OK" || warn "$item falló"
         else
           mkdir -p "$RUNTIME_DIR/$item"
@@ -618,6 +618,20 @@ if [[ -n "$OPT_RESTORE" ]]; then
         warn "$item no encontrado en origen (~/.hermes/) — omitido"
       fi
     done
+
+    # auth.json puede estar en ~/.hermes/ o ~/LAIA/
+    info "Restaurando auth.json..."
+    AUTH_SRC=""
+    if ssh -o ConnectTimeout=10 "$OPT_RESTORE" "test -f ${SRC_HERMES_HOME}/auth.json" 2>/dev/null; then
+      AUTH_SRC="${OPT_RESTORE}:${SRC_HERMES_HOME}/auth.json"
+    elif ssh -o ConnectTimeout=10 "$OPT_RESTORE" "test -f ${SRC_LAIA_DIR}/auth.json" 2>/dev/null; then
+      AUTH_SRC="${OPT_RESTORE}:${SRC_LAIA_DIR}/auth.json"
+    fi
+    if [[ -n "$AUTH_SRC" ]]; then
+      rsync -az --progress "$AUTH_SRC" "$RUNTIME_DIR/" && ok "auth.json OK" || warn "auth.json falló"
+    else
+      warn "auth.json no encontrado en origen — omitido"
+    fi
 
     # ── Items en ~/LAIA/ (datos personales) ──
     for item in memories config; do
