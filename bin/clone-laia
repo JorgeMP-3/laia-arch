@@ -1,34 +1,34 @@
 #!/usr/bin/env bash
-# install-laia — LAIA Production Installer
-# =============================================================================
-# Instala o actualiza LAIA completo: código, entorno Python, frontend Node,
-# servicios systemd, nginx y restauración de estado.
+# ══════════════════════════════════════════════════════════════════════════════
+# install-laia — Instalador Definitivo del Ecosistema LAIA
+# ══════════════════════════════════════════════════════════════════════════════
+# LAIA = Local AI Agent — Ecosistema multi-agente empresarial
+# Medios: ARCH (admin) | AGORA (colectivo, pendiente)
+# Núcleo: Hermes Agent (fork de NousResearch) + Workspace UI (FastAPI + React)
 #
 # Uso:
 #   clone-laia [opciones]
 #
 # Opciones:
-#   --restore USER@HOST    Restaura estado (memories, config, auth, db, sessions,
-#                          skills) desde otra máquina vía rsync+ssh.
-#   --no-services          No instalar ni activar servicios systemd.
-#   --nginx DOMINIO        Genera configuración nginx para el dominio indicado.
-#   --no-deps              Omite instalación de paquetes del sistema.
-#   --dir RUTA             Directorio de instalación (por defecto: ~/LAIA).
-#   --yes, -y              Modo no interactivo. No pregunta confirmaciones.
-#   --help, -h             Muestra esta ayuda y sale.
-#   --version, -v          Muestra la versión del instalador y sale.
+#   --restore USER@HOST    Restaura estado (memories, config, auth, sessions, skills)
+#   --no-services          No instalar servicios systemd
+#   --nginx DOMINIO        Configurar nginx para el dominio
+#   --no-deps              Omitir instalación de paquetes del sistema
+#   --dir RUTA             Directorio base (default: ~/LAIA)
+#   --yes, -y              Modo no interactivo
+#   --help, -h             Mostrar ayuda
+#   --version, -v          Mostrar versión
 #
-# Instalación rápida desde cero:
+# Instalación rápida:
 #   bash <(curl -fsSL https://raw.githubusercontent.com/JorgeMP-3/laia-arch/main/bin/clone-laia)
-#
-# =============================================================================
+# ══════════════════════════════════════════════════════════════════════════════
 set -euo pipefail
 
 # ── Metadata ─────────────────────────────────────────────────────────────────
-readonly INSTALLER_VERSION="2.0.0"
+readonly INSTALLER_VERSION="2.1.0"
 readonly INSTALLER_DATE="2026-05-08"
 
-# ── Colores (respetan NO_COLOR) ──────────────────────────────────────────────
+# ── Colores ──────────────────────────────────────────────────────────────────
 if [[ -n "${NO_COLOR:-}" ]]; then
   YEL=''; GRN=''; RED=''; CYN=''; DIM=''; RST=''; BLD=''
 else
@@ -43,27 +43,26 @@ mkdir -p "$LOG_DIR"
 : >"$LOG_FILE"
 exec > >(tee -a "$LOG_FILE") 2>&1
 
-# ── Helpers de salida ────────────────────────────────────────────────────────
+# ── Helpers ──────────────────────────────────────────────────────────────────
 ok()    { echo -e "${GRN}  ✓ $1${RST}"; }
 info()  { echo -e "${CYN}  → $1${RST}"; }
 err()   { echo -e "${RED}  ✕ $1${RST}\n" >&2; exit 1; }
-step()  { echo -e "\n${YEL}${BLD}── $1 ──────────────────────────────────────${RST}"; }
+step()  { echo -e "\n${YEL}${BLD}═══ $1 ═══════════════════════════════════════════════════${RST}"; }
 warn()  { echo -e "${YEL}  ⚠ $1${RST}"; }
 ask()   {
   printf "${BLD}  %s ${DIM}%s${RST} " "$1" "${2:-}"
   if ! read -r REPLY </dev/tty 2>/dev/null; then
     REPLY=""
-    # Si no hay tty y no es modo no-interactivo, avisar
-    if [[ "$OPT_YES" == false ]]; then
+    if [[ "${OPT_YES:-false}" == false ]]; then
       echo ""
-      warn "No se detecta terminal interactiva. Usa --yes para modo no interactivo."
+      warn "No hay terminal interactiva. Usa --yes para modo no interactivo."
       exit 1
     fi
   fi
 }
 log()   { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >> "$LOG_FILE"; }
 
-# ── Rollback / limpieza ──────────────────────────────────────────────────────
+# ── Rollback ─────────────────────────────────────────────────────────────────
 ROLLBACK_ITEMS=()
 register_rollback() { ROLLBACK_ITEMS+=("$1"); }
 
@@ -74,11 +73,9 @@ cleanup_on_error() {
     echo -e "${RED}${BLD}  ✕ Instalación interrumpida (código $code)${RST}" >&2
     if [[ ${#ROLLBACK_ITEMS[@]} -gt 0 ]]; then
       echo -e "${DIM}  Revirtiendo cambios...${RST}" >&2
-      for item in "${ROLLBACK_ITEMS[@]}"; do
-        eval "$item" 2>/dev/null || true
-      done
+      for item in "${ROLLBACK_ITEMS[@]}"; do eval "$item" 2>/dev/null || true; done
     fi
-    echo -e "${DIM}  Log completo: $LOG_FILE${RST}" >&2
+    echo -e "${DIM}  Log: $LOG_FILE${RST}" >&2
   fi
 }
 trap cleanup_on_error EXIT
@@ -94,24 +91,24 @@ LAIA_DIR="${LAIA_INSTALL_DIR:-$HOME/LAIA}"
 while [[ $# -gt 0 ]]; do
   case $1 in
     --restore)
-      [[ $# -ge 2 && -n "$2" ]] || err "--restore requiere un argumento USER@HOST"
+      [[ $# -ge 2 && -n "$2" ]] || err "--restore requiere USER@HOST"
       OPT_RESTORE="$2"; shift 2 ;;
     --no-services) OPT_SERVICES=false; shift ;;
     --nginx)
-      [[ $# -ge 2 && -n "$2" ]] || err "--nginx requiere un argumento DOMINIO"
+      [[ $# -ge 2 && -n "$2" ]] || err "--nginx requiere DOMINIO"
       OPT_NGINX="$2"; shift 2 ;;
     --no-deps) OPT_DEPS=false; shift ;;
     --dir)
-      [[ $# -ge 2 && -n "$2" ]] || err "--dir requiere un argumento RUTA"
+      [[ $# -ge 2 && -n "$2" ]] || err "--dir requiere RUTA"
       LAIA_DIR="$2"; shift 2 ;;
     --yes|-y) OPT_YES=true; shift ;;
     --help|-h)
-      sed -n '/^# ===/,/^# ===/p;/^# Uso:/,/^# ===/p' "$0" | sed 's/^# //;s/^#//'
+      sed -n '/^# ══/,/^# ══/p;/^# Uso:/,/^# ══/p' "$0" | sed 's/^# //;s/^#//'
       exit 0 ;;
     --version|-v)
       echo "install-laia $INSTALLER_VERSION ($INSTALLER_DATE)"
       exit 0 ;;
-    *) err "Opción desconocida: $1\n  Usa --help para ver las opciones disponibles." ;;
+    *) err "Opción desconocida: $1\n  Usa --help para ver opciones." ;;
   esac
 done
 
@@ -123,6 +120,10 @@ CODE_DIR="$LAIA_DIR/.laia-arch"
 VENV="$CODE_DIR/venv"
 WS_BACKEND="$CODE_DIR/workspace-ui/backend"
 WS_FRONTEND="$CODE_DIR/workspace-ui/frontend"
+
+RUNTIME_DIR="$HOME/.hermes"
+BIN_DIR="$HOME/bin"
+SERVER_DIR="$HOME/servidor"
 
 CURRENT_USER="$(id -un)"
 CURRENT_UID="$(id -u)"
@@ -150,24 +151,24 @@ echo -e "${YEL}  ██║     ██╔══██║██║██╔══�
 echo -e "${YEL}  ███████╗██║  ██║██║██║  ██║    ███████║███████╗   ██║   ╚██████╔╝██║     ${RST}"
 echo -e "${YEL}  ╚══════╝╚═╝  ╚═╝╚═╝╚═╝  ╚═╝   ╚══════╝╚══════╝   ╚═╝    ╚═════╝ ╚═╝     ${RST}"
 echo ""
-echo -e "${DIM}  Instalador de LAIA · github.com/JorgeMP-3${RST}"
+echo -e "${DIM}  Instalador de LAIA · Ecosistema Multi-Agente · v${INSTALLER_VERSION}${RST}"
 echo -e "${DIM}  Sistema: ${OS}${DISTRO:+ ($DISTRO)}  ·  Usuario: ${CURRENT_USER}  ·  Destino: ${LAIA_DIR}${RST}"
-echo -e "${DIM}  Versión instalador: ${INSTALLER_VERSION}${RST}"
 echo ""
-echo "  Se instalará:"
-echo -e "  ${DIM}  • ${LAIA_DIR}/.laia-arch/   — código (hermes + workspace-ui + skills)${RST}"
-echo -e "  ${DIM}  • ${LAIA_DIR}/memories/      — memorias personales (laia-private)${RST}"
+echo "  Componentes a instalar:"
+echo -e "  ${DIM}  • ARCH (Hermes + Workspace UI) → ${CODE_DIR}${RST}"
+echo -e "  ${DIM}  • Runtime → ${RUNTIME_DIR}${RST}"
+echo -e "  ${DIM}  • Datos personales → ${LAIA_DIR}/memories/  (laia-private)${RST}"
 [[ "$OPT_SERVICES" == true && "$OS" == "linux" ]] && \
-  echo -e "  ${DIM}  • hermes.service + workspace-ui.service  (systemd, usuario: ${CURRENT_USER})${RST}"
+  echo -e "  ${DIM}  • Servicios systemd → hermes + workspace-ui${RST}"
 [[ -n "$OPT_NGINX" && "$OS" == "linux" ]] && \
-  echo -e "  ${DIM}  • nginx config para ${OPT_NGINX}${RST}"
+  echo -e "  ${DIM}  • Nginx → ${OPT_NGINX}${RST}"
 [[ -n "$OPT_RESTORE" ]] && \
-  echo -e "  ${DIM}  • Estado restaurado desde ${OPT_RESTORE}${RST}"
+  echo -e "  ${DIM}  • Restauración → ${OPT_RESTORE}${RST}"
 echo ""
 
 if [[ "$OPT_YES" == false ]]; then
   ask "¿Continuar? (s/n)" ""
-  [[ "$REPLY" =~ ^[Ss]$ ]] || { info "Cancelado por el usuario."; exit 0; }
+  [[ "$REPLY" =~ ^[Ss]$ ]] || { info "Cancelado."; exit 0; }
 fi
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -181,53 +182,46 @@ if [[ "$OPT_DEPS" == true && "$OS" == "linux" && "$DISTRO" == "debian" ]]; then
   command -v python3 &>/dev/null || PKGS+=("python3")
   command -v curl    &>/dev/null || PKGS+=("curl")
   command -v rsync   &>/dev/null || PKGS+=("rsync")
-  command -v sudo    &>/dev/null || warn "sudo no encontrado — algunos pasos pueden fallar"
 
-  # python3-venv: verificar ensurepip de la versión ACTUAL (ej. python3.14)
-  # 'python3 -m venv --help' puede pasar con otra versión; probamos ensurepip directamente
+  # python3-venv específico de la versión actual
   if ! python3 -c "import ensurepip" &>/dev/null 2>&1; then
     PY_VER=$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")' 2>/dev/null || echo "")
-    if [[ -n "$PY_VER" ]]; then
-      PKGS+=("python${PY_VER}-venv" "python3-pip")
-    else
-      PKGS+=("python3-venv" "python3-pip")
-    fi
+    if [[ -n "$PY_VER" ]]; then PKGS+=("python${PY_VER}-venv" "python3-pip")
+    else PKGS+=("python3-venv" "python3-pip"); fi
   fi
 
   if [[ ${#PKGS[@]} -gt 0 ]]; then
-    warn "Faltan paquetes: ${PKGS[*]}"
-    info "Actualizando apt e instalando..."
-    sudo apt-get update -qq || warn "apt-get update falló — continuando de todos modos"
+    warn "Faltan: ${PKGS[*]}"
+    sudo apt-get update -qq || true
     sudo apt-get install -y --no-install-recommends "${PKGS[@]}"
-    ok "Paquetes base instalados"
+    ok "Paquetes instalados"
   else
-    ok "Todos los paquetes base están presentes"
+    ok "Dependencias base OK"
   fi
 
-  # Node.js — requiere v18+ para Vite; instalar v22 LTS desde NodeSource si falta
+  # Node.js v22 LTS
   NODE_MAJOR=0
   if command -v node &>/dev/null; then
     NODE_MAJOR=$(node --version 2>/dev/null | sed -n 's/^v\([0-9]*\).*/\1/p') || NODE_MAJOR=0
   fi
   if [[ "$NODE_MAJOR" -lt 18 ]]; then
-    warn "Node.js ${NODE_MAJOR:-no encontrado} — instalando v22 LTS desde NodeSource..."
-    curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash - || \
-      err "Falló la configuración del repositorio NodeSource"
+    warn "Node.js ${NODE_MAJOR:-no} → instalando v22..."
+    curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash - || err "NodeSource falló"
     sudo apt-get install -y --no-install-recommends nodejs
-    ok "Node.js $(node --version) instalado"
+    ok "Node.js $(node --version)"
   else
     ok "Node.js $(node --version)"
   fi
 
   # GitHub CLI
   if ! command -v gh &>/dev/null; then
-    warn "GitHub CLI (gh) no encontrado — instalando..."
+    warn "gh CLI → instalando..."
     curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
       | sudo dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg 2>/dev/null
     printf 'deb [arch=%s signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main\n' \
       "$(dpkg --print-architecture)" | sudo tee /etc/apt/sources.list.d/github-cli.list >/dev/null
     sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends gh
-    ok "gh CLI $(gh --version | head -1 | awk '{print $3}') instalado"
+    ok "gh CLI $(gh --version | head -1 | awk '{print $3}')"
   else
     ok "gh CLI $(gh --version | head -1 | awk '{print $3}')"
   fi
@@ -242,20 +236,13 @@ MISSING=()
 for cmd in git python3 node npm gh; do
   if command -v "$cmd" &>/dev/null; then
     ver=$("$cmd" --version 2>&1 | head -1)
-    ok "$cmd — ${ver:-versión desconocida}"
+    ok "$cmd — ${ver:-desconocido}"
   else
     MISSING+=("$cmd")
     echo -e "${RED}  ✕ $cmd — no encontrado${RST}"
   fi
 done
-
-[[ ${#MISSING[@]} -eq 0 ]] || err "Instala antes de continuar: ${MISSING[*]}"
-
-# Verificar conectividad mínima a GitHub
-info "Verificando conectividad con GitHub..."
-if ! curl -fsSL -o /dev/null --max-time 10 https://github.com 2>/dev/null; then
-  warn "No se puede contactar github.com — la instalación puede fallar"
-fi
+[[ ${#MISSING[@]} -eq 0 ]] || err "Instala antes: ${MISSING[*]}"
 
 # ══════════════════════════════════════════════════════════════════════════════
 # PASO 2 — Autenticación GitHub
@@ -264,39 +251,38 @@ step "2  Autenticación GitHub"
 
 if gh auth status &>/dev/null; then
   _ghuser=$(gh api user --jq .login 2>/dev/null || echo "?")
-  ok "GitHub — sesión activa como $_ghuser"
+  ok "GitHub — $_ghuser"
 else
-  warn "No autenticado en GitHub CLI."
-  err "Ejecuta 'gh auth login' y vuelve a ejecutar este script"
+  err "No autenticado. Ejecuta 'gh auth login' primero."
 fi
 
 # ══════════════════════════════════════════════════════════════════════════════
-# PASO 3 — Clonar / actualizar repositorios
+# PASO 3 — Clonar repos
 # ══════════════════════════════════════════════════════════════════════════════
-step "3  Clonando repos"
+step "3  Clonando repositorios"
 
 mkdir -p "$LAIA_DIR"
 
-# Código público → LAIA/.laia-arch
+# Código → LAIA/.laia-arch
 if [[ -d "$CODE_DIR/.git" ]]; then
-  warn "$CODE_DIR ya existe — actualizando..."
-  git -C "$CODE_DIR" pull -q || err "git pull falló en $CODE_DIR"
+  warn "$CODE_DIR existe — actualizando..."
+  git -C "$CODE_DIR" pull -q || err "git pull falló"
   ok "laia-arch actualizado ($(git -C "$CODE_DIR" rev-parse --short HEAD 2>/dev/null || echo '?'))"
 else
-  info "Clonando laia-arch en $CODE_DIR ..."
-  git clone "$REPO_CODE" "$CODE_DIR" -q || err "git clone falló para $REPO_CODE"
+  info "Clonando laia-arch..."
+  git clone "$REPO_CODE" "$CODE_DIR" -q || err "git clone falló"
   ok "laia-arch clonado"
 fi
 
-# Upstream NousResearch (útil para sincronizar mejoras del framework original)
+# Upstream NousResearch
 if ! git -C "$CODE_DIR" remote | grep -q '^upstream$'; then
   git -C "$CODE_DIR" remote add upstream https://github.com/NousResearch/hermes-agent.git
-  ok "Remote upstream añadido (NousResearch/hermes-agent)"
+  ok "upstream añadido"
 fi
 
-# Datos personales → LAIA/ (memories, docs, config)
+# Datos personales → LAIA/ (laia-private)
 if [[ ! -f "$LAIA_DIR/.git/config" ]]; then
-  info "Inicializando laia-private en $LAIA_DIR ..."
+  info "Inicializando laia-private..."
   git -C "$LAIA_DIR" init -q
   git -C "$LAIA_DIR" remote add origin "$REPO_PRIVATE"
   git -C "$LAIA_DIR" pull origin main -q 2>/dev/null || true
@@ -312,83 +298,96 @@ fi
 step "4  Entorno Python"
 
 if [[ ! -x "$VENV/bin/pip" ]]; then
-  # Si existe pero está roto (sin pip), eliminar primero
-  if [[ -d "$VENV" ]]; then
-    warn "Venv existente incompleto — recreando..."
-    rm -rf "$VENV"
-  fi
-  info "Creando venv en $VENV ..."
-  if ! python3 -m venv "$VENV" 2>/dev/null; then
-    PY_VER=$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")' 2>/dev/null || echo "3")
-    err "No se pudo crear el entorno virtual.\n  Asegúrate de que el paquete 'python${PY_VER}-venv' está instalado:\n    sudo apt-get install -y python${PY_VER}-venv python3-pip"
-  fi
+  [[ -d "$VENV" ]] && { warn "Venv incompleto — recreando..."; rm -rf "$VENV"; }
+  info "Creando venv en $VENV..."
+  python3 -m venv "$VENV" || err "No se pudo crear venv. Instala python$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')-venv"
   register_rollback "rm -rf '$VENV'"
 fi
 
-info "Instalando / actualizando hermes-agent en modo editable..."
+info "Instalando hermes-agent..."
 "$VENV/bin/pip" install --upgrade pip -q --disable-pip-version-check || true
-"$VENV/bin/pip" install -e "$CODE_DIR" -q --disable-pip-version-check || \
-  err "pip install -e falló"
+"$VENV/bin/pip" install -e "$CODE_DIR" -q --disable-pip-version-check || err "pip install -e falló"
 ok "hermes-agent instalado"
 
+# Dependencias del backend de Workspace UI
+if [[ -f "$WS_BACKEND/requirements.txt" ]]; then
+  info "Instalando dependencias del backend..."
+  "$VENV/bin/pip" install -r "$WS_BACKEND/requirements.txt" -q --disable-pip-version-check || \
+    warn "Algunas dependencias del backend fallaron"
+  ok "Backend deps instaladas"
+fi
+
 # ══════════════════════════════════════════════════════════════════════════════
-# PASO 5 — Workspace UI (frontend build)
+# PASO 5 — Workspace UI Frontend
 # ══════════════════════════════════════════════════════════════════════════════
-step "5  Workspace UI — frontend"
+step "5  Workspace UI — Frontend"
 
 if [[ -f "$WS_FRONTEND/package.json" ]]; then
   info "Instalando dependencias Node..."
   if [[ -f "$WS_FRONTEND/package-lock.json" ]]; then
-    (cd "$WS_FRONTEND" && npm ci --silent) || err "npm ci falló en $WS_FRONTEND"
+    (cd "$WS_FRONTEND" && npm ci --silent) || err "npm ci falló"
   else
-    (cd "$WS_FRONTEND" && npm install --silent) || err "npm install falló en $WS_FRONTEND"
+    (cd "$WS_FRONTEND" && npm install --silent) || err "npm install falló"
   fi
 
-  info "Compilando frontend (vite build)..."
+  info "Compilando (vite build)..."
   (cd "$WS_FRONTEND" && npm run build 2>&1) | tail -5
-  if [[ ! -d "$WS_FRONTEND/dist" ]]; then
-    err "El build no generó $WS_FRONTEND/dist"
-  fi
-  ok "Frontend compilado en $WS_FRONTEND/dist/"
+  [[ -d "$WS_FRONTEND/dist" ]] || err "Build no generó dist/"
+  ok "Frontend compilado"
 else
-  warn "No se encontró $WS_FRONTEND/package.json — omitiendo build de frontend"
+  warn "No se encontró package.json — omitiendo frontend"
 fi
 
 # ══════════════════════════════════════════════════════════════════════════════
-# PASO 6 — Symlinks y scripts
+# PASO 6 — Symlinks y estructura de runtime
 # ══════════════════════════════════════════════════════════════════════════════
-step "6  Symlinks y scripts"
+step "6  Estructura de symlinks"
 
+# Symlinks dentro de LAIA/
 ln -sfn "$CODE_DIR" "$LAIA_DIR/hermes-agent"
-ok "Symlink hermes-agent → .laia-arch"
+ok "hermes-agent → .laia-arch"
 
 ln -sfn "$CODE_DIR/workspace-ui" "$LAIA_DIR/workspace-ui"
-ok "Symlink workspace-ui → .laia-arch/workspace-ui"
+ok "workspace-ui → .laia-arch/workspace-ui"
 
-# Scripts ejecutables → ~/bin
+# Runtime ~/.hermes/
+mkdir -p "$RUNTIME_DIR"
+ln -sfn "$CODE_DIR" "$RUNTIME_DIR/hermes-agent"
+ok "~/.hermes/hermes-agent → .laia-arch"
+
+ln -sfn "$CODE_DIR/workspace-ui" "$RUNTIME_DIR/workspace-ui"
+ok "~/.hermes/workspace-ui → .laia-arch/workspace-ui"
+
+# Crear directorios de datos si no existen
+mkdir -p "$LAIA_DIR/memories" "$LAIA_DIR/docs" "$LAIA_DIR/config" "$LAIA_DIR/workspaces"
+mkdir -p "$RUNTIME_DIR/memories" "$RUNTIME_DIR/skills" "$RUNTIME_DIR/sessions" "$RUNTIME_DIR/logs" "$RUNTIME_DIR/cron"
+
+# ══════════════════════════════════════════════════════════════════════════════
+# PASO 7 — Scripts del sistema
+# ══════════════════════════════════════════════════════════════════════════════
+step "7  Scripts del sistema"
+
 if [[ -d "$CODE_DIR/bin" ]]; then
-  mkdir -p "$HOME/bin"
-  rsync -a --delete "$CODE_DIR/bin/" "$HOME/bin/"
-  chmod +x "$HOME/bin/"* 2>/dev/null || true
-  ok "Scripts sincronizados en ~/bin/"
+  mkdir -p "$BIN_DIR"
+  rsync -a --delete "$CODE_DIR/bin/" "$BIN_DIR/"
+  chmod +x "$BIN_DIR/"* 2>/dev/null || true
+  ok "Scripts en ~/bin/"
 fi
 
 # ══════════════════════════════════════════════════════════════════════════════
-# PASO 7 — Variables de entorno en shell
+# PASO 8 — Variables de entorno
 # ══════════════════════════════════════════════════════════════════════════════
-step "7  Variables de entorno"
+step "8  Variables de entorno"
 
 SHELL_BLOCK='# LAIA — añadido por install-laia
 export HERMES_HOME="'"$LAIA_DIR"'"
 export PATH="'"$HOME/bin:$HOME/.local/bin"':$PATH"
 '
 
-_inject_shell_block() {
+_inject_rc() {
   local rcfile="$1"
   [[ -f "$rcfile" ]] || return 0
-  local tmpfile
-  tmpfile=$(mktemp)
-  # Eliminar bloque antiguo si existe (línea marcada + las dos de export)
+  local tmpfile; tmpfile=$(mktemp)
   awk '
     /# LAIA — añadido por install-laia/ { skip=1; next }
     skip && /^export HERMES_HOME=/ { next }
@@ -400,38 +399,40 @@ _inject_shell_block() {
 }
 
 for rcfile in "$HOME/.bashrc" "$HOME/.zshrc"; do
-  if _inject_shell_block "$rcfile"; then
-    ok "HERMES_HOME inyectado en $(basename "$rcfile")"
-  fi
+  _inject_rc "$rcfile" && ok "$(basename "$rcfile") actualizado"
 done
 
 # config.yaml desde template
 if [[ ! -f "$LAIA_DIR/config.yaml" && -f "$CODE_DIR/config.template.yaml" ]]; then
   cp "$CODE_DIR/config.template.yaml" "$LAIA_DIR/config.yaml"
-  ok "config.yaml creado — edítalo para añadir API keys"
+  ok "config.yaml creado"
 elif [[ -f "$LAIA_DIR/config.yaml" ]]; then
   ok "config.yaml ya existe"
 fi
 
+# SOUL.md si no existe
+if [[ ! -f "$RUNTIME_DIR/SOUL.md" && -f "$CODE_DIR/SOUL.md" ]]; then
+  cp "$CODE_DIR/SOUL.md" "$RUNTIME_DIR/SOUL.md"
+  ok "SOUL.md copiado a ~/.hermes/"
+fi
+
 # ══════════════════════════════════════════════════════════════════════════════
-# PASO 8 — Servicios systemd (solo Linux)
+# PASO 9 — Servicios systemd
 # ══════════════════════════════════════════════════════════════════════════════
-if [[ "$OPT_SERVICES" == true ]]; then
-  if [[ "$OS" == "linux" ]]; then
-    step "8  Servicios systemd"
+if [[ "$OPT_SERVICES" == true && "$OS" == "linux" ]]; then
+  step "9  Servicios systemd"
 
-    # Verificar que los binarios existen antes de generar servicios
-    [[ -x "$VENV/bin/hermes" ]] || warn "$VENV/bin/hermes no es ejecutable"
-    [[ -x "$VENV/bin/uvicorn" ]] || warn "$VENV/bin/uvicorn no es ejecutable"
+  [[ -x "$VENV/bin/hermes" ]] || warn "$VENV/bin/hermes no ejecutable"
+  [[ -x "$VENV/bin/uvicorn" ]] || warn "$VENV/bin/uvicorn no ejecutable"
 
-    # Backup de servicios previos
-    for svc in hermes workspace-ui; do
-      if [[ -f "/etc/systemd/system/${svc}.service" ]]; then
-        sudo cp "/etc/systemd/system/${svc}.service" "/etc/systemd/system/${svc}.service.backup.$(date +%s)"
-      fi
-    done
+  # Backup
+  for svc in hermes workspace-ui; do
+    if [[ -f "/etc/systemd/system/${svc}.service" ]]; then
+      sudo cp "/etc/systemd/system/${svc}.service" "/etc/systemd/system/${svc}.service.bak.$(date +%s)"
+    fi
+  done
 
-    sudo tee /etc/systemd/system/hermes.service >/dev/null <<EOF
+  sudo tee /etc/systemd/system/hermes.service >/dev/null <<EOF
 [Unit]
 Description=Hermes Gateway (LAIA)
 After=network.target
@@ -449,9 +450,9 @@ Environment=HERMES_HOME=${LAIA_DIR}
 [Install]
 WantedBy=multi-user.target
 EOF
-    ok "hermes.service generado (User=${CURRENT_USER})"
+  ok "hermes.service generado"
 
-    sudo tee /etc/systemd/system/workspace-ui.service >/dev/null <<EOF
+  sudo tee /etc/systemd/system/workspace-ui.service >/dev/null <<EOF
 [Unit]
 Description=Workspace UI (LAIA)
 After=network.target hermes.service
@@ -470,39 +471,33 @@ Environment=HERMES_VENV=${VENV}
 [Install]
 WantedBy=multi-user.target
 EOF
-    ok "workspace-ui.service generado (User=${CURRENT_USER}, Port=8077)"
+  ok "workspace-ui.service generado"
 
-    sudo systemctl daemon-reload
-    sudo systemctl enable hermes.service workspace-ui.service
-    ok "Servicios habilitados en systemd"
-  elif [[ "$OS" == "macos" ]]; then
-    info "macOS detectado — omitiendo servicios systemd (usa launchd manualmente si lo necesitas)"
-  fi
+  sudo systemctl daemon-reload
+  sudo systemctl enable hermes.service workspace-ui.service
+  ok "Servicios habilitados"
 fi
 
 # ══════════════════════════════════════════════════════════════════════════════
-# PASO 9 — Nginx (opcional, solo Linux)
+# PASO 10 — Nginx
 # ══════════════════════════════════════════════════════════════════════════════
-if [[ -n "$OPT_NGINX" ]]; then
-  if [[ "$OS" == "linux" ]]; then
-    step "9  Nginx — ${OPT_NGINX}"
+if [[ -n "$OPT_NGINX" && "$OS" == "linux" ]]; then
+  step "10  Nginx — ${OPT_NGINX}"
 
-    if ! command -v nginx &>/dev/null; then
-      warn "nginx no está instalado — instalando..."
-      sudo apt-get install -y --no-install-recommends nginx || err "No se pudo instalar nginx"
-    fi
+  if ! command -v nginx &>/dev/null; then
+    warn "nginx no está instalado — instalando..."
+    sudo apt-get install -y --no-install-recommends nginx || err "No se pudo instalar nginx"
+  fi
 
-    # Backup config previa
-    if [[ -f "/etc/nginx/sites-available/laia" ]]; then
-      sudo cp "/etc/nginx/sites-available/laia" "/etc/nginx/sites-available/laia.backup.$(date +%s)"
-    fi
+  if [[ -f "/etc/nginx/sites-available/laia" ]]; then
+    sudo cp "/etc/nginx/sites-available/laia" "/etc/nginx/sites-available/laia.bak.$(date +%s)"
+  fi
 
-    sudo tee /etc/nginx/sites-available/laia >/dev/null <<EOF
+  sudo tee /etc/nginx/sites-available/laia >/dev/null <<EOF
 server {
     listen 80;
     server_name ${OPT_NGINX} www.${OPT_NGINX};
 
-    # Workspace UI (WebSocket + HTTP)
     location /workspace/ {
         proxy_pass http://127.0.0.1:8077/;
         proxy_set_header Host \$host;
@@ -512,7 +507,6 @@ server {
         proxy_read_timeout 86400;
     }
 
-    # Hermes gateway API
     location /api/ {
         proxy_pass http://127.0.0.1:8000/;
         proxy_set_header Host \$host;
@@ -521,7 +515,6 @@ server {
         proxy_set_header X-Forwarded-Proto \$scheme;
     }
 
-    # Frontend estático (Vite build)
     location / {
         root ${WS_FRONTEND}/dist;
         try_files \$uri \$uri/ /index.html;
@@ -530,74 +523,71 @@ server {
 }
 EOF
 
-    sudo ln -sf /etc/nginx/sites-available/laia /etc/nginx/sites-enabled/laia
-    sudo rm -f /etc/nginx/sites-enabled/default 2>/dev/null || true
-    sudo nginx -t || err "Configuración de nginx inválida"
-    sudo systemctl reload nginx || sudo systemctl restart nginx
-    ok "Nginx configurado para ${OPT_NGINX}"
-  else
-    warn "Nginx solo se configura automáticamente en Linux — omítelo en macOS"
-  fi
+  sudo ln -sf /etc/nginx/sites-available/laia /etc/nginx/sites-enabled/laia
+  sudo rm -f /etc/nginx/sites-enabled/default 2>/dev/null || true
+  sudo nginx -t || err "Config nginx inválida"
+  sudo systemctl reload nginx || sudo systemctl restart nginx
+  ok "Nginx configurado"
 fi
 
 # ══════════════════════════════════════════════════════════════════════════════
-# PASO 10 — Restaurar estado desde otra máquina
+# PASO 11 — Restaurar estado
 # ══════════════════════════════════════════════════════════════════════════════
 if [[ -n "$OPT_RESTORE" ]]; then
-  step "10  Restaurar estado desde ${OPT_RESTORE}"
+  step "11  Restaurar estado desde ${OPT_RESTORE}"
 
-  # Verificar conectividad SSH
   if ! ssh -o ConnectTimeout=10 -o BatchMode=yes "$OPT_RESTORE" 'echo ok' &>/dev/null; then
-    err "No se puede conectar por SSH a ${OPT_RESTORE} (¿clave autorizada?)"
+    err "No se puede conectar por SSH a ${OPT_RESTORE}"
   fi
 
   for item in memories config auth.json state.db sessions skills; do
-    info "Restaurando ${item} ..."
+    info "Restaurando ${item}..."
     src="${OPT_RESTORE}:${LAIA_DIR}/${item}"
     dst="$LAIA_DIR/"
     if ssh -o ConnectTimeout=10 "$OPT_RESTORE" "test -e ${LAIA_DIR}/${item}" 2>/dev/null; then
       if [[ "$item" == "auth.json" || "$item" == "state.db" ]]; then
-        rsync -az --progress "$src" "$dst" && ok "$item restaurado" || warn "$item falló al sincronizar"
+        rsync -az --progress "$src" "$dst" && ok "$item OK" || warn "$item falló"
       else
-        # Para directorios asegurar trailing slash
-        rsync -az --progress "${src}/" "${dst}${item}/" && ok "$item restaurado" || warn "$item falló al sincronizar"
+        rsync -az --progress "${src}/" "${dst}${item}/" && ok "$item OK" || warn "$item falló"
       fi
     else
-      warn "$item no encontrado en origen — omitido"
+      warn "$item no encontrado — omitido"
     fi
   done
 fi
 
 # ══════════════════════════════════════════════════════════════════════════════
-# PASO 11 — Arrancar servicios
+# PASO 12 — Arrancar servicios
 # ══════════════════════════════════════════════════════════════════════════════
 if [[ "$OPT_SERVICES" == true && "$OS" == "linux" ]]; then
-  step "11  Arrancando servicios"
+  step "12  Arrancando servicios"
 
   if systemctl is-system-running &>/dev/null || [[ "$(systemctl is-system-running 2>/dev/null)" == "degraded" ]]; then
     for svc in hermes workspace-ui; do
       if sudo systemctl start "$svc" 2>/dev/null; then
         ok "$svc arrancado"
       else
-        warn "$svc no pudo arrancar — ver: journalctl -u $svc -n 30 --no-pager"
+        warn "$svc falló — journalctl -u $svc -n 30"
       fi
     done
   else
-    warn "systemd no está disponible o no está corriendo como PID 1 — omite arranque automático"
+    warn "systemd no disponible — omite arranque"
   fi
 fi
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Resumen final
+# Resumen
 # ══════════════════════════════════════════════════════════════════════════════
 echo ""
 echo -e "${YEL}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RST}"
 echo -e "${GRN}${BLD}  ✓ LAIA instalado correctamente${RST}"
 echo -e "${YEL}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RST}"
 echo ""
-echo -e "  ${BLD}Directorios:${RST}"
-echo -e "  ${DIM}  ${LAIA_DIR}/              — datos + runtime${RST}"
-echo -e "  ${DIM}  ${CODE_DIR}/   — código (hermes + workspace-ui)${RST}"
+echo -e "  ${BLD}Estructura:${RST}"
+echo -e "  ${DIM}  ${LAIA_DIR}/              — Datos + runtime${RST}"
+echo -e "  ${DIM}  ${CODE_DIR}/   — Código (Hermes + Workspace UI)${RST}"
+echo -e "  ${DIM}  ${RUNTIME_DIR}/          — Runtime de Hermes${RST}"
+echo -e "  ${DIM}  ${BIN_DIR}/              — Scripts del sistema${RST}"
 echo ""
 
 if [[ "$OS" == "linux" && "$OPT_SERVICES" == true ]]; then
@@ -607,36 +597,27 @@ if [[ "$OS" == "linux" && "$OPT_SERVICES" == true ]]; then
       echo -e "  ${GRN}  ✓ $svc — activo${RST}"
     else
       echo -e "  ${YEL}  ⚠ $svc — inactivo${RST}"
-      echo -e "  ${DIM}     journalctl -u $svc -n 30 --no-pager${RST}"
     fi
   done
   echo ""
 fi
 
 if [[ -f "$LAIA_DIR/auth.json" ]]; then
-  echo -e "  ${GRN}✓ auth.json presente — tokens listos${RST}"
+  echo -e "  ${GRN}✓ auth.json presente${RST}"
 else
   echo -e "  ${YEL}⚠  auth.json no encontrado${RST}"
-  echo -e "  ${DIM}  Restaura desde otro equipo:${RST}"
-  echo -e "  ${DIM}    clone-laia --restore usuario@host${RST}"
-  echo -e "  ${DIM}  O desde backup cifrado:${RST}"
-  echo -e "  ${DIM}    openssl enc -d -aes-256-cbc -pbkdf2 -iter 100000 \\\${RST}"
-  echo -e "  ${DIM}      -in laia-secrets-*.tar.gz | tar -xz -C ${LAIA_DIR}/${RST}"
+  echo -e "  ${DIM}  Restaura: clone-laia --restore usuario@host${RST}"
 fi
 
 echo ""
 echo -e "  ${BLD}Próximos pasos:${RST}"
-echo -e "  ${DIM}  source ~/.bashrc                    — activar HERMES_HOME${RST}"
+echo -e "  ${DIM}  source ~/.bashrc  — activar HERMES_HOME${RST}"
 [[ -z "$OPT_RESTORE" ]] && \
-  echo -e "  ${DIM}  clone-laia --restore usuario@host   — restaurar estado${RST}"
-if [[ "$OS" == "linux" && "$OPT_SERVICES" == true ]]; then
-  echo -e "  ${DIM}  journalctl -u hermes -f             — ver logs en tiempo real${RST}"
-else
-  echo -e "  ${DIM}  hermes gateway run                  — arrancar hermes manualmente${RST}"
-fi
-echo -e "  ${DIM}  Log completo: ${LOG_FILE}${RST}"
+  echo -e "  ${DIM}  clone-laia --restore usuario@host  — migrar datos${RST}"
+[[ "$OS" == "linux" && "$OPT_SERVICES" == true ]] && \
+  echo -e "  ${DIM}  journalctl -u hermes -f  — logs en tiempo real${RST}"
+echo -e "  ${DIM}  Log: ${LOG_FILE}${RST}"
 echo ""
 
-# Limpiar handler de error ya que terminamos con éxito
 trap - EXIT
 exit 0
