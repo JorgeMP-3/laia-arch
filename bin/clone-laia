@@ -10,7 +10,11 @@
 #   clone-laia [opciones]
 #
 # Opciones:
-#   --restore USER@HOST    Restaura estado (memories, config, auth, sessions, skills)
+#   --restore USER@HOST    Restaura estado completo (workspaces, memories, config,
+#                          auth, sessions, skills, .codex, .opencode, cc1, cc2)
+#   --setup-server         Wizard interactivo para configurar el servidor completo
+#                          (Claude cc1+cc2, Codex, OpenCode, NVM, PM2, Tailscale,
+#                          Docker, Nginx, Samba, UFW, Git)
 #   --no-services          No instalar servicios systemd
 #   --nginx DOMINIO        Configurar nginx para el dominio
 #   --no-deps              Omitir instalación de paquetes del sistema
@@ -25,8 +29,8 @@
 set -euo pipefail
 
 # ── Metadata ─────────────────────────────────────────────────────────────────
-readonly INSTALLER_VERSION="2.3.0"
-readonly INSTALLER_DATE="2026-05-08"
+readonly INSTALLER_VERSION="2.4.0"
+readonly INSTALLER_DATE="2026-05-10"
 
 # ── Colores ──────────────────────────────────────────────────────────────────
 if [[ -n "${NO_COLOR:-}" ]]; then
@@ -87,6 +91,7 @@ OPT_NGINX=""
 OPT_DEPS=true
 OPT_YES=false
 OPT_BACKUP_LOCAL=false
+OPT_SETUP_SERVER=false
 LAIA_DIR="${LAIA_INSTALL_DIR:-$HOME/LAIA}"
 
 while [[ $# -gt 0 ]]; do
@@ -94,6 +99,7 @@ while [[ $# -gt 0 ]]; do
     --restore)
       [[ $# -ge 2 && -n "$2" ]] || err "--restore requiere USER@HOST"
       OPT_RESTORE="$2"; shift 2 ;;
+    --setup-server) OPT_SETUP_SERVER=true; shift ;;
     --no-services) OPT_SERVICES=false; shift ;;
     --nginx)
       [[ $# -ge 2 && -n "$2" ]] || err "--nginx requiere DOMINIO"
@@ -369,35 +375,12 @@ mkdir -p "$RUNTIME_DIR/memories" "$RUNTIME_DIR/skills" "$RUNTIME_DIR/sessions" "
 # ══════════════════════════════════════════════════════════════════════════════
 step "7  Scripts del sistema"
 
-mkdir -p "$BIN_DIR"
-
-# Copiar scripts del repo (sin symlinks rotos)
 if [[ -d "$CODE_DIR/bin" ]]; then
-  for script in "$CODE_DIR/bin/"*; do
-    [[ -f "$script" && ! -L "$script" ]] || continue
-    cp -f "$script" "$BIN_DIR/"
-  done
+  mkdir -p "$BIN_DIR"
+  rsync -a --delete "$CODE_DIR/bin/" "$BIN_DIR/"
   chmod +x "$BIN_DIR/"* 2>/dev/null || true
-  ok "Scripts del repo copiados a ~/bin/"
+  ok "Scripts en ~/bin/"
 fi
-
-# Wrappers para binarios del venv (rutas dinámicas, no hardcodeadas)
-_create_wrapper() {
-  local name="$1"
-  local target="$2"
-  cat > "$BIN_DIR/$name" <<EOF
-#!/usr/bin/env bash
-# Wrapper generado por install-laia — apunta al venv actual
-exec "$target" "\$@"
-EOF
-  chmod +x "$BIN_DIR/$name"
-}
-
-[[ -x "$VENV/bin/hermes" ]] && { _create_wrapper "hermes" "$VENV/bin/hermes"; ok "Wrapper hermes → venv"; }
-[[ -x "$VENV/bin/uvicorn" ]] && { _create_wrapper "uvicorn" "$VENV/bin/uvicorn"; ok "Wrapper uvicorn → venv"; }
-
-# Alias laia-arch → hermes
-[[ -x "$BIN_DIR/hermes" ]] && { ln -sf "$BIN_DIR/hermes" "$BIN_DIR/laia-arch" 2>/dev/null || true; }
 
 # ══════════════════════════════════════════════════════════════════════════════
 # PASO 8 — Variables de entorno
@@ -622,51 +605,60 @@ if [[ -n "$OPT_RESTORE" ]]; then
     info "Conexión SSH verificada — restaurando..."
 
     # Determinar rutas en el servidor origen
+    SRC_HOME=$(ssh -o ConnectTimeout=10 "$OPT_RESTORE" 'echo $HOME')
     SRC_HERMES_HOME=$(ssh -o ConnectTimeout=10 "$OPT_RESTORE" 'echo ${HERMES_HOME:-$HOME/.hermes}')
     SRC_LAIA_DIR=$(ssh -o ConnectTimeout=10 "$OPT_RESTORE" 'echo ${LAIA_INSTALL_DIR:-$HOME/LAIA}')
-    info "Origen: HERMES_HOME=${SRC_HERMES_HOME}  LAIA_DIR=${SRC_LAIA_DIR}"
+    info "Origen: HOME=${SRC_HOME}  HERMES_HOME=${SRC_HERMES_HOME}  LAIA=${SRC_LAIA_DIR}"
 
-    # ── Items en ~/.hermes/ (runtime) ──
-    for item in state.db sessions skills; do
-      info "Restaurando ${item}..."
-      src="${OPT_RESTORE}:${SRC_HERMES_HOME}/${item}"
-      if ssh -o ConnectTimeout=10 "$OPT_RESTORE" "test -e ${SRC_HERMES_HOME}/${item}" 2>/dev/null; then
-        if [[ "$item" == "state.db" ]]; then
-          rsync -az --progress "$src" "$RUNTIME_DIR/" && ok "$item OK" || warn "$item falló"
-        else
-          mkdir -p "$RUNTIME_DIR/$item"
-          rsync -az --progress "${src}/" "$RUNTIME_DIR/${item}/" && ok "$item OK" || warn "$item falló"
-        fi
-      else
-        warn "$item no encontrado en origen (~/.hermes/) — omitido"
+    # Helper: restaura archivo o directorio detectando automáticamente
+    _restore() {
+      local src_path="$1" dst_path="$2" label="$3"
+      info "Restaurando ${label}..."
+      if ! ssh -o ConnectTimeout=10 "$OPT_RESTORE" "test -e '${src_path}'" 2>/dev/null; then
+        warn "${label} — no encontrado en origen, omitido"
+        return 0
       fi
+      if ssh -o ConnectTimeout=10 "$OPT_RESTORE" "test -f '${src_path}'" 2>/dev/null; then
+        mkdir -p "$(dirname "$dst_path")"
+        rsync -az --progress "${OPT_RESTORE}:${src_path}" "$(dirname "$dst_path")/" \
+          && ok "${label} OK" || warn "${label} falló"
+      else
+        mkdir -p "$dst_path"
+        rsync -az --progress "${OPT_RESTORE}:${src_path}/" "$dst_path/" \
+          && ok "${label} OK" || warn "${label} falló"
+      fi
+    }
+
+    # ── ~/.hermes/ (runtime) ──
+    for item in auth.json state.db SOUL.md; do
+      _restore "${SRC_HERMES_HOME}/${item}" "${RUNTIME_DIR}/${item}" "~/.hermes/${item}"
+    done
+    for item in sessions skills cron memories; do
+      _restore "${SRC_HERMES_HOME}/${item}" "${RUNTIME_DIR}/${item}" "~/.hermes/${item}/"
     done
 
-    # auth.json puede estar en ~/.hermes/ o ~/LAIA/
-    info "Restaurando auth.json..."
-    AUTH_SRC=""
-    if ssh -o ConnectTimeout=10 "$OPT_RESTORE" "test -f ${SRC_HERMES_HOME}/auth.json" 2>/dev/null; then
-      AUTH_SRC="${OPT_RESTORE}:${SRC_HERMES_HOME}/auth.json"
-    elif ssh -o ConnectTimeout=10 "$OPT_RESTORE" "test -f ${SRC_LAIA_DIR}/auth.json" 2>/dev/null; then
-      AUTH_SRC="${OPT_RESTORE}:${SRC_LAIA_DIR}/auth.json"
-    fi
-    if [[ -n "$AUTH_SRC" ]]; then
-      rsync -az --progress "$AUTH_SRC" "$RUNTIME_DIR/" && ok "auth.json OK" || warn "auth.json falló"
-    else
-      warn "auth.json no encontrado en origen — omitido"
-    fi
-
-    # ── Items en ~/LAIA/ (datos personales) ──
-    for item in memories config; do
-      info "Restaurando ${item}..."
-      src="${OPT_RESTORE}:${SRC_LAIA_DIR}/${item}"
-      if ssh -o ConnectTimeout=10 "$OPT_RESTORE" "test -e ${SRC_LAIA_DIR}/${item}" 2>/dev/null; then
-        mkdir -p "$LAIA_DIR/$item"
-        rsync -az --progress "${src}/" "$LAIA_DIR/${item}/" && ok "$item OK" || warn "$item falló"
-      else
-        warn "$item no encontrado en origen (~/LAIA/) — omitido"
-      fi
+    # ── ~/LAIA/ (datos personales + workspaces) ──
+    for item in memories config workspaces skills cron; do
+      _restore "${SRC_LAIA_DIR}/${item}" "${LAIA_DIR}/${item}" "LAIA/${item}/"
     done
+    for item in auth.json config.yaml SOUL.md .env; do
+      _restore "${SRC_LAIA_DIR}/${item}" "${LAIA_DIR}/${item}" "LAIA/${item}"
+    done
+
+    # ── Herramientas de IA (directorio home) ──
+    # Codex — credenciales y config (sin logs pesados)
+    for item in auth.json config.toml state_5.sqlite; do
+      _restore "${SRC_HOME}/.codex/${item}" "${HOME}/.codex/${item}" ".codex/${item}"
+    done
+
+    # OpenCode — config (sin binario de 146MB; se instala con --setup-server)
+    _restore "${SRC_HOME}/.opencode/package.json" "${HOME}/.opencode/package.json" ".opencode/config"
+
+    # Claude Code cc1 — solo credenciales MCP (settings.json es local)
+    _restore "${SRC_HOME}/.claude/.credentials.json" "${HOME}/.claude/.credentials.json" ".claude/.credentials.json (cc1)"
+
+    # Claude Code cc2 — directorio completo de segunda cuenta
+    _restore "${SRC_HOME}/.claude-cuenta2" "${HOME}/.claude-cuenta2" ".claude-cuenta2/ (cc2)"
 
   else
     warn "No se puede conectar por SSH a ${OPT_RESTORE}"
@@ -708,13 +700,28 @@ if [[ "$OPT_BACKUP_LOCAL" == true ]]; then
   tar -czf "$BACKUP_FILE" \
     -C "$HOME" \
     .hermes/auth.json \
-    .hermes/config.yaml \
     .hermes/state.db \
+    .hermes/SOUL.md \
     .hermes/memories/ \
     .hermes/sessions/ \
     .hermes/skills/ \
+    .hermes/cron/ \
     LAIA/memories/ \
-    LAIA/config/ 2>/dev/null || true
+    LAIA/config/ \
+    LAIA/workspaces/ \
+    LAIA/skills/ \
+    LAIA/cron/ \
+    LAIA/auth.json \
+    LAIA/config.yaml \
+    LAIA/SOUL.md \
+    LAIA/.env \
+    .codex/auth.json \
+    .codex/config.toml \
+    .codex/state_5.sqlite \
+    .opencode/package.json \
+    .claude/.credentials.json \
+    .claude-cuenta2/ \
+    2>/dev/null || true
 
   if [[ -f "$BACKUP_FILE" ]]; then
     size=$(du -h "$BACKUP_FILE" | cut -f1)
@@ -727,6 +734,281 @@ if [[ "$OPT_BACKUP_LOCAL" == true ]]; then
   else
     warn "No se pudo crear el backup"
   fi
+fi
+
+# ══════════════════════════════════════════════════════════════════════════════
+# PASO 15 — Configuración del servidor (--setup-server)
+# ══════════════════════════════════════════════════════════════════════════════
+if [[ "$OPT_SETUP_SERVER" == true && "$OS" == "linux" ]]; then
+  step "15  Configuración del servidor"
+
+  _sv_status() {
+    local label="$1" kind="$2" target="$3"
+    if [[ "$kind" == "cmd" ]]; then
+      command -v "$target" &>/dev/null \
+        && echo -e "  ${GRN}✓${RST}  $label" \
+        || echo -e "  ${YEL}?${RST}  $label"
+    else
+      [[ -e "$target" ]] \
+        && echo -e "  ${GRN}✓${RST}  $label" \
+        || echo -e "  ${YEL}?${RST}  $label"
+    fi
+  }
+
+  echo ""
+  echo -e "  ${BLD}Estado actual:${RST}"
+  _sv_status "1)  Claude Code CLI  (cc1 — cuenta principal)"  cmd  claude
+  _sv_status "2)  Claude Code cc2  (cuenta secundaria Docker)" path "$HOME/.claude-cuenta2/.credentials.json"
+  _sv_status "3)  Codex CLI        (OpenAI/GPT)"              cmd  codex
+  _sv_status "4)  OpenCode CLI     (Minimax)"                 path "$HOME/.opencode/bin/opencode"
+  _sv_status "5)  NVM + Node.js"                              cmd  node
+  _sv_status "6)  PM2"                                        cmd  pm2
+  _sv_status "7)  Tailscale"                                  cmd  tailscale
+  _sv_status "8)  Docker"                                     cmd  docker
+  _sv_status "9)  Nginx"                                      cmd  nginx
+  _sv_status "10) Samba (compartir con Mac)"                  cmd  smbd
+  _sv_status "11) UFW Firewall"                               cmd  ufw
+  _sv_status "12) Git config"                                 path "$HOME/.gitconfig"
+  echo ""
+
+  SETUP_CHOICES=()
+  if [[ "$OPT_YES" == false ]]; then
+    echo -e "  ${BLD}¿Qué quieres configurar?${RST}"
+    echo -e "  ${DIM}  Escribe números separados por espacio, 'todo' o 'nada'${RST}"
+    ask "Opciones (ej: 1 3 7):" ""
+    if [[ "$REPLY" == "todo" ]]; then
+      SETUP_CHOICES=(1 2 3 4 5 6 7 8 9 10 11 12)
+    elif [[ "$REPLY" == "nada" || -z "$REPLY" ]]; then
+      SETUP_CHOICES=()
+    else
+      IFS=' ' read -ra SETUP_CHOICES <<< "$REPLY"
+    fi
+  else
+    command -v claude    &>/dev/null || SETUP_CHOICES+=(1)
+    [[ -e "$HOME/.claude-cuenta2/.credentials.json" ]] || SETUP_CHOICES+=(2)
+    command -v codex     &>/dev/null || SETUP_CHOICES+=(3)
+    [[ -x "$HOME/.opencode/bin/opencode" ]]            || SETUP_CHOICES+=(4)
+    command -v node      &>/dev/null || SETUP_CHOICES+=(5)
+    command -v pm2       &>/dev/null || SETUP_CHOICES+=(6)
+    command -v tailscale &>/dev/null || SETUP_CHOICES+=(7)
+    command -v docker    &>/dev/null || SETUP_CHOICES+=(8)
+  fi
+
+  _has_choice() { [[ " ${SETUP_CHOICES[*]:-} " == *" $1 "* ]]; }
+
+  # ── 1. Claude Code cc1 ──────────────────────────────────────────────────────
+  if _has_choice 1; then
+    info "Instalando Claude Code (cc1)..."
+    if ! command -v claude &>/dev/null; then
+      npm install -g @anthropic-ai/claude-code@latest || warn "Claude Code npm falló"
+    fi
+    ok "Claude Code: $(claude --version 2>/dev/null | head -1 || echo '?')"
+    if [[ ! -f "$HOME/.claude/.credentials.json" ]]; then
+      warn "cc1 necesita OAuth — ejecuta: claude"
+    fi
+  fi
+
+  # ── 2. Claude Code cc2 (Docker) ─────────────────────────────────────────────
+  if _has_choice 2; then
+    info "Configurando Claude Code cc2 (Docker)..."
+    if ! command -v docker &>/dev/null; then
+      warn "Docker no instalado — instala primero (opción 8)"
+    else
+      if ! docker ps -a --format '{{.Names}}' 2>/dev/null | grep -q '^claude-secondary$'; then
+        info "Creando contenedor claude-secondary..."
+        mkdir -p "$HOME/.claude-cuenta2"
+        docker run -d \
+          --name claude-secondary \
+          --restart unless-stopped \
+          -v "${HOME}/LAIA:/home/claude/LAIA" \
+          -v "${HOME}/.claude-cuenta2:/home/claude/.claude" \
+          -w "/home/claude/LAIA" \
+          node:22-bookworm-slim \
+          bash -c "tail -f /dev/null" || warn "No se pudo crear claude-secondary"
+        docker exec claude-secondary bash -c \
+          "npm install -g @anthropic-ai/claude-code@latest 2>&1 | tail -3" \
+          && ok "Claude Code instalado en contenedor" || warn "npm en contenedor falló"
+        ok "Contenedor claude-secondary creado"
+      else
+        ok "Contenedor claude-secondary ya existe"
+      fi
+    fi
+    if [[ ! -f "$HOME/.claude-cuenta2/.credentials.json" ]]; then
+      warn "cc2 necesita OAuth — ejecuta: sclaude  (pedirá autenticación)"
+    fi
+  fi
+
+  # ── 3. Codex (OpenAI) ────────────────────────────────────────────────────────
+  if _has_choice 3; then
+    info "Instalando Codex CLI..."
+    if ! command -v codex &>/dev/null; then
+      npm install -g @openai/codex@latest || warn "Codex npm falló"
+    fi
+    ok "Codex: $(codex --version 2>/dev/null | head -1 || echo '?')"
+    if [[ ! -f "$HOME/.codex/auth.json" ]]; then
+      warn "Codex necesita OAuth — ejecuta: codex login"
+    fi
+  fi
+
+  # ── 4. OpenCode (Minimax) ────────────────────────────────────────────────────
+  if _has_choice 4; then
+    info "Instalando OpenCode..."
+    if [[ ! -x "$HOME/.opencode/bin/opencode" ]]; then
+      mkdir -p "$HOME/.opencode/bin"
+      OC_LATEST=$(curl -s https://api.github.com/repos/sst/opencode/releases/latest \
+        | grep '"tag_name"' | cut -d'"' -f4 2>/dev/null || echo "")
+      if [[ -n "$OC_LATEST" ]]; then
+        OC_URL="https://github.com/sst/opencode/releases/download/${OC_LATEST}/opencode-linux-x64"
+        curl -fL "$OC_URL" -o "$HOME/.opencode/bin/opencode" \
+          && chmod +x "$HOME/.opencode/bin/opencode" \
+          && ok "OpenCode ${OC_LATEST}" \
+          || warn "Descarga falló — instala manualmente desde github.com/sst/opencode"
+      else
+        warn "No se pudo obtener versión de OpenCode — instala manualmente"
+      fi
+    else
+      ok "OpenCode ya instalado"
+    fi
+    grep -q '.opencode/bin' "$HOME/.bashrc" 2>/dev/null || \
+      echo 'export PATH="$HOME/.opencode/bin:$PATH"' >> "$HOME/.bashrc"
+    grep -q '.opencode/bin' "$HOME/.zshrc" 2>/dev/null || \
+      echo 'export PATH="$HOME/.opencode/bin:$PATH"' >> "$HOME/.zshrc" 2>/dev/null || true
+  fi
+
+  # ── 5. NVM + Node.js v22 ─────────────────────────────────────────────────────
+  if _has_choice 5; then
+    info "Instalando NVM + Node.js v22..."
+    if [[ ! -d "$HOME/.nvm" ]]; then
+      curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash \
+        || warn "NVM falló"
+    fi
+    export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
+    # shellcheck source=/dev/null
+    [[ -s "$NVM_DIR/nvm.sh" ]] && . "$NVM_DIR/nvm.sh"
+    nvm install 22 && nvm use 22 && nvm alias default 22 \
+      && ok "Node.js $(node --version 2>/dev/null)" \
+      || warn "nvm install 22 falló"
+  fi
+
+  # ── 6. PM2 ──────────────────────────────────────────────────────────────────
+  if _has_choice 6; then
+    info "Instalando PM2..."
+    if ! command -v pm2 &>/dev/null; then
+      npm install -g pm2 || warn "PM2 npm falló"
+    fi
+    pm2 startup systemd -u "$CURRENT_USER" --hp "$HOME" 2>/dev/null \
+      | grep -E "^sudo" | bash 2>/dev/null || true
+    ok "PM2 $(pm2 --version 2>/dev/null)"
+    echo -e "  ${DIM}Usa: pm2 save  para persistir procesos${RST}"
+  fi
+
+  # ── 7. Tailscale ─────────────────────────────────────────────────────────────
+  if _has_choice 7; then
+    info "Instalando Tailscale..."
+    if ! command -v tailscale &>/dev/null; then
+      curl -fsSL https://tailscale.com/install.sh | sh || warn "Tailscale falló"
+    fi
+    if command -v tailscale &>/dev/null; then
+      if tailscale status &>/dev/null 2>&1; then
+        ok "Tailscale activo ($(tailscale ip -4 2>/dev/null || echo '?'))"
+      else
+        ok "Tailscale instalado — conéctalo:"
+        echo -e "  ${DIM}  sudo tailscale up${RST}"
+        echo -e "  ${DIM}  Abre el enlace en tu navegador e inicia sesión${RST}"
+      fi
+    fi
+  fi
+
+  # ── 8. Docker ────────────────────────────────────────────────────────────────
+  if _has_choice 8; then
+    info "Instalando Docker..."
+    if ! command -v docker &>/dev/null; then
+      curl -fsSL https://get.docker.com | sh || warn "Docker install.sh falló"
+    fi
+    if command -v docker &>/dev/null; then
+      if ! groups "$CURRENT_USER" | grep -q docker 2>/dev/null; then
+        sudo usermod -aG docker "$CURRENT_USER"
+        warn "Añadido al grupo docker — cierra sesión para aplicar"
+      fi
+      ok "Docker $(docker --version 2>/dev/null | awk '{print $3}' | tr -d ',')"
+    fi
+  fi
+
+  # ── 9. Nginx ─────────────────────────────────────────────────────────────────
+  if _has_choice 9; then
+    if [[ -n "$OPT_NGINX" ]]; then
+      info "Nginx ya configurado con --nginx ${OPT_NGINX}"
+    else
+      info "Instalando Nginx..."
+      if ! command -v nginx &>/dev/null; then
+        sudo apt-get install -y --no-install-recommends nginx || warn "Nginx falló"
+      fi
+      ok "Nginx instalado"
+      echo -e "  ${DIM}Para proxy reverso: clone-laia --nginx TU_DOMINIO${RST}"
+    fi
+  fi
+
+  # ── 10. Samba (compartir con Mac) ────────────────────────────────────────────
+  if _has_choice 10; then
+    info "Instalando Samba..."
+    if ! command -v smbd &>/dev/null; then
+      sudo apt-get install -y --no-install-recommends samba || warn "Samba falló"
+    fi
+    if ! grep -q "\[laia-arch\]" /etc/samba/smb.conf 2>/dev/null; then
+      sudo tee -a /etc/samba/smb.conf >/dev/null <<SMBEOF
+
+[laia-arch]
+   comment = LAIA Home
+   path = ${HOME}
+   valid users = ${CURRENT_USER}
+   read only = no
+   browseable = yes
+SMBEOF
+      sudo systemctl restart smbd 2>/dev/null || true
+    fi
+    ok "Samba configurado — acceso: smb://$(hostname -I | awk '{print $1}')/"
+    warn "Establece contraseña Samba: sudo smbpasswd -a ${CURRENT_USER}"
+  fi
+
+  # ── 11. UFW Firewall ─────────────────────────────────────────────────────────
+  if _has_choice 11; then
+    info "Configurando UFW..."
+    if ! command -v ufw &>/dev/null; then
+      sudo apt-get install -y --no-install-recommends ufw || warn "UFW falló"
+    fi
+    sudo ufw allow 22/tcp comment 'SSH'
+    sudo ufw allow 80/tcp comment 'HTTP'
+    sudo ufw allow 443/tcp comment 'HTTPS'
+    sudo ufw allow 8077/tcp comment 'Workspace UI'
+    sudo ufw --force enable
+    ok "UFW activo"
+    sudo ufw status numbered
+  fi
+
+  # ── 12. Git config ───────────────────────────────────────────────────────────
+  if _has_choice 12; then
+    info "Configurando Git global..."
+    _git_name=$(git config --global user.name 2>/dev/null || echo "")
+    _git_email=$(git config --global user.email 2>/dev/null || echo "")
+    if [[ -z "$_git_name" ]]; then
+      ask "Git user.name:" ""
+      [[ -n "$REPLY" ]] && git config --global user.name "$REPLY"
+    else
+      ok "git user.name = ${_git_name}"
+    fi
+    if [[ -z "$_git_email" ]]; then
+      ask "Git user.email:" ""
+      [[ -n "$REPLY" ]] && git config --global user.email "$REPLY"
+    else
+      ok "git user.email = ${_git_email}"
+    fi
+    git config --global pull.rebase false
+    git config --global init.defaultBranch main
+    ok "Git configurado"
+  fi
+
+  echo ""
+  ok "Configuración del servidor completada"
 fi
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -767,9 +1049,12 @@ echo ""
 echo -e "  ${BLD}Próximos pasos:${RST}"
 echo -e "  ${DIM}  source ~/.bashrc  — activar HERMES_HOME${RST}"
 [[ -z "$OPT_RESTORE" && "$OPT_BACKUP_LOCAL" == false ]] && \
-  echo -e "  ${DIM}  clone-laia --restore usuario@host  — migrar datos${RST}"
+  echo -e "  ${DIM}  clone-laia --restore usuario@host  — migrar datos desde otro servidor${RST}"
+[[ "$OPT_SETUP_SERVER" == false ]] && \
+  echo -e "  ${DIM}  clone-laia --setup-server  — configurar Claude cc1+cc2, Codex, OpenCode, tools${RST}"
 [[ "$OS" == "linux" && "$OPT_SERVICES" == true ]] && \
   echo -e "  ${DIM}  journalctl -u hermes -f  — logs en tiempo real${RST}"
+echo -e "  ${DIM}  laia-stop --disable  — apagar agente para moverlo a otra máquina${RST}"
 echo -e "  ${DIM}  Log: ${LOG_FILE}${RST}"
 echo ""
 
