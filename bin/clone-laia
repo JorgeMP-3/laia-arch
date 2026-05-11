@@ -42,7 +42,7 @@
 set -euo pipefail
 
 # ── Metadata ─────────────────────────────────────────────────────────────────
-readonly INSTALLER_VERSION="2.6.0"
+readonly INSTALLER_VERSION="2.6.1"
 readonly INSTALLER_DATE="2026-05-11"
 
 # ── Colores ──────────────────────────────────────────────────────────────────
@@ -128,7 +128,22 @@ _setup_npm_prefix() {
 npm_global_install() {
   _setup_npm_prefix || { warn "npm no disponible"; return 1; }
   npm install -g "$@" 2>&1 | tail -3
-  return "${PIPESTATUS[0]}"
+  local rc="${PIPESTATUS[0]}"
+  # Refrescar hash table de bash para que el comando recién instalado
+  # esté disponible en esta misma sesión sin reabrir shell.
+  hash -r 2>/dev/null || true
+  return "$rc"
+}
+
+# _bin_version: imprime la versión de un comando aunque acabe de instalarse
+# y no esté en la hash table. Busca en PATH y en ~/.npm-global/bin.
+_bin_version() {
+  local cmd="$1"
+  local exe
+  exe="$(command -v "$cmd" 2>/dev/null)"
+  [[ -z "$exe" && -x "$HOME/.npm-global/bin/$cmd" ]] && exe="$HOME/.npm-global/bin/$cmd"
+  [[ -z "$exe" ]] && { echo "no encontrado"; return 1; }
+  "$exe" --version 2>/dev/null | head -1 || echo "?"
 }
 
 # _docker_setup: deja $DOCKER apuntando al binario correcto (docker / "sudo docker" / "").
@@ -629,14 +644,18 @@ if $WANT_VENV; then
     register_rollback "rm -rf '$VENV'"
   fi
 
-  info "Instalando hermes-agent..."
-  "$VENV/bin/pip" install --upgrade pip -q --disable-pip-version-check || true
-  "$VENV/bin/pip" install -e "$CODE_DIR" -q --disable-pip-version-check || err "pip install -e falló"
-  ok "hermes-agent instalado"
+  info "Instalando hermes-agent (esto tarda)..."
+  "$VENV/bin/pip" install --upgrade pip --disable-pip-version-check 2>&1 | grep -E '^(Successfully|Collecting|Requirement|ERROR)' || true
+  if "$VENV/bin/pip" install -e "$CODE_DIR" --disable-pip-version-check 2>&1 | grep -E '^(Successfully|Collecting|Installing|Building|ERROR)'; then
+    ok "hermes-agent instalado"
+  else
+    err "pip install -e falló"
+  fi
 
   if [[ -f "$WS_BACKEND/requirements.txt" ]]; then
     info "Instalando dependencias del backend..."
-    if "$VENV/bin/pip" install -r "$WS_BACKEND/requirements.txt" -q --disable-pip-version-check; then
+    if "$VENV/bin/pip" install -r "$WS_BACKEND/requirements.txt" --disable-pip-version-check 2>&1 \
+         | grep -E '^(Successfully|Collecting|Installing|Building|ERROR)'; then
       ok "Backend deps instaladas"
     else
       warn "Algunas dependencias del backend fallaron"
@@ -653,11 +672,13 @@ if $WANT_FRONTEND; then
   [[ -d "$CODE_DIR/.git" ]] || err "Falta el código — selecciona 2 (clonar) antes que 4 (frontend)."
 
   if [[ -f "$WS_FRONTEND/package.json" ]]; then
-    info "Instalando dependencias Node..."
+    info "Instalando dependencias Node (esto tarda)..."
+    # Sin --silent para ver progreso de paquetes. --no-fund + --no-audit
+    # reducen ruido sin ocultar lo importante.
     if [[ -f "$WS_FRONTEND/package-lock.json" ]]; then
-      (cd "$WS_FRONTEND" && npm ci --silent) || err "npm ci falló"
+      (cd "$WS_FRONTEND" && npm ci --no-fund --no-audit) || err "npm ci falló"
     else
-      (cd "$WS_FRONTEND" && npm install --silent) || err "npm install falló"
+      (cd "$WS_FRONTEND" && npm install --no-fund --no-audit) || err "npm install falló"
     fi
 
     info "Compilando (vite build)..."
@@ -1114,12 +1135,12 @@ if $WANT_CC1; then
   if ! command -v claude &>/dev/null; then
     info "Instalando @anthropic-ai/claude-code..."
     if npm_global_install @anthropic-ai/claude-code@latest; then
-      ok "Claude Code: $(claude --version 2>/dev/null | head -1 || echo '?')"
+      ok "Claude Code: $(_bin_version claude)"
     else
       warn "Instalación de Claude Code falló — revisa el log."
     fi
   else
-    ok "Claude Code ya instalado: $(claude --version 2>/dev/null | head -1)"
+    ok "Claude Code ya instalado: $(_bin_version claude)"
   fi
   if [[ ! -f "$HOME/.claude/.credentials.json" ]]; then
     warn "cc1 necesita OAuth — ejecuta: claude"
@@ -1170,12 +1191,12 @@ if $WANT_CODEX; then
   if ! command -v codex &>/dev/null; then
     info "Instalando @openai/codex..."
     if npm_global_install @openai/codex@latest; then
-      ok "Codex: $(codex --version 2>/dev/null | head -1 || echo '?')"
+      ok "Codex: $(_bin_version codex)"
     else
       warn "Instalación de Codex falló — revisa el log."
     fi
   else
-    ok "Codex ya instalado: $(codex --version 2>/dev/null | head -1)"
+    ok "Codex ya instalado: $(_bin_version codex)"
   fi
   if [[ ! -f "$HOME/.codex/auth.json" ]]; then
     warn "Codex necesita OAuth — ejecuta: codex login"
@@ -1219,10 +1240,16 @@ if $WANT_NVM; then
   export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
   # shellcheck source=/dev/null
   [[ -s "$NVM_DIR/nvm.sh" ]] && . "$NVM_DIR/nvm.sh"
-  if nvm install 22 >/dev/null 2>&1 && nvm use 22 >/dev/null && nvm alias default 22 >/dev/null; then
-    ok "Node.js $(node --version 2>/dev/null) vía NVM"
+  if ! command -v nvm &>/dev/null; then
+    warn "NVM no se cargó — abre una nueva shell o ejecuta: source ~/.bashrc"
   else
-    warn "nvm install 22 falló"
+    info "Descargando Node.js 22 vía NVM..."
+    # 2>&1 a la salida normal para ver progreso y errores reales.
+    if nvm install 22 && nvm use 22 >/dev/null && nvm alias default 22 >/dev/null; then
+      ok "Node.js $(node --version 2>/dev/null) vía NVM"
+    else
+      warn "nvm install 22 falló (mira las líneas anteriores para la causa)"
+    fi
   fi
 fi
 
@@ -1232,12 +1259,12 @@ if $WANT_PM2; then
   if ! command -v pm2 &>/dev/null; then
     info "Instalando PM2..."
     if npm_global_install pm2; then
-      ok "PM2 $(pm2 --version 2>/dev/null)"
+      ok "PM2 $(_bin_version pm2)"
     else
       warn "Instalación de PM2 falló — revisa el log."
     fi
   else
-    ok "PM2 ya instalado: $(pm2 --version 2>/dev/null)"
+    ok "PM2 ya instalado: $(_bin_version pm2)"
   fi
   if command -v pm2 &>/dev/null; then
     pm2 startup systemd -u "$CURRENT_USER" --hp "$HOME" 2>/dev/null \
@@ -1377,15 +1404,18 @@ if $WANT_LAIA_UI; then
     fi
 
     if command -v pnpm &>/dev/null; then
-      info "Instalando dependencias del monorepo..."
-      if (cd "$LAIA_UI_DIR" && pnpm install --silent 2>&1 | tail -5); then
+      info "Instalando dependencias del monorepo (esto tarda)..."
+      # Sin --silent: el usuario ve el progreso paquete a paquete.
+      # --reporter=append-only evita la barra de progreso que se rompe en
+      # terminales no-TTY (logs systemd, CI, etc).
+      if (cd "$LAIA_UI_DIR" && pnpm install --reporter=append-only); then
         ok "Deps del monorepo instaladas"
       else
         warn "pnpm install falló — revisa con: cd $LAIA_UI_DIR && pnpm install"
       fi
 
       info "Compilando (turbo run build)..."
-      if (cd "$LAIA_UI_DIR" && pnpm run build 2>&1 | tail -8); then
+      if (cd "$LAIA_UI_DIR" && pnpm run build); then
         ok "laia-ui compilado"
       else
         warn "build falló — revisa con: cd $LAIA_UI_DIR && pnpm run build"
