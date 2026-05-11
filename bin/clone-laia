@@ -42,7 +42,7 @@
 set -euo pipefail
 
 # ── Metadata ─────────────────────────────────────────────────────────────────
-readonly INSTALLER_VERSION="2.6.4"
+readonly INSTALLER_VERSION="2.6.5"
 readonly INSTALLER_DATE="2026-05-11"
 
 # ── Colores ──────────────────────────────────────────────────────────────────
@@ -671,26 +671,35 @@ if $WANT_VENV; then
   fi
 
   info "Instalando hermes-agent (esto tarda)..."
-  "$VENV/bin/pip" install --upgrade pip --disable-pip-version-check 2>&1 | grep -E '^(Successfully|Collecting|Requirement|ERROR)' || true
-  if "$VENV/bin/pip" install -e "$CODE_DIR" --disable-pip-version-check 2>&1 | grep -E '^(Successfully|Collecting|Installing|Building|ERROR)'; then
+  "$VENV/bin/pip" install --upgrade pip --disable-pip-version-check 2>&1 \
+    | grep -E '^(Successfully|Collecting|Requirement|ERROR)' || true
+
+  "$VENV/bin/pip" install -e "$CODE_DIR" --disable-pip-version-check 2>&1 \
+    | grep -E '^(Successfully|Collecting|Installing|Building|ERROR|error:)' || true
+  if [[ "${PIPESTATUS[0]}" -eq 0 ]]; then
     ok "hermes-agent instalado"
   else
-    err "pip install -e falló"
+    err "pip install -e falló (exit ${PIPESTATUS[0]})"
   fi
 
   if [[ -f "$WS_BACKEND/requirements.txt" ]]; then
     info "Instalando dependencias del backend..."
-    # Capturamos el log completo para diagnóstico y mostramos resumen.
+    # Capturamos el log completo y mostramos solo líneas útiles, pero
+    # NUNCA dejamos que el exit code de `grep` decida el éxito — usamos
+    # el de `pip` vía PIPESTATUS.
     PIP_BACKEND_LOG="$LOG_DIR/laia-pip-backend.log"
-    if "$VENV/bin/pip" install -r "$WS_BACKEND/requirements.txt" \
-         --disable-pip-version-check 2>&1 | tee "$PIP_BACKEND_LOG" \
-         | grep -E '^(Successfully|Installing|Building|ERROR|error:|fatal:|note:)'; then
-      ok "Backend deps instaladas"
+    "$VENV/bin/pip" install -r "$WS_BACKEND/requirements.txt" \
+         --disable-pip-version-check 2>&1 \
+         | tee "$PIP_BACKEND_LOG" \
+         | grep -E '^(Successfully|Installing|Building|ERROR|error:|fatal:|note:)' \
+         || true
+    PIP_RC="${PIPESTATUS[0]}"
+    if [[ "$PIP_RC" -eq 0 ]]; then
+      ok "Backend deps OK"
     else
-      warn "Algunas dependencias del backend fallaron"
-      # Mostrar las últimas líneas con error para dar pista al usuario.
+      warn "Backend deps fallaron (pip exit $PIP_RC)"
       echo -e "${DIM}  Últimas líneas del log:${RST}"
-      tail -8 "$PIP_BACKEND_LOG" | sed 's/^/    /'
+      tail -10 "$PIP_BACKEND_LOG" | sed 's/^/    /'
       echo -e "${DIM}  Log completo: ${PIP_BACKEND_LOG}${RST}"
     fi
   fi
