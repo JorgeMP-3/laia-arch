@@ -42,7 +42,7 @@
 set -euo pipefail
 
 # ── Metadata ─────────────────────────────────────────────────────────────────
-readonly INSTALLER_VERSION="2.6.5"
+readonly INSTALLER_VERSION="2.7.0"
 readonly INSTALLER_DATE="2026-05-11"
 
 # ── Colores ──────────────────────────────────────────────────────────────────
@@ -1055,55 +1055,106 @@ if $WANT_RESTORE; then
     SRC_LAIA_DIR=$(ssh -o ConnectTimeout=10 "$OPT_RESTORE" 'echo ${LAIA_INSTALL_DIR:-$HOME/LAIA}')
     info "Origen: HOME=${SRC_HOME}  HERMES_HOME=${SRC_HERMES_HOME}  LAIA=${SRC_LAIA_DIR}"
 
-    # Helper: restaura archivo o directorio detectando automáticamente
-    _restore() {
-      local src_path="$1" dst_path="$2" label="$3"
+    # Helper: rsync de un archivo/directorio remoto al local, con exclude file
+    # opcional. Si la fuente no existe, se omite silenciosamente.
+    _restore_tree() {
+      local src_path="$1" dst_path="$2" label="$3" exclude_file="${4:-}"
       info "Restaurando ${label}..."
       if ! ssh -o ConnectTimeout=10 "$OPT_RESTORE" "test -e '${src_path}'" 2>/dev/null; then
         warn "${label} — no encontrado en origen, omitido"
         return 0
       fi
-      if ssh -o ConnectTimeout=10 "$OPT_RESTORE" "test -f '${src_path}'" 2>/dev/null; then
-        mkdir -p "$(dirname "$dst_path")"
-        rsync -az --progress "${OPT_RESTORE}:${src_path}" "$(dirname "$dst_path")/" \
-          && ok "${label} OK" || warn "${label} falló"
+      mkdir -p "$dst_path"
+      local rsync_args=(-az --info=progress2,stats0 --delete-excluded)
+      [[ -n "$exclude_file" && -f "$exclude_file" ]] && rsync_args+=("--exclude-from=$exclude_file")
+      if rsync "${rsync_args[@]}" "${OPT_RESTORE}:${src_path}/" "$dst_path/"; then
+        ok "${label} OK"
       else
-        mkdir -p "$dst_path"
-        rsync -az --progress "${OPT_RESTORE}:${src_path}/" "$dst_path/" \
-          && ok "${label} OK" || warn "${label} falló"
+        warn "${label} falló"
       fi
     }
 
-    # ── ~/.hermes/ (runtime) ──
-    for item in auth.json state.db SOUL.md; do
-      _restore "${SRC_HERMES_HOME}/${item}" "${RUNTIME_DIR}/${item}" "~/.hermes/${item}"
-    done
-    for item in sessions skills cron memories; do
-      _restore "${SRC_HERMES_HOME}/${item}" "${RUNTIME_DIR}/${item}" "~/.hermes/${item}/"
-    done
+    _restore_file() {
+      local src_path="$1" dst_path="$2" label="$3"
+      info "Restaurando ${label}..."
+      if ! ssh -o ConnectTimeout=10 "$OPT_RESTORE" "test -f '${src_path}'" 2>/dev/null; then
+        warn "${label} — no encontrado en origen, omitido"
+        return 0
+      fi
+      mkdir -p "$(dirname "$dst_path")"
+      if rsync -az "${OPT_RESTORE}:${src_path}" "$dst_path"; then
+        ok "${label} OK"
+      else
+        warn "${label} falló"
+      fi
+    }
 
-    # ── ~/LAIA/ (datos personales + workspaces) ──
-    for item in memories config workspaces skills cron; do
-      _restore "${SRC_LAIA_DIR}/${item}" "${LAIA_DIR}/${item}" "LAIA/${item}/"
-    done
-    for item in auth.json config.yaml SOUL.md .env; do
-      _restore "${SRC_LAIA_DIR}/${item}" "${LAIA_DIR}/${item}" "LAIA/${item}"
-    done
+    # ── Exclude file: lo que NO transferimos ─────────────────────────
+    # Código (se clona vía git), entornos derivados, caches grandes,
+    # symlinks que se recrean, basura del sistema.
+    LAIA_EXCLUDES=$(mktemp)
+    cat > "$LAIA_EXCLUDES" <<'EXCLUDES'
+# Código (clonado vía git)
+.laia-arch/
+laia-ui/
+.laia-ui-link
+hermes-agent
+workspace-ui
+
+# Entornos derivados
+.git/
+venv/
+node_modules/
+.turbo/
+**/__pycache__/
+**/*.pyc
+.pytest_cache/
+
+# Backups y temporales del propio script / editor
+*.bak
+*.bak.*
+*.swp
+.DS_Store
+._.DS_Store
+
+# Lockfiles de runtime — el agente nuevo creará los suyos
+*.lock
+gateway.pid
+EXCLUDES
+
+    HERMES_EXCLUDES=$(mktemp)
+    cat > "$HERMES_EXCLUDES" <<'EXCLUDES'
+# Symlinks que recrea el wizard
+hermes-agent
+workspace-ui
+# Lockfiles y temporales
+*.lock
+.DS_Store
+**/__pycache__/
+EXCLUDES
+
+    # ── ~/LAIA/ (datos + state.db + workspaces + todo lo demás) ──────
+    _restore_tree "${SRC_LAIA_DIR}" "${LAIA_DIR}" "LAIA/ (todo el estado del agente)" "$LAIA_EXCLUDES"
+
+    # ── ~/.hermes/ (runtime espejo) ──────────────────────────────────
+    _restore_tree "${SRC_HERMES_HOME}" "${RUNTIME_DIR}" "~/.hermes/ (runtime)" "$HERMES_EXCLUDES"
+
+    rm -f "$LAIA_EXCLUDES" "$HERMES_EXCLUDES"
 
     # ── Herramientas de IA (directorio home) ──
     # Codex — credenciales y config (sin logs pesados)
     for item in auth.json config.toml state_5.sqlite; do
-      _restore "${SRC_HOME}/.codex/${item}" "${HOME}/.codex/${item}" ".codex/${item}"
+      _restore_file "${SRC_HOME}/.codex/${item}" "${HOME}/.codex/${item}" ".codex/${item}"
     done
 
     # OpenCode — config (sin binario de 146MB; se instala con --setup-server)
-    _restore "${SRC_HOME}/.opencode/package.json" "${HOME}/.opencode/package.json" ".opencode/config"
+    _restore_file "${SRC_HOME}/.opencode/package.json" "${HOME}/.opencode/package.json" ".opencode/config"
 
     # Claude Code cc1 — solo credenciales MCP (settings.json es local)
-    _restore "${SRC_HOME}/.claude/.credentials.json" "${HOME}/.claude/.credentials.json" ".claude/.credentials.json (cc1)"
+    _restore_file "${SRC_HOME}/.claude/.credentials.json" "${HOME}/.claude/.credentials.json" ".claude/.credentials.json (cc1)"
 
     # Claude Code cc2 — directorio completo de segunda cuenta
-    _restore "${SRC_HOME}/.claude-cuenta2" "${HOME}/.claude-cuenta2" ".claude-cuenta2/ (cc2)"
+    _restore_tree "${SRC_HOME}/.claude-cuenta2" "${HOME}/.claude-cuenta2" ".claude-cuenta2/ (cc2)"
 
   else
     warn "No se puede conectar por SSH a ${OPT_RESTORE}"
