@@ -42,7 +42,7 @@
 set -euo pipefail
 
 # ── Metadata ─────────────────────────────────────────────────────────────────
-readonly INSTALLER_VERSION="2.5.0"
+readonly INSTALLER_VERSION="2.5.1"
 readonly INSTALLER_DATE="2026-05-11"
 
 # ── Colores ──────────────────────────────────────────────────────────────────
@@ -364,6 +364,7 @@ _apply_choice() {
     21) WANT_UFW=true ;;
     22) WANT_GITCFG=true ;;
   esac
+  return 0
 }
 
 _select_missing() {
@@ -385,7 +386,7 @@ _apply_set() {
   case "$1" in
     todo)
       for n in 1 2 3 4 5 6 7 8 10 12 13 14 15 16 17 18 19; do _apply_choice "$n"; done
-      [[ -n "$OPT_NGINX"  ]] && WANT_NGINX_STEP=true
+      [[ -n "$OPT_NGINX"   ]] && WANT_NGINX_STEP=true
       [[ -n "$OPT_RESTORE" ]] && _apply_choice 11
       ;;
     base)
@@ -393,18 +394,19 @@ _apply_set() {
     servidor)
       for n in 1 2 3 4 5 6 7 8 12; do _apply_choice "$n"; done ;;
   esac
+  return 0
 }
 
 # Activaciones forzadas por flags CLI
-[[ -n "$OPT_NGINX"   ]] && WANT_NGINX_STEP=true
-[[ -n "$OPT_RESTORE" ]] && { WANT_TAILSCALE=true; WANT_SSH=true; WANT_RESTORE=true; }
+if [[ -n "$OPT_NGINX"   ]]; then WANT_NGINX_STEP=true; fi
+if [[ -n "$OPT_RESTORE" ]]; then WANT_TAILSCALE=true; WANT_SSH=true; WANT_RESTORE=true; fi
 if [[ "$OPT_SERVICES" == false ]]; then WANT_SYSTEMD=false; WANT_START=false; fi
 
 if [[ "$OPT_YES" == true ]]; then
   # Modo no interactivo: instala lo que falte + lo pedido por flags
   _select_missing
-  [[ -n "$OPT_NGINX"   ]] && WANT_NGINX_STEP=true
-  [[ -n "$OPT_RESTORE" ]] && { WANT_TAILSCALE=true; WANT_SSH=true; WANT_RESTORE=true; }
+  if [[ -n "$OPT_NGINX"   ]]; then WANT_NGINX_STEP=true; fi
+  if [[ -n "$OPT_RESTORE" ]]; then WANT_TAILSCALE=true; WANT_SSH=true; WANT_RESTORE=true; fi
   if [[ "$OPT_SETUP_SERVER" == true ]]; then
     command -v claude    &>/dev/null || WANT_CC1=true
     [[ -e "$HOME/.claude-cuenta2/.credentials.json" ]] || WANT_CC2=true
