@@ -42,7 +42,7 @@
 set -euo pipefail
 
 # ── Metadata ─────────────────────────────────────────────────────────────────
-readonly INSTALLER_VERSION="2.6.3"
+readonly INSTALLER_VERSION="2.6.4"
 readonly INSTALLER_DATE="2026-05-11"
 
 # ── Colores ──────────────────────────────────────────────────────────────────
@@ -754,30 +754,42 @@ if $WANT_BIN; then
 
   mkdir -p "$BIN_DIR"
 
+  # Helper: escritura atómica con rename. CRÍTICO para clone-laia, que se
+  # auto-sobrescribe: si usamos `cp` (modifica in-place) bash sigue leyendo
+  # del disco con offsets nuevos → syntax error. Con `mv` cambia el inode,
+  # bash sigue leyendo el archivo viejo (abierto) y el nuevo es para
+  # futuras invocaciones.
+  _atomic_install_file() {
+    local src="$1" dst="$2"
+    local tmp; tmp="$(mktemp "$(dirname "$dst")/.laia-tmp.XXXXXX")" || return 1
+    cat "$src" > "$tmp" && chmod 755 "$tmp" && mv -f "$tmp" "$dst"
+  }
+
   if [[ -d "$CODE_DIR/bin" ]]; then
     # Copia archivos reales del repo (NO usa --delete para no borrar wrappers).
     # Ignora symlinks del repo: tenían paths absolutos del host de origen.
     for script in "$CODE_DIR/bin/"*; do
       [[ -f "$script" && ! -L "$script" ]] || continue
-      cp -f "$script" "$BIN_DIR/"
+      _atomic_install_file "$script" "$BIN_DIR/$(basename "$script")" || \
+        warn "No se pudo copiar $(basename "$script")"
     done
-    chmod +x "$BIN_DIR/"* 2>/dev/null || true
     ok "Scripts del repo copiados a ~/bin/"
   else
     warn "No hay $CODE_DIR/bin — selecciona 2 (clonar) primero."
   fi
 
   # Wrappers para binarios del venv con rutas dinámicas (no hardcoded).
-  # Se generan SIEMPRE que el venv tenga los binarios, así sobreviven a
-  # cualquier movimiento/recreación del directorio LAIA.
+  # Idéntico patrón atómico — por si en el futuro un wrapper acaba en uso.
   _create_wrapper() {
     local name="$1" target="$2"
-    cat > "$BIN_DIR/$name" <<EOF
+    local dst="$BIN_DIR/$name"
+    local tmp; tmp="$(mktemp "$BIN_DIR/.laia-tmp.XXXXXX")" || return 1
+    cat > "$tmp" <<EOF
 #!/usr/bin/env bash
 # Wrapper generado por install-laia — apunta al venv actual
 exec "$target" "\$@"
 EOF
-    chmod +x "$BIN_DIR/$name"
+    chmod 755 "$tmp" && mv -f "$tmp" "$dst"
   }
 
   if [[ -x "$VENV/bin/hermes" ]]; then
@@ -792,6 +804,9 @@ EOF
     _create_wrapper "uvicorn" "$VENV/bin/uvicorn"
     ok "Wrapper uvicorn → $VENV/bin/uvicorn"
   fi
+
+  # Limpia restos de temporales por si algún intento previo se interrumpió.
+  rm -f "$BIN_DIR"/.laia-tmp.* 2>/dev/null || true
 fi
 
 # ══════════════════════════════════════════════════════════════════════════════
