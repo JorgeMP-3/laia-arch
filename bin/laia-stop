@@ -3,12 +3,15 @@
 # laia-stop — Para el agente LAIA en esta máquina
 # ══════════════════════════════════════════════════════════════════════════════
 # Uso:
-#   laia-stop [--disable] [--status] [--yes] [--help]
+#   laia-stop [--disable] [--kill-cli] [--status] [--yes] [--help]
 #
-#   Sin flags:   Para servicios (hermes + workspace-ui) pero los deja habilitados
-#   --disable:   Para Y deshabilita (no arrancan en reboot) — para mover el agente
-#   --status:    Solo muestra estado, sin tocar nada
-#   --yes/-y:    No pide confirmación
+#   Sin flags:   Para servicios systemd (hermes + workspace-ui). Las sesiones
+#                interactivas `hermes` lanzadas a mano se respetan (solo avisa).
+#   --disable:   Para + deshabilita + MATA sesiones interactivas. Úsalo cuando
+#                vayas a mudar el agente a otra máquina.
+#   --kill-cli:  Solo matar sesiones interactivas (sin tocar systemd).
+#   --status:    Solo muestra estado, sin tocar nada.
+#   --yes/-y:    No pide confirmación.
 # ══════════════════════════════════════════════════════════════════════════════
 set -euo pipefail
 
@@ -27,10 +30,12 @@ err()  { echo -e "${RED}  ✕ $1${RST}" >&2; exit 1; }
 OPT_DISABLE=false
 OPT_STATUS=false
 OPT_YES=false
+OPT_KILL_CLI=false
 
 while [[ $# -gt 0 ]]; do
   case $1 in
-    --disable)  OPT_DISABLE=true; shift ;;
+    --disable)  OPT_DISABLE=true; OPT_KILL_CLI=true; shift ;;
+    --kill-cli) OPT_KILL_CLI=true; shift ;;
     --status)   OPT_STATUS=true;  shift ;;
     --yes|-y)   OPT_YES=true;     shift ;;
     --help|-h)
@@ -43,13 +48,23 @@ done
 # ── Estado actual ─────────────────────────────────────────────────────────────
 _svc_status() {
   local svc="$1"
-  if ! systemctl list-unit-files "$svc.service" &>/dev/null 2>&1 | grep -q "$svc"; then
+  # Comprobar instalación vía existencia de la unit file. El `list-unit-files`
+  # original tenía `&>/dev/null | grep` (redirección antes del pipe), grep
+  # nunca recibía nada → siempre decía "no instalado".
+  if [[ ! -f "/etc/systemd/system/$svc.service" \
+     && ! -f "/lib/systemd/system/$svc.service" \
+     && ! -f "/usr/lib/systemd/system/$svc.service" ]]; then
     echo -e "  ${DIM}$svc — no instalado${RST}"
     return
   fi
+  # systemctl is-{active,enabled} imprime el estado y retorna no-cero cuando
+  # no es 'active'/'enabled'. Con `set -e` necesitamos `|| :` para no abortar,
+  # y `:` (null command) no produce output → no concatena nada al stdout real.
   local active enabled
-  active=$(systemctl is-active "$svc" 2>/dev/null || echo "inactive")
-  enabled=$(systemctl is-enabled "$svc" 2>/dev/null || echo "disabled")
+  active=$(systemctl is-active  "$svc" 2>/dev/null || :)
+  enabled=$(systemctl is-enabled "$svc" 2>/dev/null || :)
+  active="${active:-unknown}"
+  enabled="${enabled:-unknown}"
   if [[ "$active" == "active" ]]; then
     local pid
     pid=$(systemctl show "$svc" --property=MainPID --value 2>/dev/null || echo "?")
@@ -57,6 +72,49 @@ _svc_status() {
   else
     echo -e "  ${RED}○${RST}  $svc  ${DIM}$active · $enabled${RST}"
   fi
+}
+
+# _find_user_procs: PIDs de procesos hermes/uvicorn lanzados POR EL USUARIO
+# (ej. `hermes` CLI desde una terminal). Excluye:
+#   - los procesos del servicio systemd (cgroup pertenece a *.service)
+#   - falsos positivos cuyo argv contiene "venv/bin/hermes" pero el binario
+#     real no es python/hermes/uvicorn (ej. `grep venv/bin/hermes`)
+_find_user_procs() {
+  local pids="" pid cgroup exe cmdline
+  while IFS= read -r pid; do
+    [[ -z "$pid" ]] && continue
+    # Filtro 1: el binario REAL debe ser python, hermes o uvicorn
+    exe=$(readlink "/proc/$pid/exe" 2>/dev/null || echo "")
+    case "$exe" in
+      */python*|*/hermes|*/uvicorn) ;;
+      *) continue ;;
+    esac
+    # Filtro 2: el cmdline (NUL-separado) debe ejecutar realmente hermes/uvicorn
+    cmdline=$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null || echo "")
+    [[ "$cmdline" =~ venv/bin/(hermes|uvicorn) ]] || continue
+    # Filtro 3: si pertenece al cgroup de un servicio systemd, no es manual
+    cgroup=$(cat "/proc/$pid/cgroup" 2>/dev/null || echo "")
+    [[ "$cgroup" == *"hermes.service"*  ]] && continue
+    [[ "$cgroup" == *"workspace-ui.service"* ]] && continue
+    pids+="$pid "
+  done < <(pgrep -f "LAIA/.*venv/bin/(hermes|uvicorn)" 2>/dev/null || true)
+  echo "${pids% }"
+}
+
+_show_user_procs() {
+  local pids; pids=$(_find_user_procs)
+  if [[ -z "$pids" ]]; then
+    echo -e "  ${DIM}○ sin sesiones interactivas (hermes CLI / uvicorn manual)${RST}"
+    return 1
+  fi
+  echo -e "  ${YEL}● sesiones interactivas detectadas:${RST}"
+  for pid in $pids; do
+    local cmd tty
+    cmd=$(ps -o args= -p "$pid" 2>/dev/null | sed 's|^.*venv/bin/||')
+    tty=$(ps -o tty= -p "$pid" 2>/dev/null | tr -d ' ')
+    echo -e "    ${YEL}PID $pid${RST} ${DIM}($tty)${RST}  $cmd"
+  done
+  return 0
 }
 
 echo ""
@@ -67,28 +125,27 @@ _svc_status hermes
 _svc_status workspace-ui
 echo ""
 
-# Proceso gateway activo
-GATEWAY_PID=$(pgrep -f "hermes gateway run" 2>/dev/null || echo "")
-if [[ -n "$GATEWAY_PID" ]]; then
-  echo -e "  ${GRN}●${RST}  hermes gateway  ${DIM}PID $GATEWAY_PID${RST}"
-else
-  echo -e "  ${RED}○${RST}  hermes gateway  ${DIM}no activo${RST}"
-fi
+# Sesiones interactivas (CLI lanzadas manualmente por el usuario)
+HAS_USER_PROCS=true
+_show_user_procs || HAS_USER_PROCS=false
 echo ""
 
 [[ "$OPT_STATUS" == true ]] && exit 0
 
 # ── Confirmar ────────────────────────────────────────────────────────────────
 if [[ "$OPT_DISABLE" == true ]]; then
-  ACTION="parar y deshabilitar"
-  ACTION_DETAIL="Los servicios NO arrancarán en el próximo reboot."
+  ACTION="parar + deshabilitar + matar sesiones interactivas"
+  ACTION_DETAIL="Los servicios NO arrancarán en reboot. Cualquier 'hermes' CLI abierto morirá."
+elif [[ "$OPT_KILL_CLI" == true ]]; then
+  ACTION="matar sesiones interactivas"
+  ACTION_DETAIL="Los servicios systemd NO se tocan. Solo procesos manuales."
 else
-  ACTION="parar"
-  ACTION_DETAIL="Los servicios seguirán habilitados (arrancarán en el próximo reboot)."
+  ACTION="parar servicios systemd"
+  ACTION_DETAIL="Los servicios seguirán habilitados (arrancarán en reboot). Las sesiones interactivas NO se tocan."
 fi
 
 if [[ "$OPT_YES" == false ]]; then
-  echo -e "  ${BLD}Acción:${RST} ${YEL}${ACTION} hermes + workspace-ui${RST}"
+  echo -e "  ${BLD}Acción:${RST} ${YEL}${ACTION}${RST}"
   echo -e "  ${DIM}$ACTION_DETAIL${RST}"
   echo ""
   printf "  ¿Continuar? (s/n) "
@@ -96,23 +153,54 @@ if [[ "$OPT_YES" == false ]]; then
   [[ "$REPLY" =~ ^[Ss]$ ]] || { info "Cancelado."; exit 0; }
 fi
 
-# ── Parar servicios ──────────────────────────────────────────────────────────
-echo ""
-for svc in hermes workspace-ui; do
-  if systemctl is-active --quiet "$svc" 2>/dev/null; then
-    info "Parando $svc..."
-    sudo systemctl stop "$svc" && ok "$svc parado" || warn "$svc — no se pudo parar"
-  else
-    ok "$svc — ya estaba parado"
-  fi
-done
-
-if [[ "$OPT_DISABLE" == true ]]; then
+# ── Parar servicios systemd ──────────────────────────────────────────────────
+if [[ "$OPT_KILL_CLI" == false || "$OPT_DISABLE" == true ]]; then
   echo ""
   for svc in hermes workspace-ui; do
-    info "Deshabilitando $svc..."
-    sudo systemctl disable "$svc" 2>/dev/null && ok "$svc deshabilitado" || warn "$svc — no se pudo deshabilitar"
+    if systemctl is-active --quiet "$svc" 2>/dev/null; then
+      info "Parando $svc..."
+      sudo systemctl stop "$svc" && ok "$svc parado" || warn "$svc — no se pudo parar"
+    else
+      ok "$svc — ya estaba parado"
+    fi
   done
+
+  if [[ "$OPT_DISABLE" == true ]]; then
+    echo ""
+    for svc in hermes workspace-ui; do
+      info "Deshabilitando $svc..."
+      sudo systemctl disable "$svc" 2>/dev/null && ok "$svc deshabilitado" || warn "$svc — no se pudo deshabilitar"
+    done
+  fi
+fi
+
+# ── Matar sesiones interactivas (CLI manuales) ───────────────────────────────
+if [[ "$OPT_KILL_CLI" == true ]]; then
+  echo ""
+  USER_PIDS=$(_find_user_procs)
+  if [[ -z "$USER_PIDS" ]]; then
+    ok "sin sesiones interactivas para matar"
+  else
+    info "Enviando SIGTERM a: $USER_PIDS"
+    kill -TERM $USER_PIDS 2>/dev/null || true
+    # Esperar hasta 5s a que terminen limpio
+    for i in 1 2 3 4 5; do
+      sleep 1
+      USER_PIDS=$(_find_user_procs)
+      [[ -z "$USER_PIDS" ]] && break
+    done
+    if [[ -n "$USER_PIDS" ]]; then
+      warn "no responden a SIGTERM — forzando SIGKILL en: $USER_PIDS"
+      kill -KILL $USER_PIDS 2>/dev/null || true
+      sleep 1
+      USER_PIDS=$(_find_user_procs)
+    fi
+    if [[ -z "$USER_PIDS" ]]; then
+      ok "sesiones interactivas terminadas"
+    else
+      warn "siguen vivos PIDs: $USER_PIDS (kill manual: kill -9 $USER_PIDS)"
+    fi
+  fi
 fi
 
 # ── Verificar ────────────────────────────────────────────────────────────────
@@ -121,16 +209,26 @@ echo -e "${BLD}  Estado final:${RST}"
 _svc_status hermes
 _svc_status workspace-ui
 echo ""
+_show_user_procs || true
+echo ""
 
 if [[ "$OPT_DISABLE" == true ]]; then
-  echo -e "  ${GRN}${BLD}✓ Agente LAIA detenido en esta máquina${RST}"
+  if [[ -z "$(_find_user_procs)" ]] && ! systemctl is-active --quiet hermes 2>/dev/null \
+     && ! systemctl is-active --quiet workspace-ui 2>/dev/null; then
+    echo -e "  ${GRN}${BLD}✓ Agente LAIA detenido completamente en esta máquina${RST}"
+  else
+    echo -e "  ${YEL}${BLD}⚠ Agente LAIA detenido parcialmente — revisa lo de arriba${RST}"
+  fi
   echo ""
   echo -e "  ${BLD}Para arrancar en otra máquina:${RST}"
   echo -e "  ${DIM}  clone-laia --restore $(id -un)@<IP_TAILSCALE> --yes${RST}"
-  echo -e "  ${DIM}  clone-laia --setup-server  (si es máquina nueva)${RST}"
+elif [[ "$OPT_KILL_CLI" == true ]]; then
+  echo -e "  ${GRN}${BLD}✓ Sesiones interactivas terminadas${RST}"
+  echo -e "  ${DIM}  Los servicios systemd siguen como estaban${RST}"
 else
   echo -e "  ${GRN}${BLD}✓ Servicios parados (se reactivarán en el próximo reboot)${RST}"
   echo -e "  ${DIM}  Para deshabilitar permanentemente: laia-stop --disable${RST}"
+  echo -e "  ${DIM}  Para matar también CLI manuales: laia-stop --kill-cli${RST}"
 fi
 
 echo -e "  ${DIM}  Para reactivar aquí: sudo systemctl start hermes workspace-ui${RST}"
