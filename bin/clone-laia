@@ -42,7 +42,7 @@
 set -euo pipefail
 
 # ── Metadata ─────────────────────────────────────────────────────────────────
-readonly INSTALLER_VERSION="2.6.1"
+readonly INSTALLER_VERSION="2.6.2"
 readonly INSTALLER_DATE="2026-05-11"
 
 # ── Colores ──────────────────────────────────────────────────────────────────
@@ -97,11 +97,35 @@ run_step() {
 }
 
 # npm_global_install: instala paquetes globales sin pedir sudo.
-# Si /usr/lib/node_modules no es escribible, configura ~/.npm-global como prefix.
+#
+# Estrategia:
+#  1. Si NVM está instalado (~/.nvm/nvm.sh existe) usar SU prefix — fijar uno
+#     custom en ~/.npmrc rompe `nvm install/use` con error 11.
+#  2. Si /usr/lib/node_modules es escribible, usarlo directo.
+#  3. Si nada, configurar ~/.npm-global como prefix por usuario.
 NPM_PREFIX_CONFIGURED=false
 _setup_npm_prefix() {
   [[ "$NPM_PREFIX_CONFIGURED" == true ]] && return 0
   command -v npm &>/dev/null || return 1
+
+  # 1) NVM disponible — cárgalo y usa su entorno (sin tocar ~/.npmrc).
+  if [[ -s "$HOME/.nvm/nvm.sh" ]]; then
+    export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
+    # shellcheck source=/dev/null
+    . "$HOME/.nvm/nvm.sh" 2>/dev/null || true
+    if command -v nvm &>/dev/null; then
+      # Si ~/.npmrc tiene prefix= dejado por una versión vieja del script,
+      # quitarlo — interfiere con NVM.
+      if [[ -f "$HOME/.npmrc" ]] && grep -qE '^(prefix|globalconfig)=' "$HOME/.npmrc"; then
+        sed -i.bak -E '/^(prefix|globalconfig)=/d' "$HOME/.npmrc"
+        info "Limpiado prefix/globalconfig de ~/.npmrc (incompatible con NVM)"
+      fi
+      NPM_PREFIX_CONFIGURED=true
+      return 0
+    fi
+  fi
+
+  # 2) ¿npm prefix del sistema escribible?
   local sys_prefix; sys_prefix="$(npm config get prefix 2>/dev/null || echo)"
   if [[ -n "$sys_prefix" && -d "$sys_prefix/lib/node_modules" && -w "$sys_prefix/lib/node_modules" ]]; then
     NPM_PREFIX_CONFIGURED=true
@@ -111,6 +135,8 @@ _setup_npm_prefix() {
     NPM_PREFIX_CONFIGURED=true
     return 0
   fi
+
+  # 3) Fallback: prefix por usuario.
   local user_prefix="$HOME/.npm-global"
   mkdir -p "$user_prefix/bin" "$user_prefix/lib/node_modules"
   npm config set prefix "$user_prefix" >/dev/null 2>&1 || true
@@ -1237,19 +1263,37 @@ if $WANT_NVM; then
     info "Instalando NVM..."
     curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash || warn "NVM falló"
   fi
-  export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
-  # shellcheck source=/dev/null
-  [[ -s "$NVM_DIR/nvm.sh" ]] && . "$NVM_DIR/nvm.sh"
-  if ! command -v nvm &>/dev/null; then
-    warn "NVM no se cargó — abre una nueva shell o ejecuta: source ~/.bashrc"
-  else
-    info "Descargando Node.js 22 vía NVM..."
-    # 2>&1 a la salida normal para ver progreso y errores reales.
-    if nvm install 22 && nvm use 22 >/dev/null && nvm alias default 22 >/dev/null; then
-      ok "Node.js $(node --version 2>/dev/null) vía NVM"
-    else
-      warn "nvm install 22 falló (mira las líneas anteriores para la causa)"
+
+  # NVM aborta con exit 11 (no return) si ~/.npmrc tiene prefix= o
+  # globalconfig= — eso mataría la shell del script entero. Limpiamos ANTES.
+  if [[ -f "$HOME/.npmrc" ]] && grep -qE '^(prefix|globalconfig)=' "$HOME/.npmrc"; then
+    info "Limpiando prefix/globalconfig de ~/.npmrc (incompatible con NVM)..."
+    sed -i.laia-bak -E '/^(prefix|globalconfig)=/d' "$HOME/.npmrc"
+  fi
+
+  # Ejecutar todo el flujo de NVM en SUBSHELL para que un exit/die dentro
+  # de las funciones nvm_* no aborte el script padre. La subshell hereda
+  # set -e pero su salida la captura el if/else externo.
+  if (
+    set +e
+    export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
+    # shellcheck source=/dev/null
+    [[ -s "$NVM_DIR/nvm.sh" ]] && . "$NVM_DIR/nvm.sh"
+    if ! command -v nvm &>/dev/null; then
+      echo "NVM no se cargó — abre una nueva shell o ejecuta: source ~/.bashrc" >&2
+      exit 2
     fi
+    nvm install 22 && nvm use 22 >/dev/null && nvm alias default 22 >/dev/null
+  ); then
+    # Recargar en el shell padre para tener `node` y `nvm` accesibles
+    # en pasos posteriores (pm2, etc).
+    export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
+    # shellcheck source=/dev/null
+    [[ -s "$NVM_DIR/nvm.sh" ]] && . "$NVM_DIR/nvm.sh" 2>/dev/null || true
+    hash -r 2>/dev/null || true
+    ok "Node.js $(node --version 2>/dev/null) vía NVM"
+  else
+    warn "nvm install 22 falló (mira las líneas anteriores para la causa)"
   fi
 fi
 
