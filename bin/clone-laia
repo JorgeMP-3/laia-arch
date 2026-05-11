@@ -42,7 +42,7 @@
 set -euo pipefail
 
 # ── Metadata ─────────────────────────────────────────────────────────────────
-readonly INSTALLER_VERSION="2.6.2"
+readonly INSTALLER_VERSION="2.6.3"
 readonly INSTALLER_DATE="2026-05-11"
 
 # ── Colores ──────────────────────────────────────────────────────────────────
@@ -680,11 +680,18 @@ if $WANT_VENV; then
 
   if [[ -f "$WS_BACKEND/requirements.txt" ]]; then
     info "Instalando dependencias del backend..."
-    if "$VENV/bin/pip" install -r "$WS_BACKEND/requirements.txt" --disable-pip-version-check 2>&1 \
-         | grep -E '^(Successfully|Collecting|Installing|Building|ERROR)'; then
+    # Capturamos el log completo para diagnóstico y mostramos resumen.
+    PIP_BACKEND_LOG="$LOG_DIR/laia-pip-backend.log"
+    if "$VENV/bin/pip" install -r "$WS_BACKEND/requirements.txt" \
+         --disable-pip-version-check 2>&1 | tee "$PIP_BACKEND_LOG" \
+         | grep -E '^(Successfully|Installing|Building|ERROR|error:|fatal:|note:)'; then
       ok "Backend deps instaladas"
     else
       warn "Algunas dependencias del backend fallaron"
+      # Mostrar las últimas líneas con error para dar pista al usuario.
+      echo -e "${DIM}  Últimas líneas del log:${RST}"
+      tail -8 "$PIP_BACKEND_LOG" | sed 's/^/    /'
+      echo -e "${DIM}  Log completo: ${PIP_BACKEND_LOG}${RST}"
     fi
   fi
 fi
@@ -1449,17 +1456,18 @@ if $WANT_LAIA_UI; then
 
     if command -v pnpm &>/dev/null; then
       info "Instalando dependencias del monorepo (esto tarda)..."
+      # COREPACK_ENABLE_DOWNLOAD_PROMPT=0: el package.json del monorepo declara
+      # `packageManager: pnpm@X.Y.Z` y corepack pide [Y/n] interactivo para
+      # bajar esa versión exacta — bloquea el wizard. Con la env auto-acepta.
       # Sin --silent: el usuario ve el progreso paquete a paquete.
-      # --reporter=append-only evita la barra de progreso que se rompe en
-      # terminales no-TTY (logs systemd, CI, etc).
-      if (cd "$LAIA_UI_DIR" && pnpm install --reporter=append-only); then
+      if (cd "$LAIA_UI_DIR" && COREPACK_ENABLE_DOWNLOAD_PROMPT=0 pnpm install --reporter=append-only); then
         ok "Deps del monorepo instaladas"
       else
         warn "pnpm install falló — revisa con: cd $LAIA_UI_DIR && pnpm install"
       fi
 
       info "Compilando (turbo run build)..."
-      if (cd "$LAIA_UI_DIR" && pnpm run build); then
+      if (cd "$LAIA_UI_DIR" && COREPACK_ENABLE_DOWNLOAD_PROMPT=0 pnpm run build); then
         ok "laia-ui compilado"
       else
         warn "build falló — revisa con: cd $LAIA_UI_DIR && pnpm run build"
