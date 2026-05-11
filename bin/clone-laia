@@ -42,7 +42,7 @@
 set -euo pipefail
 
 # ── Metadata ─────────────────────────────────────────────────────────────────
-readonly INSTALLER_VERSION="2.7.1"
+readonly INSTALLER_VERSION="2.7.2"
 readonly INSTALLER_DATE="2026-05-11"
 
 # ── Colores ──────────────────────────────────────────────────────────────────
@@ -1057,6 +1057,12 @@ if $WANT_RESTORE; then
 
     # Helper: rsync de un archivo/directorio remoto al local, con exclude file
     # opcional. Si la fuente no existe, se omite silenciosamente.
+    #
+    # CRÍTICO: NO usar --delete ni --delete-excluded. El restore es ADITIVO:
+    # solo copia archivos del origen al destino. NUNCA borra archivos del
+    # destino, especialmente los que estén en la lista de excludes (esos son
+    # paths que el wizard gestiona aparte: .laia-arch/ y laia-ui/ se clonan
+    # vía git, venv/ se recrea, etc — borrarlos rompería la instalación).
     _restore_tree() {
       local src_path="$1" dst_path="$2" label="$3" exclude_file="${4:-}"
       info "Restaurando ${label}..."
@@ -1065,7 +1071,7 @@ if $WANT_RESTORE; then
         return 0
       fi
       mkdir -p "$dst_path"
-      local rsync_args=(-az --info=progress2,stats0 --delete-excluded)
+      local rsync_args=(-az --info=progress2,stats0)
       [[ -n "$exclude_file" && -f "$exclude_file" ]] && rsync_args+=("--exclude-from=$exclude_file")
       if rsync "${rsync_args[@]}" "${OPT_RESTORE}:${src_path}/" "$dst_path/"; then
         ok "${label} OK"
