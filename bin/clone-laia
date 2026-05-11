@@ -42,7 +42,7 @@
 set -euo pipefail
 
 # ── Metadata ─────────────────────────────────────────────────────────────────
-readonly INSTALLER_VERSION="2.7.0"
+readonly INSTALLER_VERSION="2.7.1"
 readonly INSTALLER_DATE="2026-05-11"
 
 # ── Colores ──────────────────────────────────────────────────────────────────
@@ -1141,20 +1141,57 @@ EXCLUDES
 
     rm -f "$LAIA_EXCLUDES" "$HERMES_EXCLUDES"
 
-    # ── Herramientas de IA (directorio home) ──
-    # Codex — credenciales y config (sin logs pesados)
-    for item in auth.json config.toml state_5.sqlite; do
-      _restore_file "${SRC_HOME}/.codex/${item}" "${HOME}/.codex/${item}" ".codex/${item}"
-    done
+    # ── Herramientas de IA y configs del usuario (directorio home) ──
 
-    # OpenCode — config (sin binario de 146MB; se instala con --setup-server)
-    _restore_file "${SRC_HOME}/.opencode/package.json" "${HOME}/.opencode/package.json" ".opencode/config"
-
-    # Claude Code cc1 — solo credenciales MCP (settings.json es local)
-    _restore_file "${SRC_HOME}/.claude/.credentials.json" "${HOME}/.claude/.credentials.json" ".claude/.credentials.json (cc1)"
+    # Claude Code cc1: config user-level + directorio entero (proyectos, MCP)
+    # Excluimos snapshots y caches pesados que se regeneran solos.
+    _restore_file "${SRC_HOME}/.claude.json" "${HOME}/.claude.json" ".claude.json (cc1 user config)"
+    CLAUDE_EXCL=$(mktemp)
+    cat > "$CLAUDE_EXCL" <<'X'
+shell-snapshots/
+ide/
+statsig/
+__pycache__/
+*.log
+X
+    _restore_tree "${SRC_HOME}/.claude" "${HOME}/.claude" ".claude/ (cc1 sessions/projects)" "$CLAUDE_EXCL"
+    rm -f "$CLAUDE_EXCL"
 
     # Claude Code cc2 — directorio completo de segunda cuenta
     _restore_tree "${SRC_HOME}/.claude-cuenta2" "${HOME}/.claude-cuenta2" ".claude-cuenta2/ (cc2)"
+
+    # Codex — config + auth + state (sin logs pesados)
+    CODEX_EXCL=$(mktemp)
+    cat > "$CODEX_EXCL" <<'X'
+log/
+logs/
+*.log
+sessions/
+X
+    _restore_tree "${SRC_HOME}/.codex" "${HOME}/.codex" ".codex/ (auth + config)" "$CODEX_EXCL"
+    rm -f "$CODEX_EXCL"
+
+    # OpenCode — config (sin binario de 146MB; se reinstala en --setup-server)
+    OPEN_EXCL=$(mktemp)
+    cat > "$OPEN_EXCL" <<'X'
+bin/opencode
+X
+    _restore_tree "${SRC_HOME}/.opencode" "${HOME}/.opencode" ".opencode/ (config)" "$OPEN_EXCL"
+    rm -f "$OPEN_EXCL"
+
+    # Otras CLIs de IA con auth/config
+    for d in .copilot .gemini .waveterm; do
+      _restore_tree "${SRC_HOME}/${d}" "${HOME}/${d}" "${d}/"
+    done
+
+    # Configs del usuario que el agente necesita
+    _restore_file "${SRC_HOME}/.gitconfig" "${HOME}/.gitconfig" ".gitconfig (git user global)"
+
+    # PM2 — proceso saved dump (si existe)
+    _restore_file "${SRC_HOME}/.pm2/dump.pm2" "${HOME}/.pm2/dump.pm2" ".pm2/dump.pm2 (procesos saved)"
+
+    # Docker — credenciales de registries (si las hay)
+    _restore_file "${SRC_HOME}/.docker/config.json" "${HOME}/.docker/config.json" ".docker/config.json (registries)"
 
   else
     warn "No se puede conectar por SSH a ${OPT_RESTORE}"
