@@ -42,7 +42,7 @@
 set -euo pipefail
 
 # ── Metadata ─────────────────────────────────────────────────────────────────
-readonly INSTALLER_VERSION="2.5.1"
+readonly INSTALLER_VERSION="2.6.0"
 readonly INSTALLER_DATE="2026-05-11"
 
 # ── Colores ──────────────────────────────────────────────────────────────────
@@ -211,6 +211,7 @@ done
 # ── Variables principales ────────────────────────────────────────────────────
 REPO_CODE="https://github.com/JorgeMP-3/laia-arch.git"
 REPO_PRIVATE="https://github.com/JorgeMP-3/laia-private.git"
+REPO_LAIA_UI="https://github.com/JorgeMP-3/laia-ui.git"
 
 CODE_DIR="$LAIA_DIR/.laia-arch"
 VENV="$CODE_DIR/venv"
@@ -288,6 +289,8 @@ _check_state() {
     samba)    command -v smbd      &>/dev/null && echo "${GRN}✓${RST}" || echo "${YEL}?${RST}" ;;
     ufw)      command -v ufw       &>/dev/null && echo "${GRN}✓${RST}" || echo "${YEL}?${RST}" ;;
     gitcfg)   [[ -n "$(git config --global user.email 2>/dev/null)" ]] && echo "${GRN}✓${RST}" || echo "${YEL}?${RST}" ;;
+    laia_ui)  [[ -d "$LAIA_DIR/laia-ui/.git" ]] && echo "${GRN}✓${RST}" || echo "${YEL}?${RST}" ;;
+    pnpm)     command -v pnpm      &>/dev/null && echo "${GRN}✓${RST}" || echo "${YEL}?${RST}" ;;
     *)        echo "${YEL}?${RST}" ;;
   esac
 }
@@ -301,6 +304,7 @@ WANT_RESTORE=false; WANT_START=false
 WANT_CC1=false; WANT_CC2=false; WANT_CODEX=false; WANT_OPENCODE=false
 WANT_NVM=false; WANT_PM2=false; WANT_DOCKER=false; WANT_SAMBA=false
 WANT_UFW=false; WANT_GITCFG=false
+WANT_LAIA_UI=false
 
 _print_menu() {
   echo -e "  ${BLD}Estado actual y componentes:${RST}"
@@ -309,9 +313,9 @@ _print_menu() {
   printf "   %b  1) Dependencias del sistema   %b\n" "$(_check_state deps)"     "${DIM}git/python3/node v22/gh${RST}"
   printf "   %b  2) Clonar/actualizar repos    %b\n" "$(_check_state code)"     "${DIM}laia-arch + laia-private${RST}"
   printf "   %b  3) Entorno Python (venv)      %b\n" "$(_check_state venv)"     "${DIM}venv + hermes-agent + deps backend${RST}"
-  printf "   %b  4) Workspace UI frontend      %b\n" "$(_check_state frontend)" "${DIM}npm + vite build${RST}"
-  printf "   %b  5) Symlinks runtime           %b\n" "$(_check_state runtime)"  "${DIM}LAIA/ y ~/.hermes/${RST}"
-  printf "   %b  6) Scripts ~/bin              %b\n" "$(_check_state bin)"      "${DIM}clone-laia, gsave, sclaude…${RST}"
+  printf "   %b  4) Workspace UI frontend      %b\n" "$(_check_state frontend)" "${DIM}legacy — Vite/React, vite build${RST}"
+  printf "   %b  5) Symlinks runtime + bin     %b\n" "$(_check_state runtime)"  "${DIM}LAIA/, ~/.hermes/, wrappers hermes/laia-arch${RST}"
+  printf "   %b  6) Scripts ~/bin              %b\n" "$(_check_state bin)"      "${DIM}clone-laia, gsave, sclaude, wrappers${RST}"
   printf "   %b  7) Variables de entorno       %b\n" "$(_check_state env)"      "${DIM}.bashrc + .zshrc${RST}"
   echo ""
   echo -e "  ${BLD}Servidor${RST}"
@@ -332,6 +336,10 @@ _print_menu() {
   printf "   %b 20) Samba                      %b\n" "$(_check_state samba)"    "${DIM}compartir con Mac${RST}"
   printf "   %b 21) UFW Firewall               %b\n" "$(_check_state ufw)"      "${DIM}22/80/443/8077${RST}"
   printf "   %b 22) Git config global          %b\n" "$(_check_state gitcfg)"   "${DIM}user.name + user.email${RST}"
+  echo ""
+  echo -e "  ${BLD}Nueva UI${RST}"
+  printf "   %b 23) laia-ui (nueva UI)         %b\n" "$(_check_state laia_ui)"  "${DIM}monorepo pnpm+turbo (arch + agora)${RST}"
+  printf "   %b      └─ pnpm                   %b\n" "$(_check_state pnpm)"     "${DIM}requerido para 23${RST}"
   echo ""
   echo -e "  ${DIM}  ${BLD}todo${RST}${DIM}  = todos los pasos que falten   ·   ${BLD}nada${RST}${DIM} = cancelar${RST}"
   echo -e "  ${DIM}  ${BLD}base${RST}${DIM}  = solo núcleo LAIA (1-7) + symlinks${RST}"
@@ -363,6 +371,7 @@ _apply_choice() {
     20) WANT_SAMBA=true ;;
     21) WANT_UFW=true ;;
     22) WANT_GITCFG=true ;;
+    23) WANT_LAIA_UI=true ;;
   esac
   return 0
 }
@@ -378,14 +387,15 @@ _select_missing() {
   [[ -L "$LAIA_DIR/hermes-agent" ]]   || WANT_RUNTIME=true
   WANT_BIN=true; WANT_ENV=true
   [[ -f /etc/systemd/system/hermes.service ]] || WANT_SYSTEMD=true
+  [[ -d "$LAIA_DIR/laia-ui/.git" ]]   || WANT_LAIA_UI=true
   WANT_START=true
 }
 
 _apply_set() {
-  # "todo" = núcleo + servidor + opcionales detectables
+  # "todo" = núcleo + servidor + opcionales detectables + laia-ui
   case "$1" in
     todo)
-      for n in 1 2 3 4 5 6 7 8 10 12 13 14 15 16 17 18 19; do _apply_choice "$n"; done
+      for n in 1 2 3 4 5 6 7 8 10 12 13 14 15 16 17 18 19 23; do _apply_choice "$n"; done
       [[ -n "$OPT_NGINX"   ]] && WANT_NGINX_STEP=true
       [[ -n "$OPT_RESTORE" ]] && _apply_choice 11
       ;;
@@ -417,6 +427,7 @@ if [[ "$OPT_YES" == true ]]; then
     command -v tailscale &>/dev/null || WANT_TAILSCALE=true
     command -v docker    &>/dev/null || WANT_DOCKER=true
   fi
+  [[ -d "$LAIA_DIR/laia-ui/.git" ]] || WANT_LAIA_UI=true
   if [[ "$OPT_SERVICES" == false ]]; then WANT_SYSTEMD=false; WANT_START=false; fi
 else
   _print_menu
@@ -462,6 +473,7 @@ $WANT_DOCKER    && _pending+=("docker")
 $WANT_SAMBA     && _pending+=("samba")
 $WANT_UFW       && _pending+=("ufw")
 $WANT_GITCFG    && _pending+=("git-config")
+$WANT_LAIA_UI   && _pending+=("laia-ui")
 
 if [[ ${#_pending[@]} -eq 0 ]]; then
   info "Nada seleccionado. Salgo."
@@ -681,18 +693,50 @@ if $WANT_RUNTIME; then
 fi
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Scripts del sistema
+# Scripts del sistema + wrappers dinámicos
 # ══════════════════════════════════════════════════════════════════════════════
 if $WANT_BIN; then
   step "Scripts del sistema"
 
+  mkdir -p "$BIN_DIR"
+
   if [[ -d "$CODE_DIR/bin" ]]; then
-    mkdir -p "$BIN_DIR"
-    rsync -a --delete "$CODE_DIR/bin/" "$BIN_DIR/"
+    # Copia archivos reales del repo (NO usa --delete para no borrar wrappers).
+    # Ignora symlinks del repo: tenían paths absolutos del host de origen.
+    for script in "$CODE_DIR/bin/"*; do
+      [[ -f "$script" && ! -L "$script" ]] || continue
+      cp -f "$script" "$BIN_DIR/"
+    done
     chmod +x "$BIN_DIR/"* 2>/dev/null || true
-    ok "Scripts en ~/bin/"
+    ok "Scripts del repo copiados a ~/bin/"
   else
     warn "No hay $CODE_DIR/bin — selecciona 2 (clonar) primero."
+  fi
+
+  # Wrappers para binarios del venv con rutas dinámicas (no hardcoded).
+  # Se generan SIEMPRE que el venv tenga los binarios, así sobreviven a
+  # cualquier movimiento/recreación del directorio LAIA.
+  _create_wrapper() {
+    local name="$1" target="$2"
+    cat > "$BIN_DIR/$name" <<EOF
+#!/usr/bin/env bash
+# Wrapper generado por install-laia — apunta al venv actual
+exec "$target" "\$@"
+EOF
+    chmod +x "$BIN_DIR/$name"
+  }
+
+  if [[ -x "$VENV/bin/hermes" ]]; then
+    _create_wrapper "hermes" "$VENV/bin/hermes"
+    ln -sf hermes "$BIN_DIR/laia-arch"
+    ok "Wrappers hermes + laia-arch → $VENV/bin/hermes"
+  else
+    warn "No hay $VENV/bin/hermes — selecciona 3 (venv) primero."
+  fi
+
+  if [[ -x "$VENV/bin/uvicorn" ]]; then
+    _create_wrapper "uvicorn" "$VENV/bin/uvicorn"
+    ok "Wrapper uvicorn → $VENV/bin/uvicorn"
   fi
 fi
 
@@ -1284,6 +1328,73 @@ if $WANT_GITCFG; then
   git config --global pull.rebase false
   git config --global init.defaultBranch main
   ok "Git configurado"
+fi
+
+# ══════════════════════════════════════════════════════════════════════════════
+# laia-ui — nueva UI (monorepo pnpm + turbo)
+# ══════════════════════════════════════════════════════════════════════════════
+if $WANT_LAIA_UI; then
+  step "laia-ui — nueva UI (pnpm monorepo)"
+
+  LAIA_UI_DIR="$LAIA_DIR/laia-ui"
+
+  # Clonar o actualizar
+  if [[ -d "$LAIA_UI_DIR/.git" ]]; then
+    info "$LAIA_UI_DIR existe — actualizando..."
+    if git -C "$LAIA_UI_DIR" pull -q; then
+      ok "laia-ui actualizado ($(git -C "$LAIA_UI_DIR" rev-parse --short HEAD 2>/dev/null))"
+    else
+      warn "git pull falló en laia-ui"
+    fi
+  else
+    info "Clonando laia-ui desde $REPO_LAIA_UI..."
+    if git clone "$REPO_LAIA_UI" "$LAIA_UI_DIR" -q; then
+      ok "laia-ui clonado"
+    else
+      warn "git clone laia-ui falló — verifica autenticación (repo privado)"
+    fi
+  fi
+
+  # Instalar pnpm si no está
+  if [[ -d "$LAIA_UI_DIR/.git" ]]; then
+    if ! command -v pnpm &>/dev/null; then
+      info "Instalando pnpm..."
+      if command -v corepack &>/dev/null; then
+        # Forma oficial recomendada: corepack viene con Node 16.10+
+        corepack enable 2>/dev/null || true
+        corepack prepare pnpm@latest --activate 2>/dev/null && ok "pnpm $(pnpm --version)" || \
+          warn "corepack prepare pnpm falló — intentando npm..."
+      fi
+      if ! command -v pnpm &>/dev/null; then
+        if npm_global_install pnpm; then
+          ok "pnpm $(pnpm --version 2>/dev/null || echo '?')"
+        else
+          warn "pnpm install falló — instala manualmente: npm install -g pnpm"
+        fi
+      fi
+    else
+      ok "pnpm $(pnpm --version) ya instalado"
+    fi
+
+    if command -v pnpm &>/dev/null; then
+      info "Instalando dependencias del monorepo..."
+      if (cd "$LAIA_UI_DIR" && pnpm install --silent 2>&1 | tail -5); then
+        ok "Deps del monorepo instaladas"
+      else
+        warn "pnpm install falló — revisa con: cd $LAIA_UI_DIR && pnpm install"
+      fi
+
+      info "Compilando (turbo run build)..."
+      if (cd "$LAIA_UI_DIR" && pnpm run build 2>&1 | tail -8); then
+        ok "laia-ui compilado"
+      else
+        warn "build falló — revisa con: cd $LAIA_UI_DIR && pnpm run build"
+      fi
+    fi
+
+    # Symlink visible en LAIA/ para mantener la convención
+    ln -sfn "laia-ui" "$LAIA_DIR/.laia-ui-link" 2>/dev/null || true
+  fi
 fi
 
 # ══════════════════════════════════════════════════════════════════════════════
