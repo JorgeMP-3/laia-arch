@@ -23,14 +23,27 @@
 #   --help, -h             Mostrar ayuda
 #   --version, -v          Mostrar versión
 #
-# Instalación rápida:
-#   bash <(curl -fsSL https://raw.githubusercontent.com/JorgeMP-3/laia-arch/main/bin/clone-laia)
+# Instalación rápida (repo privado — requiere gh CLI autenticado):
+#
+#   # 1) requisitos mínimos
+#   sudo apt update && sudo apt install -y git curl gh
+#
+#   # 2) autenticar GitHub (abre navegador o pega token)
+#   gh auth login
+#
+#   # 3) bootstrap del wizard (descarga clone-laia y lo ejecuta)
+#   bash <(gh api -H "Accept: application/vnd.github.v3.raw" \
+#            repos/JorgeMP-3/laia-arch/contents/bin/clone-laia)
+#
+#   # alternativa equivalente con token explícito:
+#   curl -fsSL -H "Authorization: Bearer $(gh auth token)" \
+#     https://raw.githubusercontent.com/JorgeMP-3/laia-arch/main/bin/clone-laia | bash
 # ══════════════════════════════════════════════════════════════════════════════
 set -euo pipefail
 
 # ── Metadata ─────────────────────────────────────────────────────────────────
-readonly INSTALLER_VERSION="2.4.0"
-readonly INSTALLER_DATE="2026-05-10"
+readonly INSTALLER_VERSION="2.5.0"
+readonly INSTALLER_DATE="2026-05-11"
 
 # ── Colores ──────────────────────────────────────────────────────────────────
 if [[ -n "${NO_COLOR:-}" ]]; then
@@ -51,8 +64,16 @@ exec > >(tee -a "$LOG_FILE") 2>&1
 ok()    { echo -e "${GRN}  ✓ $1${RST}"; }
 info()  { echo -e "${CYN}  → $1${RST}"; }
 err()   { echo -e "${RED}  ✕ $1${RST}\n" >&2; exit 1; }
-step()  { echo -e "\n${YEL}${BLD}═══ $1 ═══════════════════════════════════════════════════${RST}"; }
 warn()  { echo -e "${YEL}  ⚠ $1${RST}"; }
+fail()  { echo -e "${RED}  ✕ $1${RST}"; }
+
+# step: numeración dinámica — solo cuenta los pasos realmente ejecutados.
+STEP_NUM=0
+step()  {
+  STEP_NUM=$((STEP_NUM + 1))
+  echo -e "\n${YEL}${BLD}═══ ${STEP_NUM}  $1 ═══════════════════════════════════════════════════${RST}"
+}
+
 ask()   {
   printf "${BLD}  %s ${DIM}%s${RST} " "$1" "${2:-}"
   if ! read -r REPLY </dev/tty 2>/dev/null; then
@@ -65,6 +86,73 @@ ask()   {
   fi
 }
 log()   { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >> "$LOG_FILE"; }
+
+# run_step: ejecuta un comando y solo imprime ok si REALMENTE tuvo éxito.
+#   uso: run_step "etiqueta éxito" "etiqueta fallo" -- comando args...
+run_step() {
+  local ok_msg="$1" fail_msg="$2"; shift 2
+  [[ "${1:-}" == "--" ]] && shift
+  if "$@"; then ok "$ok_msg"; return 0; fi
+  warn "$fail_msg"; return 1
+}
+
+# npm_global_install: instala paquetes globales sin pedir sudo.
+# Si /usr/lib/node_modules no es escribible, configura ~/.npm-global como prefix.
+NPM_PREFIX_CONFIGURED=false
+_setup_npm_prefix() {
+  [[ "$NPM_PREFIX_CONFIGURED" == true ]] && return 0
+  command -v npm &>/dev/null || return 1
+  local sys_prefix; sys_prefix="$(npm config get prefix 2>/dev/null || echo)"
+  if [[ -n "$sys_prefix" && -d "$sys_prefix/lib/node_modules" && -w "$sys_prefix/lib/node_modules" ]]; then
+    NPM_PREFIX_CONFIGURED=true
+    return 0
+  fi
+  if [[ -n "$sys_prefix" && ! -e "$sys_prefix/lib/node_modules" && -w "$sys_prefix" ]]; then
+    NPM_PREFIX_CONFIGURED=true
+    return 0
+  fi
+  local user_prefix="$HOME/.npm-global"
+  mkdir -p "$user_prefix/bin" "$user_prefix/lib/node_modules"
+  npm config set prefix "$user_prefix" >/dev/null 2>&1 || true
+  case ":$PATH:" in *":$user_prefix/bin:"*) ;; *) export PATH="$user_prefix/bin:$PATH" ;; esac
+  for rc in "$HOME/.bashrc" "$HOME/.zshrc"; do
+    [[ -f "$rc" ]] || continue
+    grep -q 'npm-global/bin' "$rc" 2>/dev/null || \
+      echo 'export PATH="$HOME/.npm-global/bin:$PATH"  # LAIA: npm globals sin sudo' >> "$rc"
+  done
+  info "npm prefix → ${user_prefix} (globals sin sudo)"
+  NPM_PREFIX_CONFIGURED=true
+  return 0
+}
+
+npm_global_install() {
+  _setup_npm_prefix || { warn "npm no disponible"; return 1; }
+  npm install -g "$@" 2>&1 | tail -3
+  return "${PIPESTATUS[0]}"
+}
+
+# _docker_setup: deja $DOCKER apuntando al binario correcto (docker / "sudo docker" / "").
+DOCKER=""
+_docker_setup() {
+  if ! command -v docker &>/dev/null; then
+    DOCKER=""
+    return 1
+  fi
+  if docker info &>/dev/null; then
+    DOCKER="docker"; return 0
+  fi
+  if ! groups "$CURRENT_USER" 2>/dev/null | grep -qw docker; then
+    info "Añadiendo ${CURRENT_USER} al grupo docker (necesita re-login para aplicar)..."
+    sudo usermod -aG docker "$CURRENT_USER" 2>/dev/null || true
+  fi
+  if sudo -n docker info &>/dev/null; then
+    warn "Usando 'sudo docker' (re-login para usar docker sin sudo)."
+    DOCKER="sudo docker"; return 0
+  fi
+  warn "Docker sin permisos — re-login o ejecuta 'newgrp docker' antes."
+  DOCKER=""
+  return 1
+}
 
 # ── Rollback ─────────────────────────────────────────────────────────────────
 ROLLBACK_ITEMS=()
@@ -162,28 +250,234 @@ echo ""
 echo -e "${DIM}  Instalador de LAIA · Ecosistema Multi-Agente · v${INSTALLER_VERSION}${RST}"
 echo -e "${DIM}  Sistema: ${OS}${DISTRO:+ ($DISTRO)}  ·  Usuario: ${CURRENT_USER}  ·  Destino: ${LAIA_DIR}${RST}"
 echo ""
-echo "  Componentes a instalar:"
-echo -e "  ${DIM}  • ARCH (Hermes + Workspace UI) → ${CODE_DIR}${RST}"
-echo -e "  ${DIM}  • Runtime → ${RUNTIME_DIR}${RST}"
-echo -e "  ${DIM}  • Datos personales → ${LAIA_DIR}/memories/  (laia-private)${RST}"
-[[ "$OPT_SERVICES" == true && "$OS" == "linux" ]] && \
-  echo -e "  ${DIM}  • Servicios systemd → hermes + workspace-ui${RST}"
-[[ -n "$OPT_NGINX" && "$OS" == "linux" ]] && \
-  echo -e "  ${DIM}  • Nginx → ${OPT_NGINX}${RST}"
-[[ -n "$OPT_RESTORE" ]] && \
-  echo -e "  ${DIM}  • Restauración → ${OPT_RESTORE}${RST}"
-echo ""
 
+# ── Detección de estado de cada componente ──────────────────────────────────
+_check_state() {
+  # Imprime "✓" si OK, "⚠" si parcial/desactualizado, "?" si no detectado.
+  case "$1" in
+    deps)
+      command -v git &>/dev/null && command -v python3 &>/dev/null \
+        && command -v node &>/dev/null && command -v gh &>/dev/null \
+        && echo "${GRN}✓${RST}" || echo "${YEL}?${RST}" ;;
+    code)
+      [[ -d "$CODE_DIR/.git" ]] && echo "${GRN}✓${RST}" || echo "${YEL}?${RST}" ;;
+    venv)
+      [[ -x "$VENV/bin/hermes" ]] && echo "${GRN}✓${RST}" || echo "${YEL}?${RST}" ;;
+    frontend)
+      [[ -d "$WS_FRONTEND/dist" ]] && echo "${GRN}✓${RST}" || echo "${YEL}?${RST}" ;;
+    runtime)
+      [[ -L "$LAIA_DIR/hermes-agent" ]] && echo "${GRN}✓${RST}" || echo "${YEL}?${RST}" ;;
+    bin)
+      [[ -d "$BIN_DIR" && -n "$(ls -A "$BIN_DIR" 2>/dev/null)" ]] \
+        && echo "${GRN}✓${RST}" || echo "${YEL}?${RST}" ;;
+    env)
+      grep -q 'HERMES_HOME' "$HOME/.bashrc" 2>/dev/null \
+        && echo "${GRN}✓${RST}" || echo "${YEL}?${RST}" ;;
+    systemd)
+      [[ -f /etc/systemd/system/hermes.service ]] \
+        && echo "${GRN}✓${RST}" || echo "${YEL}?${RST}" ;;
+    nginx)    command -v nginx &>/dev/null && echo "${GRN}✓${RST}" || echo "${YEL}?${RST}" ;;
+    tailscale) command -v tailscale &>/dev/null && echo "${GRN}✓${RST}" || echo "${YEL}?${RST}" ;;
+    cc1)      command -v claude    &>/dev/null && echo "${GRN}✓${RST}" || echo "${YEL}?${RST}" ;;
+    cc2)      [[ -e "$HOME/.claude-cuenta2/.credentials.json" ]] && echo "${GRN}✓${RST}" || echo "${YEL}?${RST}" ;;
+    codex)    command -v codex     &>/dev/null && echo "${GRN}✓${RST}" || echo "${YEL}?${RST}" ;;
+    opencode) [[ -x "$HOME/.opencode/bin/opencode" ]] && echo "${GRN}✓${RST}" || echo "${YEL}?${RST}" ;;
+    nvm)      [[ -d "$HOME/.nvm" ]] && echo "${GRN}✓${RST}" || echo "${YEL}?${RST}" ;;
+    pm2)      command -v pm2       &>/dev/null && echo "${GRN}✓${RST}" || echo "${YEL}?${RST}" ;;
+    docker)   command -v docker    &>/dev/null && echo "${GRN}✓${RST}" || echo "${YEL}?${RST}" ;;
+    samba)    command -v smbd      &>/dev/null && echo "${GRN}✓${RST}" || echo "${YEL}?${RST}" ;;
+    ufw)      command -v ufw       &>/dev/null && echo "${GRN}✓${RST}" || echo "${YEL}?${RST}" ;;
+    gitcfg)   [[ -n "$(git config --global user.email 2>/dev/null)" ]] && echo "${GRN}✓${RST}" || echo "${YEL}?${RST}" ;;
+    *)        echo "${YEL}?${RST}" ;;
+  esac
+}
+
+# Flags WANT_*: qué bloques se ejecutarán. Default: nada activado;
+# se pinta el menú y el usuario decide. --yes activa los que faltan.
+WANT_DEPS=false; WANT_CODE=false; WANT_VENV=false; WANT_FRONTEND=false
+WANT_RUNTIME=false; WANT_BIN=false; WANT_ENV=false
+WANT_SYSTEMD=false; WANT_NGINX_STEP=false; WANT_TAILSCALE=false; WANT_SSH=false
+WANT_RESTORE=false; WANT_START=false
+WANT_CC1=false; WANT_CC2=false; WANT_CODEX=false; WANT_OPENCODE=false
+WANT_NVM=false; WANT_PM2=false; WANT_DOCKER=false; WANT_SAMBA=false
+WANT_UFW=false; WANT_GITCFG=false
+
+_print_menu() {
+  echo -e "  ${BLD}Estado actual y componentes:${RST}"
+  echo ""
+  echo -e "  ${BLD}Núcleo LAIA${RST}"
+  printf "   %b  1) Dependencias del sistema   %b\n" "$(_check_state deps)"     "${DIM}git/python3/node v22/gh${RST}"
+  printf "   %b  2) Clonar/actualizar repos    %b\n" "$(_check_state code)"     "${DIM}laia-arch + laia-private${RST}"
+  printf "   %b  3) Entorno Python (venv)      %b\n" "$(_check_state venv)"     "${DIM}venv + hermes-agent + deps backend${RST}"
+  printf "   %b  4) Workspace UI frontend      %b\n" "$(_check_state frontend)" "${DIM}npm + vite build${RST}"
+  printf "   %b  5) Symlinks runtime           %b\n" "$(_check_state runtime)"  "${DIM}LAIA/ y ~/.hermes/${RST}"
+  printf "   %b  6) Scripts ~/bin              %b\n" "$(_check_state bin)"      "${DIM}clone-laia, gsave, sclaude…${RST}"
+  printf "   %b  7) Variables de entorno       %b\n" "$(_check_state env)"      "${DIM}.bashrc + .zshrc${RST}"
+  echo ""
+  echo -e "  ${BLD}Servidor${RST}"
+  printf "   %b  8) Servicios systemd          %b\n" "$(_check_state systemd)"   "${DIM}hermes + workspace-ui${RST}"
+  printf "   %b  9) Nginx proxy reverso        %b\n" "$(_check_state nginx)"     "${DIM}requiere --nginx DOMINIO${RST}"
+  printf "   %b 10) Tailscale                  %b\n" "$(_check_state tailscale)" "${DIM}red privada${RST}"
+  printf "   %b 11) SSH + Restore              %b\n" "$([[ -f "$HOME/.ssh/id_ed25519" ]] && echo -n "${GRN}✓${RST}" || echo -n "${YEL}?${RST}")" "${DIM}requiere --restore USER@HOST${RST}"
+  printf "   %b 12) Arrancar servicios         %b\n" "$([[ -f /etc/systemd/system/hermes.service ]] && systemctl is-active --quiet hermes 2>/dev/null && echo -n "${GRN}✓${RST}" || echo -n "${YEL}?${RST}")" "${DIM}systemctl start hermes + workspace-ui${RST}"
+  echo ""
+  echo -e "  ${BLD}CLI tools${RST}"
+  printf "   %b 13) Claude Code cc1            %b\n" "$(_check_state cc1)"      "${DIM}cuenta principal${RST}"
+  printf "   %b 14) Claude Code cc2 (Docker)   %b\n" "$(_check_state cc2)"      "${DIM}cuenta secundaria${RST}"
+  printf "   %b 15) Codex CLI                  %b\n" "$(_check_state codex)"    "${DIM}OpenAI/GPT${RST}"
+  printf "   %b 16) OpenCode CLI               %b\n" "$(_check_state opencode)" "${DIM}Minimax${RST}"
+  printf "   %b 17) NVM + Node v22             %b\n" "$(_check_state nvm)"      "${DIM}gestor de Node${RST}"
+  printf "   %b 18) PM2                        %b\n" "$(_check_state pm2)"      "${DIM}process manager${RST}"
+  printf "   %b 19) Docker                     %b\n" "$(_check_state docker)"   "${DIM}engine + grupo del usuario${RST}"
+  printf "   %b 20) Samba                      %b\n" "$(_check_state samba)"    "${DIM}compartir con Mac${RST}"
+  printf "   %b 21) UFW Firewall               %b\n" "$(_check_state ufw)"      "${DIM}22/80/443/8077${RST}"
+  printf "   %b 22) Git config global          %b\n" "$(_check_state gitcfg)"   "${DIM}user.name + user.email${RST}"
+  echo ""
+  echo -e "  ${DIM}  ${BLD}todo${RST}${DIM}  = todos los pasos que falten   ·   ${BLD}nada${RST}${DIM} = cancelar${RST}"
+  echo -e "  ${DIM}  ${BLD}base${RST}${DIM}  = solo núcleo LAIA (1-7) + symlinks${RST}"
+  echo -e "  ${DIM}  ${BLD}servidor${RST}${DIM} = núcleo + systemd + arrancar (1-8, 12)${RST}"
+  echo ""
+}
+
+_apply_choice() {
+  case "$1" in
+    1)  WANT_DEPS=true ;;
+    2)  WANT_CODE=true ;;
+    3)  WANT_VENV=true ;;
+    4)  WANT_FRONTEND=true ;;
+    5)  WANT_RUNTIME=true ;;
+    6)  WANT_BIN=true ;;
+    7)  WANT_ENV=true ;;
+    8)  WANT_SYSTEMD=true ;;
+    9)  WANT_NGINX_STEP=true ;;
+    10) WANT_TAILSCALE=true ;;
+    11) WANT_SSH=true; WANT_RESTORE=true ;;
+    12) WANT_START=true ;;
+    13) WANT_CC1=true ;;
+    14) WANT_CC2=true ;;
+    15) WANT_CODEX=true ;;
+    16) WANT_OPENCODE=true ;;
+    17) WANT_NVM=true ;;
+    18) WANT_PM2=true ;;
+    19) WANT_DOCKER=true ;;
+    20) WANT_SAMBA=true ;;
+    21) WANT_UFW=true ;;
+    22) WANT_GITCFG=true ;;
+  esac
+}
+
+_select_missing() {
+  # Selecciona los pasos cuyo estado es "?" (no detectado).
+  command -v git     &>/dev/null && command -v python3 &>/dev/null \
+    && command -v node &>/dev/null && command -v gh &>/dev/null \
+    || WANT_DEPS=true
+  [[ -d "$CODE_DIR/.git" ]]           || WANT_CODE=true
+  [[ -x "$VENV/bin/hermes" ]]         || WANT_VENV=true
+  [[ -d "$WS_FRONTEND/dist" ]]        || WANT_FRONTEND=true
+  [[ -L "$LAIA_DIR/hermes-agent" ]]   || WANT_RUNTIME=true
+  WANT_BIN=true; WANT_ENV=true
+  [[ -f /etc/systemd/system/hermes.service ]] || WANT_SYSTEMD=true
+  WANT_START=true
+}
+
+_apply_set() {
+  # "todo" = núcleo + servidor + opcionales detectables
+  case "$1" in
+    todo)
+      for n in 1 2 3 4 5 6 7 8 10 12 13 14 15 16 17 18 19; do _apply_choice "$n"; done
+      [[ -n "$OPT_NGINX"  ]] && WANT_NGINX_STEP=true
+      [[ -n "$OPT_RESTORE" ]] && _apply_choice 11
+      ;;
+    base)
+      for n in 1 2 3 4 5 6 7; do _apply_choice "$n"; done ;;
+    servidor)
+      for n in 1 2 3 4 5 6 7 8 12; do _apply_choice "$n"; done ;;
+  esac
+}
+
+# Activaciones forzadas por flags CLI
+[[ -n "$OPT_NGINX"   ]] && WANT_NGINX_STEP=true
+[[ -n "$OPT_RESTORE" ]] && { WANT_TAILSCALE=true; WANT_SSH=true; WANT_RESTORE=true; }
+if [[ "$OPT_SERVICES" == false ]]; then WANT_SYSTEMD=false; WANT_START=false; fi
+
+if [[ "$OPT_YES" == true ]]; then
+  # Modo no interactivo: instala lo que falte + lo pedido por flags
+  _select_missing
+  [[ -n "$OPT_NGINX"   ]] && WANT_NGINX_STEP=true
+  [[ -n "$OPT_RESTORE" ]] && { WANT_TAILSCALE=true; WANT_SSH=true; WANT_RESTORE=true; }
+  if [[ "$OPT_SETUP_SERVER" == true ]]; then
+    command -v claude    &>/dev/null || WANT_CC1=true
+    [[ -e "$HOME/.claude-cuenta2/.credentials.json" ]] || WANT_CC2=true
+    command -v codex     &>/dev/null || WANT_CODEX=true
+    [[ -x "$HOME/.opencode/bin/opencode" ]] || WANT_OPENCODE=true
+    command -v node      &>/dev/null || WANT_NVM=true
+    command -v pm2       &>/dev/null || WANT_PM2=true
+    command -v tailscale &>/dev/null || WANT_TAILSCALE=true
+    command -v docker    &>/dev/null || WANT_DOCKER=true
+  fi
+  if [[ "$OPT_SERVICES" == false ]]; then WANT_SYSTEMD=false; WANT_START=false; fi
+else
+  _print_menu
+  ask "Selección (números, 'todo', 'base', 'servidor', 'nada'):" ""
+  REPLY_LOWER="$(echo "$REPLY" | tr '[:upper:]' '[:lower:]' | xargs)"
+  case "$REPLY_LOWER" in
+    nada|n|"")
+      info "Cancelado."; exit 0 ;;
+    todo|base|servidor)
+      _apply_set "$REPLY_LOWER" ;;
+    *)
+      # Lista de números separados por espacios o comas
+      IFS=' ,' read -ra _CHOICES <<< "$REPLY_LOWER"
+      for c in "${_CHOICES[@]}"; do
+        [[ "$c" =~ ^[0-9]+$ ]] && _apply_choice "$c"
+      done
+      ;;
+  esac
+fi
+
+# Resumen de lo que se va a hacer
+_pending=()
+$WANT_DEPS      && _pending+=("deps")
+$WANT_CODE      && _pending+=("clonar-repos")
+$WANT_VENV      && _pending+=("python-venv")
+$WANT_FRONTEND  && _pending+=("frontend-build")
+$WANT_RUNTIME   && _pending+=("symlinks")
+$WANT_BIN       && _pending+=("scripts-bin")
+$WANT_ENV       && _pending+=("env-rc")
+$WANT_SYSTEMD   && _pending+=("systemd")
+$WANT_NGINX_STEP && _pending+=("nginx")
+$WANT_TAILSCALE && _pending+=("tailscale")
+$WANT_SSH       && _pending+=("ssh-keys")
+$WANT_RESTORE   && _pending+=("restore")
+$WANT_START     && _pending+=("start-services")
+$WANT_CC1       && _pending+=("cc1")
+$WANT_CC2       && _pending+=("cc2")
+$WANT_CODEX     && _pending+=("codex")
+$WANT_OPENCODE  && _pending+=("opencode")
+$WANT_NVM       && _pending+=("nvm")
+$WANT_PM2       && _pending+=("pm2")
+$WANT_DOCKER    && _pending+=("docker")
+$WANT_SAMBA     && _pending+=("samba")
+$WANT_UFW       && _pending+=("ufw")
+$WANT_GITCFG    && _pending+=("git-config")
+
+if [[ ${#_pending[@]} -eq 0 ]]; then
+  info "Nada seleccionado. Salgo."
+  exit 0
+fi
+
+echo ""
+echo -e "  ${BLD}Se ejecutará:${RST} ${DIM}${_pending[*]}${RST}"
 if [[ "$OPT_YES" == false ]]; then
-  ask "¿Continuar? (s/n)" ""
-  [[ "$REPLY" =~ ^[Ss]$ ]] || { info "Cancelado."; exit 0; }
+  ask "¿Confirmar y continuar? (s/n)" ""
+  [[ "$REPLY" =~ ^[SsYy]$ ]] || { info "Cancelado."; exit 0; }
 fi
 
 # ══════════════════════════════════════════════════════════════════════════════
-# PASO 0 — Dependencias del sistema
+# Dependencias del sistema
 # ══════════════════════════════════════════════════════════════════════════════
-if [[ "$OPT_DEPS" == true && "$OS" == "linux" && "$DISTRO" == "debian" ]]; then
-  step "0  Dependencias del sistema"
+if [[ "$WANT_DEPS" == true && "$OPT_DEPS" == true && "$OS" == "linux" && "$DISTRO" == "debian" ]]; then
+  step "Dependencias del sistema"
 
   PKGS=()
   command -v git     &>/dev/null || PKGS+=("git")
@@ -236,38 +530,43 @@ if [[ "$OPT_DEPS" == true && "$OS" == "linux" && "$DISTRO" == "debian" ]]; then
 fi
 
 # ══════════════════════════════════════════════════════════════════════════════
-# PASO 1 — Verificar dependencias
+# Verificación de dependencias (siempre se ejecuta, ligero)
 # ══════════════════════════════════════════════════════════════════════════════
-step "1  Verificando dependencias"
+if $WANT_DEPS || $WANT_CODE || $WANT_VENV || $WANT_FRONTEND; then
+  step "Verificando dependencias"
 
-MISSING=()
-for cmd in git python3 node npm gh; do
-  if command -v "$cmd" &>/dev/null; then
-    ver=$("$cmd" --version 2>&1 | head -1)
-    ok "$cmd — ${ver:-desconocido}"
-  else
-    MISSING+=("$cmd")
-    echo -e "${RED}  ✕ $cmd — no encontrado${RST}"
-  fi
-done
-[[ ${#MISSING[@]} -eq 0 ]] || err "Instala antes: ${MISSING[*]}"
-
-# ══════════════════════════════════════════════════════════════════════════════
-# PASO 2 — Autenticación GitHub
-# ══════════════════════════════════════════════════════════════════════════════
-step "2  Autenticación GitHub"
-
-if gh auth status &>/dev/null; then
-  _ghuser=$(gh api user --jq .login 2>/dev/null || echo "?")
-  ok "GitHub — $_ghuser"
-else
-  err "No autenticado. Ejecuta 'gh auth login' primero."
+  MISSING=()
+  for cmd in git python3 node npm gh; do
+    if command -v "$cmd" &>/dev/null; then
+      ver=$("$cmd" --version 2>&1 | head -1)
+      ok "$cmd — ${ver:-desconocido}"
+    else
+      MISSING+=("$cmd")
+      echo -e "${RED}  ✕ $cmd — no encontrado${RST}"
+    fi
+  done
+  [[ ${#MISSING[@]} -eq 0 ]] || err "Instala antes (selecciona 1 en el menú): ${MISSING[*]}"
 fi
 
 # ══════════════════════════════════════════════════════════════════════════════
-# PASO 3 — Clonar repos
+# Autenticación GitHub (solo si vamos a clonar)
 # ══════════════════════════════════════════════════════════════════════════════
-step "3  Clonando repositorios"
+if $WANT_CODE; then
+  step "Autenticación GitHub"
+
+  if gh auth status &>/dev/null; then
+    _ghuser=$(gh api user --jq .login 2>/dev/null || echo "?")
+    ok "GitHub — $_ghuser"
+  else
+    err "No autenticado. Ejecuta 'gh auth login' primero."
+  fi
+fi
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Clonar repos
+# ══════════════════════════════════════════════════════════════════════════════
+if $WANT_CODE; then
+  step "Clonando repositorios"
 
 mkdir -p "$LAIA_DIR"
 
@@ -288,104 +587,118 @@ if ! git -C "$CODE_DIR" remote | grep -q '^upstream$'; then
   ok "upstream añadido"
 fi
 
-# Datos personales → LAIA/ (laia-private)
-if [[ ! -f "$LAIA_DIR/.git/config" ]]; then
-  info "Inicializando laia-private..."
-  git -C "$LAIA_DIR" init -q
-  git -C "$LAIA_DIR" remote add origin "$REPO_PRIVATE"
-  git -C "$LAIA_DIR" pull origin main -q 2>/dev/null || true
-  ok "laia-private configurado"
-else
-  git -C "$LAIA_DIR" pull origin main -q 2>/dev/null || true
-  ok "laia-private actualizado"
-fi
-
-# ══════════════════════════════════════════════════════════════════════════════
-# PASO 4 — Entorno Python
-# ══════════════════════════════════════════════════════════════════════════════
-step "4  Entorno Python"
-
-if [[ ! -x "$VENV/bin/pip" ]]; then
-  [[ -d "$VENV" ]] && { warn "Venv incompleto — recreando..."; rm -rf "$VENV"; }
-  info "Creando venv en $VENV..."
-  python3 -m venv "$VENV" || err "No se pudo crear venv. Instala python$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')-venv"
-  register_rollback "rm -rf '$VENV'"
-fi
-
-info "Instalando hermes-agent..."
-"$VENV/bin/pip" install --upgrade pip -q --disable-pip-version-check || true
-"$VENV/bin/pip" install -e "$CODE_DIR" -q --disable-pip-version-check || err "pip install -e falló"
-ok "hermes-agent instalado"
-
-# Dependencias del backend de Workspace UI
-if [[ -f "$WS_BACKEND/requirements.txt" ]]; then
-  info "Instalando dependencias del backend..."
-  "$VENV/bin/pip" install -r "$WS_BACKEND/requirements.txt" -q --disable-pip-version-check || \
-    warn "Algunas dependencias del backend fallaron"
-  ok "Backend deps instaladas"
-fi
-
-# ══════════════════════════════════════════════════════════════════════════════
-# PASO 5 — Workspace UI Frontend
-# ══════════════════════════════════════════════════════════════════════════════
-step "5  Workspace UI — Frontend"
-
-if [[ -f "$WS_FRONTEND/package.json" ]]; then
-  info "Instalando dependencias Node..."
-  if [[ -f "$WS_FRONTEND/package-lock.json" ]]; then
-    (cd "$WS_FRONTEND" && npm ci --silent) || err "npm ci falló"
+  # Datos personales → LAIA/ (laia-private)
+  if [[ ! -f "$LAIA_DIR/.git/config" ]]; then
+    info "Inicializando laia-private..."
+    git -C "$LAIA_DIR" init -q
+    git -C "$LAIA_DIR" remote add origin "$REPO_PRIVATE"
+    git -C "$LAIA_DIR" pull origin main -q 2>/dev/null || true
+    ok "laia-private configurado"
   else
-    (cd "$WS_FRONTEND" && npm install --silent) || err "npm install falló"
+    git -C "$LAIA_DIR" pull origin main -q 2>/dev/null || true
+    ok "laia-private actualizado"
+  fi
+fi  # end WANT_CODE
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Entorno Python
+# ══════════════════════════════════════════════════════════════════════════════
+if $WANT_VENV; then
+  step "Entorno Python"
+
+  [[ -d "$CODE_DIR/.git" ]] || err "Falta el código — selecciona 2 (clonar) antes que 3 (venv)."
+
+  if [[ ! -x "$VENV/bin/pip" ]]; then
+    [[ -d "$VENV" ]] && { warn "Venv incompleto — recreando..."; rm -rf "$VENV"; }
+    info "Creando venv en $VENV..."
+    python3 -m venv "$VENV" || err "No se pudo crear venv. Instala python$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')-venv"
+    register_rollback "rm -rf '$VENV'"
   fi
 
-  info "Compilando (vite build)..."
-  (cd "$WS_FRONTEND" && npm run build 2>&1) | tail -5
-  [[ -d "$WS_FRONTEND/dist" ]] || err "Build no generó dist/"
-  ok "Frontend compilado"
-else
-  warn "No se encontró package.json — omitiendo frontend"
+  info "Instalando hermes-agent..."
+  "$VENV/bin/pip" install --upgrade pip -q --disable-pip-version-check || true
+  "$VENV/bin/pip" install -e "$CODE_DIR" -q --disable-pip-version-check || err "pip install -e falló"
+  ok "hermes-agent instalado"
+
+  if [[ -f "$WS_BACKEND/requirements.txt" ]]; then
+    info "Instalando dependencias del backend..."
+    if "$VENV/bin/pip" install -r "$WS_BACKEND/requirements.txt" -q --disable-pip-version-check; then
+      ok "Backend deps instaladas"
+    else
+      warn "Algunas dependencias del backend fallaron"
+    fi
+  fi
 fi
 
 # ══════════════════════════════════════════════════════════════════════════════
-# PASO 6 — Symlinks y estructura de runtime
+# Workspace UI Frontend
 # ══════════════════════════════════════════════════════════════════════════════
-step "6  Estructura de symlinks"
+if $WANT_FRONTEND; then
+  step "Workspace UI — Frontend"
 
-# Symlinks dentro de LAIA/
-ln -sfn "$CODE_DIR" "$LAIA_DIR/hermes-agent"
-ok "hermes-agent → .laia-arch"
+  [[ -d "$CODE_DIR/.git" ]] || err "Falta el código — selecciona 2 (clonar) antes que 4 (frontend)."
 
-ln -sfn "$CODE_DIR/workspace-ui" "$LAIA_DIR/workspace-ui"
-ok "workspace-ui → .laia-arch/workspace-ui"
+  if [[ -f "$WS_FRONTEND/package.json" ]]; then
+    info "Instalando dependencias Node..."
+    if [[ -f "$WS_FRONTEND/package-lock.json" ]]; then
+      (cd "$WS_FRONTEND" && npm ci --silent) || err "npm ci falló"
+    else
+      (cd "$WS_FRONTEND" && npm install --silent) || err "npm install falló"
+    fi
 
-# Runtime ~/.hermes/
-mkdir -p "$RUNTIME_DIR"
-ln -sfn "$CODE_DIR" "$RUNTIME_DIR/hermes-agent"
-ok "~/.hermes/hermes-agent → .laia-arch"
-
-ln -sfn "$CODE_DIR/workspace-ui" "$RUNTIME_DIR/workspace-ui"
-ok "~/.hermes/workspace-ui → .laia-arch/workspace-ui"
-
-# Crear directorios de datos si no existen
-mkdir -p "$LAIA_DIR/memories" "$LAIA_DIR/docs" "$LAIA_DIR/config" "$LAIA_DIR/workspaces"
-mkdir -p "$RUNTIME_DIR/memories" "$RUNTIME_DIR/skills" "$RUNTIME_DIR/sessions" "$RUNTIME_DIR/logs" "$RUNTIME_DIR/cron"
-
-# ══════════════════════════════════════════════════════════════════════════════
-# PASO 7 — Scripts del sistema
-# ══════════════════════════════════════════════════════════════════════════════
-step "7  Scripts del sistema"
-
-if [[ -d "$CODE_DIR/bin" ]]; then
-  mkdir -p "$BIN_DIR"
-  rsync -a --delete "$CODE_DIR/bin/" "$BIN_DIR/"
-  chmod +x "$BIN_DIR/"* 2>/dev/null || true
-  ok "Scripts en ~/bin/"
+    info "Compilando (vite build)..."
+    (cd "$WS_FRONTEND" && npm run build 2>&1) | tail -5
+    [[ -d "$WS_FRONTEND/dist" ]] || err "Build no generó dist/"
+    ok "Frontend compilado"
+  else
+    warn "No se encontró package.json — omitiendo frontend"
+  fi
 fi
 
 # ══════════════════════════════════════════════════════════════════════════════
-# PASO 8 — Variables de entorno
+# Symlinks y estructura de runtime
 # ══════════════════════════════════════════════════════════════════════════════
-step "8  Variables de entorno"
+if $WANT_RUNTIME; then
+  step "Estructura de symlinks"
+
+  ln -sfn "$CODE_DIR" "$LAIA_DIR/hermes-agent"
+  ok "hermes-agent → .laia-arch"
+
+  ln -sfn "$CODE_DIR/workspace-ui" "$LAIA_DIR/workspace-ui"
+  ok "workspace-ui → .laia-arch/workspace-ui"
+
+  mkdir -p "$RUNTIME_DIR"
+  ln -sfn "$CODE_DIR" "$RUNTIME_DIR/hermes-agent"
+  ok "~/.hermes/hermes-agent → .laia-arch"
+
+  ln -sfn "$CODE_DIR/workspace-ui" "$RUNTIME_DIR/workspace-ui"
+  ok "~/.hermes/workspace-ui → .laia-arch/workspace-ui"
+
+  mkdir -p "$LAIA_DIR/memories" "$LAIA_DIR/docs" "$LAIA_DIR/config" "$LAIA_DIR/workspaces"
+  mkdir -p "$RUNTIME_DIR/memories" "$RUNTIME_DIR/skills" "$RUNTIME_DIR/sessions" "$RUNTIME_DIR/logs" "$RUNTIME_DIR/cron"
+fi
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Scripts del sistema
+# ══════════════════════════════════════════════════════════════════════════════
+if $WANT_BIN; then
+  step "Scripts del sistema"
+
+  if [[ -d "$CODE_DIR/bin" ]]; then
+    mkdir -p "$BIN_DIR"
+    rsync -a --delete "$CODE_DIR/bin/" "$BIN_DIR/"
+    chmod +x "$BIN_DIR/"* 2>/dev/null || true
+    ok "Scripts en ~/bin/"
+  else
+    warn "No hay $CODE_DIR/bin — selecciona 2 (clonar) primero."
+  fi
+fi
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Variables de entorno
+# ══════════════════════════════════════════════════════════════════════════════
+if $WANT_ENV; then
+  step "Variables de entorno"
 
 SHELL_BLOCK='# LAIA — añadido por install-laia
 export HERMES_HOME="'"$LAIA_DIR"'"
@@ -406,29 +719,30 @@ _inject_rc() {
   mv "$tmpfile" "$rcfile"
 }
 
-for rcfile in "$HOME/.bashrc" "$HOME/.zshrc"; do
-  _inject_rc "$rcfile" && ok "$(basename "$rcfile") actualizado"
-done
+  for rcfile in "$HOME/.bashrc" "$HOME/.zshrc"; do
+    _inject_rc "$rcfile" && ok "$(basename "$rcfile") actualizado"
+  done
 
-# config.yaml desde template
-if [[ ! -f "$LAIA_DIR/config.yaml" && -f "$CODE_DIR/config.template.yaml" ]]; then
-  cp "$CODE_DIR/config.template.yaml" "$LAIA_DIR/config.yaml"
-  ok "config.yaml creado"
-elif [[ -f "$LAIA_DIR/config.yaml" ]]; then
-  ok "config.yaml ya existe"
-fi
+  # config.yaml desde template
+  if [[ ! -f "$LAIA_DIR/config.yaml" && -f "$CODE_DIR/config.template.yaml" ]]; then
+    cp "$CODE_DIR/config.template.yaml" "$LAIA_DIR/config.yaml"
+    ok "config.yaml creado"
+  elif [[ -f "$LAIA_DIR/config.yaml" ]]; then
+    ok "config.yaml ya existe"
+  fi
 
-# SOUL.md si no existe
-if [[ ! -f "$RUNTIME_DIR/SOUL.md" && -f "$CODE_DIR/SOUL.md" ]]; then
-  cp "$CODE_DIR/SOUL.md" "$RUNTIME_DIR/SOUL.md"
-  ok "SOUL.md copiado a ~/.hermes/"
-fi
+  # SOUL.md si no existe
+  if [[ ! -f "$RUNTIME_DIR/SOUL.md" && -f "$CODE_DIR/SOUL.md" ]]; then
+    cp "$CODE_DIR/SOUL.md" "$RUNTIME_DIR/SOUL.md"
+    ok "SOUL.md copiado a ~/.hermes/"
+  fi
+fi  # end WANT_ENV
 
 # ══════════════════════════════════════════════════════════════════════════════
-# PASO 9 — Servicios systemd
+# Servicios systemd
 # ══════════════════════════════════════════════════════════════════════════════
-if [[ "$OPT_SERVICES" == true && "$OS" == "linux" ]]; then
-  step "9  Servicios systemd"
+if $WANT_SYSTEMD && [[ "$OS" == "linux" ]]; then
+  step "Servicios systemd"
 
   [[ -x "$VENV/bin/hermes" ]] || warn "$VENV/bin/hermes no ejecutable"
   [[ -x "$VENV/bin/uvicorn" ]] || warn "$VENV/bin/uvicorn no ejecutable"
@@ -487,10 +801,13 @@ EOF
 fi
 
 # ══════════════════════════════════════════════════════════════════════════════
-# PASO 10 — Nginx
+# Nginx
 # ══════════════════════════════════════════════════════════════════════════════
-if [[ -n "$OPT_NGINX" && "$OS" == "linux" ]]; then
-  step "10  Nginx — ${OPT_NGINX}"
+if $WANT_NGINX_STEP && [[ "$OS" == "linux" ]]; then
+  if [[ -z "$OPT_NGINX" ]]; then
+    warn "Nginx requiere --nginx DOMINIO. Re-ejecuta con: clone-laia --nginx tu-dominio"
+  else
+  step "Nginx — ${OPT_NGINX}"
 
   if ! command -v nginx &>/dev/null; then
     warn "nginx no está instalado — instalando..."
@@ -536,13 +853,14 @@ EOF
   sudo nginx -t || err "Config nginx inválida"
   sudo systemctl reload nginx || sudo systemctl restart nginx
   ok "Nginx configurado"
-fi
+  fi  # end OPT_NGINX guard
+fi  # end WANT_NGINX_STEP
 
 # ══════════════════════════════════════════════════════════════════════════════
-# PASO 11 — Tailscale (red privada)
+# Tailscale (red privada)
 # ══════════════════════════════════════════════════════════════════════════════
-if [[ -n "$OPT_RESTORE" && "$OS" == "linux" ]]; then
-  step "11  Red privada (Tailscale)"
+if $WANT_TAILSCALE && [[ "$OS" == "linux" ]]; then
+  step "Red privada (Tailscale)"
 
   if ! command -v tailscale &>/dev/null; then
     warn "Tailscale no encontrado — instalando..."
@@ -558,15 +876,15 @@ if [[ -n "$OPT_RESTORE" && "$OS" == "linux" ]]; then
       echo -e "  ${DIM}Abre el enlace en tu navegador e inicia sesión${RST}"
     fi
   else
-    warn "Tailscale no disponible — el restore puede fallar"
+    warn "Tailscale no disponible"
   fi
 fi
 
 # ══════════════════════════════════════════════════════════════════════════════
-# PASO 12 — Claves SSH
+# Claves SSH (para restore)
 # ══════════════════════════════════════════════════════════════════════════════
-if [[ -n "$OPT_RESTORE" ]]; then
-  step "12  Claves SSH"
+if $WANT_SSH; then
+  step "Claves SSH"
 
   if [[ ! -f "$HOME/.ssh/id_ed25519" ]]; then
     info "Generando clave SSH..."
@@ -577,29 +895,32 @@ if [[ -n "$OPT_RESTORE" ]]; then
     ok "Clave SSH ya existe"
   fi
 
-  # Intentar ssh-copy-id si la conexión funciona pero requiere password
-  if ssh -o ConnectTimeout=10 -o BatchMode=yes -o StrictHostKeyChecking=accept-new "$OPT_RESTORE" 'echo ok' &>/dev/null; then
-    ok "SSH sin contraseña — conectividad OK"
-  else
-    warn "SSH requiere autenticación"
-    echo ""
-    echo -e "  ${BLD}Ejecuta manualmente:${RST}"
-    echo -e "  ${DIM}  ssh-copy-id ${OPT_RESTORE}${RST}"
-    echo -e "  ${DIM}  (introduce la contraseña del servidor origen una vez)${RST}"
-    echo ""
-    echo -e "  ${BLD}Alternativa sin SSH:${RST}"
-    echo -e "  ${DIM}  clone-laia --backup-local  (en el servidor origen)${RST}"
-    echo -e "  ${DIM}  scp backup.tar.gz ${CURRENT_USER}@IP_VM:/tmp/${RST}"
-    echo ""
-    # No fallamos — el usuario puede arreglarlo y re-ejecutar
+  if [[ -n "$OPT_RESTORE" ]]; then
+    if ssh -o ConnectTimeout=10 -o BatchMode=yes -o StrictHostKeyChecking=accept-new "$OPT_RESTORE" 'echo ok' &>/dev/null; then
+      ok "SSH sin contraseña — conectividad OK"
+    else
+      warn "SSH requiere autenticación"
+      echo ""
+      echo -e "  ${BLD}Ejecuta manualmente:${RST}"
+      echo -e "  ${DIM}  ssh-copy-id ${OPT_RESTORE}${RST}"
+      echo -e "  ${DIM}  (introduce la contraseña del servidor origen una vez)${RST}"
+      echo ""
+      echo -e "  ${BLD}Alternativa sin SSH:${RST}"
+      echo -e "  ${DIM}  clone-laia --backup-local  (en el servidor origen)${RST}"
+      echo -e "  ${DIM}  scp backup.tar.gz ${CURRENT_USER}@IP_VM:/tmp/${RST}"
+      echo ""
+    fi
   fi
 fi
 
 # ══════════════════════════════════════════════════════════════════════════════
-# PASO 13 — Restaurar estado
+# Restaurar estado
 # ══════════════════════════════════════════════════════════════════════════════
-if [[ -n "$OPT_RESTORE" ]]; then
-  step "13  Restaurar estado desde ${OPT_RESTORE}"
+if $WANT_RESTORE; then
+  if [[ -z "$OPT_RESTORE" ]]; then
+    warn "Restore requiere --restore USER@HOST. Re-ejecuta con: clone-laia --restore usuario@host"
+  else
+  step "Restaurar estado desde ${OPT_RESTORE}"
 
   if ssh -o ConnectTimeout=10 -o BatchMode=yes "$OPT_RESTORE" 'echo ok' &>/dev/null; then
     info "Conexión SSH verificada — restaurando..."
@@ -667,13 +988,14 @@ if [[ -n "$OPT_RESTORE" ]]; then
     echo -e "  ${DIM}3. Re-ejecuta: clone-laia --restore ${OPT_RESTORE} --yes${RST}"
     echo ""
   fi
-fi
+  fi  # end OPT_RESTORE guard
+fi  # end WANT_RESTORE
 
 # ══════════════════════════════════════════════════════════════════════════════
-# PASO 14 — Arrancar servicios
+# Arrancar servicios
 # ══════════════════════════════════════════════════════════════════════════════
-if [[ "$OPT_SERVICES" == true && "$OS" == "linux" ]]; then
-  step "14  Arrancando servicios"
+if $WANT_START && [[ "$OS" == "linux" ]]; then
+  step "Arrancando servicios"
 
   if systemctl is-system-running &>/dev/null || [[ "$(systemctl is-system-running 2>/dev/null)" == "degraded" ]]; then
     for svc in hermes workspace-ui; do
@@ -737,225 +1059,177 @@ if [[ "$OPT_BACKUP_LOCAL" == true ]]; then
 fi
 
 # ══════════════════════════════════════════════════════════════════════════════
-# PASO 15 — Configuración del servidor (--setup-server)
+# CLI tools (cada uno con su propio WANT_*)
 # ══════════════════════════════════════════════════════════════════════════════
-if [[ "$OPT_SETUP_SERVER" == true && "$OS" == "linux" ]]; then
-  step "15  Configuración del servidor"
 
-  _sv_status() {
-    local label="$1" kind="$2" target="$3"
-    if [[ "$kind" == "cmd" ]]; then
-      command -v "$target" &>/dev/null \
-        && echo -e "  ${GRN}✓${RST}  $label" \
-        || echo -e "  ${YEL}?${RST}  $label"
+# ── Claude Code cc1 ─────────────────────────────────────────────────────────
+if $WANT_CC1; then
+  step "Claude Code cc1"
+  if ! command -v claude &>/dev/null; then
+    info "Instalando @anthropic-ai/claude-code..."
+    if npm_global_install @anthropic-ai/claude-code@latest; then
+      ok "Claude Code: $(claude --version 2>/dev/null | head -1 || echo '?')"
     else
-      [[ -e "$target" ]] \
-        && echo -e "  ${GRN}✓${RST}  $label" \
-        || echo -e "  ${YEL}?${RST}  $label"
-    fi
-  }
-
-  echo ""
-  echo -e "  ${BLD}Estado actual:${RST}"
-  _sv_status "1)  Claude Code CLI  (cc1 — cuenta principal)"  cmd  claude
-  _sv_status "2)  Claude Code cc2  (cuenta secundaria Docker)" path "$HOME/.claude-cuenta2/.credentials.json"
-  _sv_status "3)  Codex CLI        (OpenAI/GPT)"              cmd  codex
-  _sv_status "4)  OpenCode CLI     (Minimax)"                 path "$HOME/.opencode/bin/opencode"
-  _sv_status "5)  NVM + Node.js"                              cmd  node
-  _sv_status "6)  PM2"                                        cmd  pm2
-  _sv_status "7)  Tailscale"                                  cmd  tailscale
-  _sv_status "8)  Docker"                                     cmd  docker
-  _sv_status "9)  Nginx"                                      cmd  nginx
-  _sv_status "10) Samba (compartir con Mac)"                  cmd  smbd
-  _sv_status "11) UFW Firewall"                               cmd  ufw
-  _sv_status "12) Git config"                                 path "$HOME/.gitconfig"
-  echo ""
-
-  SETUP_CHOICES=()
-  if [[ "$OPT_YES" == false ]]; then
-    echo -e "  ${BLD}¿Qué quieres configurar?${RST}"
-    echo -e "  ${DIM}  Escribe números separados por espacio, 'todo' o 'nada'${RST}"
-    ask "Opciones (ej: 1 3 7):" ""
-    if [[ "$REPLY" == "todo" ]]; then
-      SETUP_CHOICES=(1 2 3 4 5 6 7 8 9 10 11 12)
-    elif [[ "$REPLY" == "nada" || -z "$REPLY" ]]; then
-      SETUP_CHOICES=()
-    else
-      IFS=' ' read -ra SETUP_CHOICES <<< "$REPLY"
+      warn "Instalación de Claude Code falló — revisa el log."
     fi
   else
-    command -v claude    &>/dev/null || SETUP_CHOICES+=(1)
-    [[ -e "$HOME/.claude-cuenta2/.credentials.json" ]] || SETUP_CHOICES+=(2)
-    command -v codex     &>/dev/null || SETUP_CHOICES+=(3)
-    [[ -x "$HOME/.opencode/bin/opencode" ]]            || SETUP_CHOICES+=(4)
-    command -v node      &>/dev/null || SETUP_CHOICES+=(5)
-    command -v pm2       &>/dev/null || SETUP_CHOICES+=(6)
-    command -v tailscale &>/dev/null || SETUP_CHOICES+=(7)
-    command -v docker    &>/dev/null || SETUP_CHOICES+=(8)
+    ok "Claude Code ya instalado: $(claude --version 2>/dev/null | head -1)"
   fi
-
-  _has_choice() { [[ " ${SETUP_CHOICES[*]:-} " == *" $1 "* ]]; }
-
-  # ── 1. Claude Code cc1 ──────────────────────────────────────────────────────
-  if _has_choice 1; then
-    info "Instalando Claude Code (cc1)..."
-    if ! command -v claude &>/dev/null; then
-      npm install -g @anthropic-ai/claude-code@latest || warn "Claude Code npm falló"
-    fi
-    ok "Claude Code: $(claude --version 2>/dev/null | head -1 || echo '?')"
-    if [[ ! -f "$HOME/.claude/.credentials.json" ]]; then
-      warn "cc1 necesita OAuth — ejecuta: claude"
-    fi
+  if [[ ! -f "$HOME/.claude/.credentials.json" ]]; then
+    warn "cc1 necesita OAuth — ejecuta: claude"
   fi
+fi
 
-  # ── 2. Claude Code cc2 (Docker) ─────────────────────────────────────────────
-  if _has_choice 2; then
-    info "Configurando Claude Code cc2 (Docker)..."
-    if ! command -v docker &>/dev/null; then
-      warn "Docker no instalado — instala primero (opción 8)"
-    else
-      if ! docker ps -a --format '{{.Names}}' 2>/dev/null | grep -q '^claude-secondary$'; then
-        info "Creando contenedor claude-secondary..."
-        mkdir -p "$HOME/.claude-cuenta2"
-        docker run -d \
+# ── Claude Code cc2 (Docker) ────────────────────────────────────────────────
+if $WANT_CC2; then
+  step "Claude Code cc2 (Docker)"
+  if _docker_setup; then
+    if ! $DOCKER ps -a --format '{{.Names}}' 2>/dev/null | grep -q '^claude-secondary$'; then
+      info "Creando contenedor claude-secondary..."
+      mkdir -p "$HOME/.claude-cuenta2"
+      if $DOCKER run -d \
           --name claude-secondary \
           --restart unless-stopped \
           -v "${HOME}/LAIA:/home/claude/LAIA" \
           -v "${HOME}/.claude-cuenta2:/home/claude/.claude" \
           -w "/home/claude/LAIA" \
           node:22-bookworm-slim \
-          bash -c "tail -f /dev/null" || warn "No se pudo crear claude-secondary"
-        docker exec claude-secondary bash -c \
-          "npm install -g @anthropic-ai/claude-code@latest 2>&1 | tail -3" \
-          && ok "Claude Code instalado en contenedor" || warn "npm en contenedor falló"
+          bash -c "tail -f /dev/null" >/dev/null; then
         ok "Contenedor claude-secondary creado"
+        info "Instalando Claude Code dentro del contenedor..."
+        if $DOCKER exec claude-secondary bash -c \
+            "npm install -g @anthropic-ai/claude-code@latest 2>&1 | tail -3"; then
+          ok "Claude Code instalado en contenedor"
+        else
+          warn "npm install dentro del contenedor falló"
+        fi
       else
-        ok "Contenedor claude-secondary ya existe"
+        warn "No se pudo crear claude-secondary"
       fi
+    else
+      ok "Contenedor claude-secondary ya existe"
     fi
     if [[ ! -f "$HOME/.claude-cuenta2/.credentials.json" ]]; then
       warn "cc2 necesita OAuth — ejecuta: sclaude  (pedirá autenticación)"
     fi
+  else
+    warn "Docker no disponible para esta sesión — selecciona 19 (Docker) primero,"
+    warn "o cierra sesión y reentra para que el grupo docker se aplique."
   fi
+fi
 
-  # ── 3. Codex (OpenAI) ────────────────────────────────────────────────────────
-  if _has_choice 3; then
-    info "Instalando Codex CLI..."
-    if ! command -v codex &>/dev/null; then
-      npm install -g @openai/codex@latest || warn "Codex npm falló"
+# ── Codex (OpenAI) ──────────────────────────────────────────────────────────
+if $WANT_CODEX; then
+  step "Codex CLI"
+  if ! command -v codex &>/dev/null; then
+    info "Instalando @openai/codex..."
+    if npm_global_install @openai/codex@latest; then
+      ok "Codex: $(codex --version 2>/dev/null | head -1 || echo '?')"
+    else
+      warn "Instalación de Codex falló — revisa el log."
     fi
-    ok "Codex: $(codex --version 2>/dev/null | head -1 || echo '?')"
-    if [[ ! -f "$HOME/.codex/auth.json" ]]; then
-      warn "Codex necesita OAuth — ejecuta: codex login"
-    fi
+  else
+    ok "Codex ya instalado: $(codex --version 2>/dev/null | head -1)"
   fi
+  if [[ ! -f "$HOME/.codex/auth.json" ]]; then
+    warn "Codex necesita OAuth — ejecuta: codex login"
+  fi
+fi
 
-  # ── 4. OpenCode (Minimax) ────────────────────────────────────────────────────
-  if _has_choice 4; then
-    info "Instalando OpenCode..."
-    if [[ ! -x "$HOME/.opencode/bin/opencode" ]]; then
-      mkdir -p "$HOME/.opencode/bin"
-      OC_LATEST=$(curl -s https://api.github.com/repos/sst/opencode/releases/latest \
-        | grep '"tag_name"' | cut -d'"' -f4 2>/dev/null || echo "")
-      if [[ -n "$OC_LATEST" ]]; then
-        OC_URL="https://github.com/sst/opencode/releases/download/${OC_LATEST}/opencode-linux-x64"
-        curl -fL "$OC_URL" -o "$HOME/.opencode/bin/opencode" \
-          && chmod +x "$HOME/.opencode/bin/opencode" \
-          && ok "OpenCode ${OC_LATEST}" \
-          || warn "Descarga falló — instala manualmente desde github.com/sst/opencode"
+# ── OpenCode (Minimax) ──────────────────────────────────────────────────────
+if $WANT_OPENCODE; then
+  step "OpenCode CLI"
+  if [[ ! -x "$HOME/.opencode/bin/opencode" ]]; then
+    mkdir -p "$HOME/.opencode/bin"
+    OC_LATEST=$(curl -s https://api.github.com/repos/sst/opencode/releases/latest \
+      | grep '"tag_name"' | cut -d'"' -f4 2>/dev/null || echo "")
+    if [[ -n "$OC_LATEST" ]]; then
+      OC_URL="https://github.com/sst/opencode/releases/download/${OC_LATEST}/opencode-linux-x64"
+      if curl -fL "$OC_URL" -o "$HOME/.opencode/bin/opencode" && chmod +x "$HOME/.opencode/bin/opencode"; then
+        ok "OpenCode ${OC_LATEST}"
       else
-        warn "No se pudo obtener versión de OpenCode — instala manualmente"
+        warn "Descarga de OpenCode falló — instala desde github.com/sst/opencode"
       fi
     else
-      ok "OpenCode ya instalado"
+      warn "No se pudo obtener versión de OpenCode"
     fi
-    grep -q '.opencode/bin' "$HOME/.bashrc" 2>/dev/null || \
-      echo 'export PATH="$HOME/.opencode/bin:$PATH"' >> "$HOME/.bashrc"
-    grep -q '.opencode/bin' "$HOME/.zshrc" 2>/dev/null || \
-      echo 'export PATH="$HOME/.opencode/bin:$PATH"' >> "$HOME/.zshrc" 2>/dev/null || true
+  else
+    ok "OpenCode ya instalado"
   fi
+  for rc in "$HOME/.bashrc" "$HOME/.zshrc"; do
+    [[ -f "$rc" ]] || continue
+    grep -q '.opencode/bin' "$rc" 2>/dev/null || \
+      echo 'export PATH="$HOME/.opencode/bin:$PATH"' >> "$rc"
+  done
+fi
 
-  # ── 5. NVM + Node.js v22 ─────────────────────────────────────────────────────
-  if _has_choice 5; then
-    info "Instalando NVM + Node.js v22..."
-    if [[ ! -d "$HOME/.nvm" ]]; then
-      curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash \
-        || warn "NVM falló"
-    fi
-    export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
-    # shellcheck source=/dev/null
-    [[ -s "$NVM_DIR/nvm.sh" ]] && . "$NVM_DIR/nvm.sh"
-    nvm install 22 && nvm use 22 && nvm alias default 22 \
-      && ok "Node.js $(node --version 2>/dev/null)" \
-      || warn "nvm install 22 falló"
+# ── NVM + Node.js v22 ───────────────────────────────────────────────────────
+if $WANT_NVM; then
+  step "NVM + Node.js v22"
+  if [[ ! -d "$HOME/.nvm" ]]; then
+    info "Instalando NVM..."
+    curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash || warn "NVM falló"
   fi
+  export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
+  # shellcheck source=/dev/null
+  [[ -s "$NVM_DIR/nvm.sh" ]] && . "$NVM_DIR/nvm.sh"
+  if nvm install 22 >/dev/null 2>&1 && nvm use 22 >/dev/null && nvm alias default 22 >/dev/null; then
+    ok "Node.js $(node --version 2>/dev/null) vía NVM"
+  else
+    warn "nvm install 22 falló"
+  fi
+fi
 
-  # ── 6. PM2 ──────────────────────────────────────────────────────────────────
-  if _has_choice 6; then
+# ── PM2 ─────────────────────────────────────────────────────────────────────
+if $WANT_PM2; then
+  step "PM2"
+  if ! command -v pm2 &>/dev/null; then
     info "Instalando PM2..."
-    if ! command -v pm2 &>/dev/null; then
-      npm install -g pm2 || warn "PM2 npm falló"
+    if npm_global_install pm2; then
+      ok "PM2 $(pm2 --version 2>/dev/null)"
+    else
+      warn "Instalación de PM2 falló — revisa el log."
     fi
+  else
+    ok "PM2 ya instalado: $(pm2 --version 2>/dev/null)"
+  fi
+  if command -v pm2 &>/dev/null; then
     pm2 startup systemd -u "$CURRENT_USER" --hp "$HOME" 2>/dev/null \
       | grep -E "^sudo" | bash 2>/dev/null || true
-    ok "PM2 $(pm2 --version 2>/dev/null)"
     echo -e "  ${DIM}Usa: pm2 save  para persistir procesos${RST}"
   fi
+fi
 
-  # ── 7. Tailscale ─────────────────────────────────────────────────────────────
-  if _has_choice 7; then
-    info "Instalando Tailscale..."
-    if ! command -v tailscale &>/dev/null; then
-      curl -fsSL https://tailscale.com/install.sh | sh || warn "Tailscale falló"
-    fi
-    if command -v tailscale &>/dev/null; then
-      if tailscale status &>/dev/null 2>&1; then
-        ok "Tailscale activo ($(tailscale ip -4 2>/dev/null || echo '?'))"
-      else
-        ok "Tailscale instalado — conéctalo:"
-        echo -e "  ${DIM}  sudo tailscale up${RST}"
-        echo -e "  ${DIM}  Abre el enlace en tu navegador e inicia sesión${RST}"
-      fi
-    fi
-  fi
-
-  # ── 8. Docker ────────────────────────────────────────────────────────────────
-  if _has_choice 8; then
-    info "Instalando Docker..."
-    if ! command -v docker &>/dev/null; then
-      curl -fsSL https://get.docker.com | sh || warn "Docker install.sh falló"
-    fi
-    if command -v docker &>/dev/null; then
-      if ! groups "$CURRENT_USER" | grep -q docker 2>/dev/null; then
-        sudo usermod -aG docker "$CURRENT_USER"
-        warn "Añadido al grupo docker — cierra sesión para aplicar"
-      fi
+# ── Docker ──────────────────────────────────────────────────────────────────
+if $WANT_DOCKER; then
+  step "Docker"
+  if ! command -v docker &>/dev/null; then
+    info "Instalando Docker engine..."
+    if curl -fsSL https://get.docker.com | sh; then
       ok "Docker $(docker --version 2>/dev/null | awk '{print $3}' | tr -d ',')"
-    fi
-  fi
-
-  # ── 9. Nginx ─────────────────────────────────────────────────────────────────
-  if _has_choice 9; then
-    if [[ -n "$OPT_NGINX" ]]; then
-      info "Nginx ya configurado con --nginx ${OPT_NGINX}"
     else
-      info "Instalando Nginx..."
-      if ! command -v nginx &>/dev/null; then
-        sudo apt-get install -y --no-install-recommends nginx || warn "Nginx falló"
-      fi
-      ok "Nginx instalado"
-      echo -e "  ${DIM}Para proxy reverso: clone-laia --nginx TU_DOMINIO${RST}"
+      warn "Docker install.sh falló"
+    fi
+  else
+    ok "Docker ya instalado: $(docker --version 2>/dev/null | awk '{print $3}' | tr -d ',')"
+  fi
+  if command -v docker &>/dev/null; then
+    if ! groups "$CURRENT_USER" 2>/dev/null | grep -qw docker; then
+      sudo usermod -aG docker "$CURRENT_USER" && \
+        warn "Añadido al grupo docker — cierra sesión para aplicar (o usa 'newgrp docker' en esta sesión)"
     fi
   fi
+fi
 
-  # ── 10. Samba (compartir con Mac) ────────────────────────────────────────────
-  if _has_choice 10; then
+# ── Samba ───────────────────────────────────────────────────────────────────
+if $WANT_SAMBA; then
+  step "Samba"
+  if ! command -v smbd &>/dev/null; then
     info "Instalando Samba..."
-    if ! command -v smbd &>/dev/null; then
-      sudo apt-get install -y --no-install-recommends samba || warn "Samba falló"
-    fi
-    if ! grep -q "\[laia-arch\]" /etc/samba/smb.conf 2>/dev/null; then
-      sudo tee -a /etc/samba/smb.conf >/dev/null <<SMBEOF
+    sudo apt-get install -y --no-install-recommends samba || { warn "Samba apt falló"; }
+  fi
+  if command -v smbd &>/dev/null && ! grep -q "\[laia-arch\]" /etc/samba/smb.conf 2>/dev/null; then
+    sudo tee -a /etc/samba/smb.conf >/dev/null <<SMBEOF
 
 [laia-arch]
    comment = LAIA Home
@@ -964,51 +1238,50 @@ if [[ "$OPT_SETUP_SERVER" == true && "$OS" == "linux" ]]; then
    read only = no
    browseable = yes
 SMBEOF
-      sudo systemctl restart smbd 2>/dev/null || true
-    fi
+    sudo systemctl restart smbd 2>/dev/null || true
     ok "Samba configurado — acceso: smb://$(hostname -I | awk '{print $1}')/"
     warn "Establece contraseña Samba: sudo smbpasswd -a ${CURRENT_USER}"
   fi
+fi
 
-  # ── 11. UFW Firewall ─────────────────────────────────────────────────────────
-  if _has_choice 11; then
-    info "Configurando UFW..."
-    if ! command -v ufw &>/dev/null; then
-      sudo apt-get install -y --no-install-recommends ufw || warn "UFW falló"
-    fi
-    sudo ufw allow 22/tcp comment 'SSH'
-    sudo ufw allow 80/tcp comment 'HTTP'
-    sudo ufw allow 443/tcp comment 'HTTPS'
-    sudo ufw allow 8077/tcp comment 'Workspace UI'
+# ── UFW Firewall ────────────────────────────────────────────────────────────
+if $WANT_UFW; then
+  step "UFW Firewall"
+  if ! command -v ufw &>/dev/null; then
+    info "Instalando UFW..."
+    sudo apt-get install -y --no-install-recommends ufw || warn "UFW apt falló"
+  fi
+  if command -v ufw &>/dev/null; then
+    sudo ufw allow 22/tcp   comment 'SSH'   2>/dev/null || true
+    sudo ufw allow 80/tcp   comment 'HTTP'  2>/dev/null || true
+    sudo ufw allow 443/tcp  comment 'HTTPS' 2>/dev/null || true
+    sudo ufw allow 8077/tcp comment 'Workspace UI' 2>/dev/null || true
     sudo ufw --force enable
     ok "UFW activo"
     sudo ufw status numbered
   fi
+fi
 
-  # ── 12. Git config ───────────────────────────────────────────────────────────
-  if _has_choice 12; then
-    info "Configurando Git global..."
-    _git_name=$(git config --global user.name 2>/dev/null || echo "")
-    _git_email=$(git config --global user.email 2>/dev/null || echo "")
-    if [[ -z "$_git_name" ]]; then
-      ask "Git user.name:" ""
-      [[ -n "$REPLY" ]] && git config --global user.name "$REPLY"
-    else
-      ok "git user.name = ${_git_name}"
-    fi
-    if [[ -z "$_git_email" ]]; then
-      ask "Git user.email:" ""
-      [[ -n "$REPLY" ]] && git config --global user.email "$REPLY"
-    else
-      ok "git user.email = ${_git_email}"
-    fi
-    git config --global pull.rebase false
-    git config --global init.defaultBranch main
-    ok "Git configurado"
+# ── Git config global ───────────────────────────────────────────────────────
+if $WANT_GITCFG; then
+  step "Git config global"
+  _git_name=$(git config --global user.name 2>/dev/null || echo "")
+  _git_email=$(git config --global user.email 2>/dev/null || echo "")
+  if [[ -z "$_git_name" ]]; then
+    ask "Git user.name:" ""
+    [[ -n "$REPLY" ]] && git config --global user.name "$REPLY"
+  else
+    ok "git user.name = ${_git_name}"
   fi
-
-  echo ""
-  ok "Configuración del servidor completada"
+  if [[ -z "$_git_email" ]]; then
+    ask "Git user.email:" ""
+    [[ -n "$REPLY" ]] && git config --global user.email "$REPLY"
+  else
+    ok "git user.email = ${_git_email}"
+  fi
+  git config --global pull.rebase false
+  git config --global init.defaultBranch main
+  ok "Git configurado"
 fi
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1047,11 +1320,10 @@ fi
 
 echo ""
 echo -e "  ${BLD}Próximos pasos:${RST}"
-echo -e "  ${DIM}  source ~/.bashrc  — activar HERMES_HOME${RST}"
+echo -e "  ${DIM}  source ~/.bashrc  — activar HERMES_HOME y PATH${RST}"
 [[ -z "$OPT_RESTORE" && "$OPT_BACKUP_LOCAL" == false ]] && \
   echo -e "  ${DIM}  clone-laia --restore usuario@host  — migrar datos desde otro servidor${RST}"
-[[ "$OPT_SETUP_SERVER" == false ]] && \
-  echo -e "  ${DIM}  clone-laia --setup-server  — configurar Claude cc1+cc2, Codex, OpenCode, tools${RST}"
+echo -e "  ${DIM}  clone-laia  — re-ejecuta el wizard para instalar lo que falte${RST}"
 [[ "$OS" == "linux" && "$OPT_SERVICES" == true ]] && \
   echo -e "  ${DIM}  journalctl -u hermes -f  — logs en tiempo real${RST}"
 echo -e "  ${DIM}  laia-stop --disable  — apagar agente para moverlo a otra máquina${RST}"
