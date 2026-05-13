@@ -68,3 +68,6 @@ workspace.db-wal
 .laia/state/
 hermes-agent
 workspace-ui
+workspace-ui-session-areas.json
+memories/
+context_length_cache.yaml

@@ -129,12 +129,12 @@ curl -s http://127.0.0.1:8088/api/health
 # 2. Login (dev credentials)
 curl -s -X POST http://127.0.0.1:8088/api/login \
   -H 'Content-Type: application/json' \
-  -d '{"username":"jorge","password":"dev-admin"}' | python3 -m json.tool
+  -d '{"username":"jorge","password":"TU_PASSWORD"}' | python3 -m json.tool
 
 # 3. Listar agentes (usa el token del paso anterior)
 TOKEN=$(curl -s -X POST http://127.0.0.1:8088/api/login \
   -H 'Content-Type: application/json' \
-  -d '{"username":"jorge","password":"dev-admin"}' | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])")
+  -d '{"username":"jorge","password":"TU_PASSWORD"}' | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])")
 curl -s -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8088/api/agents | python3 -m json.tool
 
 # 4. Estado del servicio

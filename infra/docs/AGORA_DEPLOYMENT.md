@@ -112,7 +112,7 @@ curl -s -o /dev/null -w "%{http_code}" -H "Host: agora.laiajmp.org" http://127.0
 # Login
 curl -X POST http://127.0.0.1:8088/api/login \
   -H 'Content-Type: application/json' \
-  -d '{"username":"jorge","password":"dev-admin"}'
+  -d '{"username":"jorge","password":"TU_PASSWORD"}'
 ```
 
 ### 8. Acceder publicamente
