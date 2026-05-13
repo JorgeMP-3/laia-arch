@@ -1,0 +1,18 @@
+[Unit]
+Description=LAIA Core Gateway
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=laia-hermes
+Group=laia-hermes
+WorkingDirectory=/home/laia-hermes/LAIA/.laia-core
+Environment=HOME=/home/laia-hermes
+Environment=LAIA_HOME=/home/laia-hermes/.laia
+ExecStart=/home/laia-hermes/LAIA/.laia-core/laia gateway run
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

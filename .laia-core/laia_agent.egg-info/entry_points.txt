@@ -1,0 +1,4 @@
+[console_scripts]
+laia = laia_cli.main:main
+laia-acp = acp_adapter.entry:main
+laia-agent = run_agent:main
