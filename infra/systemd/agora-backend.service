@@ -1,0 +1,29 @@
+[Unit]
+Description=LAIA AGORA Backend
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=laia-hermes
+Group=laia-hermes
+WorkingDirectory=/home/laia-hermes/LAIA/services/agora-backend
+Environment=LAIA_ROOT=/home/laia-hermes/LAIA
+Environment=AGORA_ENV=prod
+Environment=AGORA_DATA_DIR=/srv/laia/agora
+Environment=LAIA_STATE_ROOT=/srv/laia/state
+Environment=LAIACTL_PATH=/home/laia-hermes/LAIA/infra/laiactl
+ExecStart=/home/laia-hermes/LAIA/services/agora-backend/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8088
+Restart=on-failure
+RestartSec=3
+
+# Basic hardening. Keep this compatible with local file access under /srv/laia.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=read-only
+ReadWritePaths=/srv/laia/agora /srv/laia/state /home/laia-hermes/LAIA/services/agora-backend/data /home/laia-hermes/LAIA/.laia/state
+
+[Install]
+WantedBy=multi-user.target
+
