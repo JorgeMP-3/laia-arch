@@ -30,7 +30,7 @@ do_svc() {
     local act="$1" svc="$2"
     case "$act" in
         status)
-            state=$(systemctl is-active "$svc" 2>/dev/null || echo "missing")
+            state=$(systemctl is-active "$svc" 2>/dev/null) || state="missing"
             case "$state" in active) c="$GREEN" ;; *) c="$RED" ;; esac
             printf "  ${BOLD}%-18s${RESET} %b%s%b\n" "$svc" "$c" "$state" "$RESET"
             ;;

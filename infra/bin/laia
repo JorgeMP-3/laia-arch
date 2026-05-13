@@ -39,8 +39,8 @@ echo ""
 # Quick status on launch
 echo -e "${DIM}── estado rapido ──${RESET}"
 for svc in postgresql nginx cloudflared agora-backend; do
-    state=$(systemctl is-active "$svc" 2>/dev/null || echo "down")
+    state=$(systemctl is-active "$svc" 2>/dev/null) || state="down"
     d="$GREEN●$RESET"; [[ "$state" != "active" ]] && d="$DIM●$RESET"
     printf "  %b ${DIM}%-16s${RESET} %s\n" "$d" "$svc" "$state"
-done 2>/dev/null
+done
 echo ""

@@ -21,14 +21,14 @@ echo ""
 # ── Servicios systemd ────────────────────────────────────────────────────
 echo -e "${BOLD}SERVICIOS${RESET}"
 for svc in nginx postgresql cloudflared hermes workspace-ui agora-backend; do
-    state=$(systemctl is-active "$svc" 2>/dev/null || echo "missing")
+    state=$(systemctl is-active "$svc" 2>/dev/null) || state="missing"
     case "$state" in
         active)   dot="$OK"; color="$GREEN" ;;
         inactive) dot="$WARN"; color="$YELLOW" ;;
         *)        dot="$BAD"; color="$RED" ;;
     esac
     printf "  %b ${DIM}%-18s${RESET} %b%s%b\n" "$dot" "$svc" "$color" "$state" "$RESET"
-done 2>/dev/null
+done
 echo ""
 
 # ── LXD containers ───────────────────────────────────────────────────────
