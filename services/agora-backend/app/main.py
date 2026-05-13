@@ -37,6 +37,7 @@ from .models import (
 )
 from .orchestrator import OrchestratorError, orchestrator
 from .coordinator import coordinator, drain_broadcasts
+from .monitor import monitor
 from .logging import RequestTimer, request_id_var, request_user_var, setup_logging
 from .metrics import metrics
 from .security import verify_password, hash_password, verify_token
@@ -75,11 +76,13 @@ app.add_middleware(
 def startup_coordinator():
     setup_logging()
     coordinator.start()
+    monitor.start()
 
 
 @app.on_event("shutdown")
 def shutdown_coordinator():
     coordinator.stop()
+    monitor.stop()
     store.db.close()
 
 
@@ -444,6 +447,17 @@ def coordinator_force_check(_: User = Depends(require_roles("agora_admin"))):
         actor_id="coordinator",
         summary=f"Check manual: {result['agents_scanned']} agents, {result['alerts_generated']} alerts",
     ))
+    return result
+
+
+@app.get("/api/monitor/health")
+def monitor_health():
+    return monitor.health()
+
+
+@app.post("/api/monitor/check")
+def monitor_force_check(_: User = Depends(require_roles("agora_admin"))):
+    result = monitor.run_check()
     return result
 
 
