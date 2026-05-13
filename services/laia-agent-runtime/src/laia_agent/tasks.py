@@ -64,12 +64,23 @@ def _process_task(config: AgentConfig, task_path: Path) -> None:
 
 def execute_task(config: AgentConfig, task: dict[str, Any]) -> dict[str, Any]:
     kind = str(task.get("type", ""))
+
+    from .plugins import get_registry
+    registry = get_registry()
+    handler = registry.dispatch(kind)
+    if handler is not None:
+        return handler(config, task)
+
     if kind == "ping":
         return {"pong": True, "time": utc_now()}
     if kind == "write_file":
         return _write_file(config, task)
     if kind == "read_file":
         return _read_file(config, task)
+    if kind == "delete_file":
+        return _delete_file(config, task)
+    if kind == "list_dir":
+        return _list_dir(config, task)
     if kind == "workspace_init":
         return init_workspace(config)
     if kind == "workspace_upsert_node":
@@ -80,6 +91,8 @@ def execute_task(config: AgentConfig, task: dict[str, Any]) -> dict[str, Any]:
         return {"nodes": list_nodes(config, int(task.get("limit", 50)))}
     if kind == "workspace_search":
         return {"nodes": search_nodes(config, str(task.get("query", "")), int(task.get("limit", 8)))}
+    if kind == "workspace_delete_node":
+        return _delete_node(config, task)
     if kind == "profile_init":
         return ensure_profile(config)
     if kind == "profile_get":
@@ -131,6 +144,56 @@ def _read_file(config: AgentConfig, task: dict[str, Any]) -> dict[str, Any]:
         content = base64.b64encode(data).decode("ascii")
         encoding = "base64"
     return {"path": str(target), "encoding": encoding, "content": content, "truncated": truncated}
+
+
+def _delete_file(config: AgentConfig, task: dict[str, Any]) -> dict[str, Any]:
+    target = _safe_workspace_path(config, str(task.get("path", "")))
+    if not target.exists():
+        raise TaskError(f"File not found: {target}")
+    if target.is_dir():
+        shutil.rmtree(target)
+        return {"path": str(target), "deleted": True, "type": "directory"}
+    target.unlink()
+    return {"path": str(target), "deleted": True, "type": "file"}
+
+
+def _list_dir(config: AgentConfig, task: dict[str, Any]) -> dict[str, Any]:
+    target = _safe_workspace_path(config, str(task.get("path", ".")))
+    if not target.exists():
+        raise TaskError(f"Directory not found: {target}")
+    if not target.is_dir():
+        raise TaskError(f"Not a directory: {target}")
+    entries: list[dict] = []
+    for p in sorted(target.iterdir()):
+        entries.append({
+            "name": p.name,
+            "type": "directory" if p.is_dir() else "file",
+            "size": p.stat().st_size if p.is_file() else 0,
+        })
+    return {"path": str(target), "entries": entries, "count": len(entries)}
+
+
+def _delete_node(config: AgentConfig, task: dict[str, Any]) -> dict[str, Any]:
+    import sqlite3
+    ref = task.get("ref", "")
+    db_path = config.workspace_db
+    if not db_path.exists():
+        raise TaskError("Workspace database not found")
+    conn = sqlite3.connect(str(db_path))
+    try:
+        cur = conn.execute("SELECT id, slug FROM nodes WHERE slug = ? OR CAST(id AS TEXT) = ?", (str(ref), str(ref)))
+        row = cur.fetchone()
+        if not row:
+            raise TaskError(f"Node not found: {ref}")
+        node_id = row[0]
+        node_slug = row[1]
+        conn.execute("DELETE FROM edges WHERE from_node_id = ? OR to_node_id = ?", (node_id, node_id))
+        conn.execute("DELETE FROM aliases WHERE node_id = ?", (node_id,))
+        conn.execute("DELETE FROM nodes WHERE id = ?", (node_id,))
+        conn.commit()
+        return {"deleted": True, "ref": ref, "slug": node_slug}
+    finally:
+        conn.close()
 
 
 def clear_inbox(config: AgentConfig) -> None:

@@ -353,6 +353,7 @@ def verify_agent(slug: str) -> Result:
         ["lxc", "exec", name, "--", "test", "-s", "/opt/laia/workspaces/personal/workspace.db"],
         ["lxc", "exec", name, "--", "runuser", "-u", "laia-agent", "--", "env", "PYTHONDONTWRITEBYTECODE=1", "PYTHONPATH=/opt/laia/agent/src", "/opt/laia/runtime/venv/bin/python", "-c", "from laia_agent.config import load_config; from laia_agent.workspace import workspace_status; s=workspace_status(load_config()); assert s['exists'] and s['node_count'] >= 1; print('workspace-ok')"],
         ["lxc", "exec", name, "--", "curl", "-4", "-I", "--max-time", "8", "http://ports.ubuntu.com/ubuntu-ports/dists/jammy/InRelease"],
+        ["lxc", "exec", name, "--", "curl", "-sf", "--max-time", "5", "http://localhost:9090/health"],
     ]
     output = []
     for args in checks:
@@ -443,6 +444,15 @@ def fleet_status() -> list[dict]:
             service = svc.stdout.strip()
         except Exception:
             pass
+        health = ""
+        try:
+            hc = run(["lxc", "exec", row["name"], "--", "curl", "-sf", "--max-time", "3", "http://localhost:9090/health"], check=False)
+            if hc.ok:
+                import json as _json
+                hd = _json.loads(hc.stdout)
+                health = hd.get("service", "")
+        except Exception:
+            pass
         status_json = {}
         try:
             sj = run(["lxc", "exec", row["name"], "--", "cat", "/opt/laia/data/status.json"], check=False)
@@ -458,6 +468,7 @@ def fleet_status() -> list[dict]:
             "ipv4": row["ipv4"],
             "snapshots": row["snapshots"],
             "service": service,
+            "health": health,
             "runtime_status": status_json.get("status", "unknown"),
             "version": status_json.get("version", ""),
         })

@@ -7,9 +7,11 @@ import time
 
 from . import __version__
 from .config import AgentConfig, load_config
+from .health import start_health_server
+from .plugins import PluginRegistry, get_registry, load_plugins
+from .profile import ensure_profile
 from .status import utc_now, write_json
 from .tasks import ensure_task_dirs, process_once
-from .profile import ensure_profile
 
 
 STOP = False
@@ -58,7 +60,15 @@ def run_forever() -> int:
     config = load_config()
     ensure_layout(config)
     configure_logging(config)
-    logging.info("LAIA agent runtime starting employee=%s container=%s", config.employee, config.container)
+
+    registry = get_registry()
+    load_plugins(config, registry)
+    logging.info("LAIA agent runtime starting employee=%s container=%s plugins=%s",
+                 config.employee, config.container, registry.loaded_plugins)
+
+    start_health_server(config)
+    logging.info("health server listening on :9090")
+
     while not STOP:
         write_status(config)
         processed = process_once(config)

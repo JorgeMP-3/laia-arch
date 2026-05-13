@@ -7,6 +7,7 @@ test -d /opt/laia/logs
 test -d /opt/laia/data/profile
 test -d /opt/laia/workspaces/personal
 test -d /opt/laia/agent/vendor/workspace_store
+test -d /opt/laia/plugins || mkdir -p /opt/laia/plugins
 test -x /opt/laia/runtime/venv/bin/python
 /opt/laia/runtime/venv/bin/python -m pip --version >/dev/null
 
