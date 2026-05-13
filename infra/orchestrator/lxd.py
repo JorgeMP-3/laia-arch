@@ -400,3 +400,95 @@ def _agent_json_script(slug: str, name: str) -> str:
 JSON
 chmod 0644 /opt/laia/agent.json
 """
+
+
+# ── fleet / composite operations ───────────────────────────────────────────
+
+def provision_agent(paths: config.Paths, slug: str, *, image: str = config.DEFAULT_IMAGE_ALIAS) -> Result:
+    steps = [
+        ("create", lambda: create_agent(paths, slug, image=image)),
+        ("install-runtime", lambda: install_agent_runtime(paths, slug)),
+        ("init-workspace", lambda: init_agent_workspace(slug)),
+        ("init-profile", lambda: init_agent_profile(slug)),
+        ("verify", lambda: verify_agent(slug)),
+    ]
+    output: list[str] = []
+    for label, action in steps:
+        result = action()
+        output.append(f"--- {label} ---\n{result.stdout}")
+        if result.stderr:
+            output.append(f"STDERR: {result.stderr}")
+        if not result.ok:
+            output.append(f"FAILED at step '{label}'")
+            return Result(["provision-agent", slug], result.returncode, "\n".join(output), "")
+    return Result(["provision-agent", slug], 0, "\n".join(output), "")
+
+
+def all_slugs() -> list[str]:
+    slugs: list[str] = []
+    for row in list_agent_containers():
+        name = row["name"]
+        if name.startswith("laia-"):
+            slugs.append(name.removeprefix("laia-"))
+    return slugs
+
+
+def fleet_status() -> list[dict]:
+    rows: list[dict] = []
+    for row in list_agent_containers():
+        slug = row["name"].removeprefix("laia-")
+        service = "unknown"
+        try:
+            svc = run(["lxc", "exec", row["name"], "--", "systemctl", "is-active", "laia-agent.service"], check=False)
+            service = svc.stdout.strip()
+        except Exception:
+            pass
+        status_json = {}
+        try:
+            sj = run(["lxc", "exec", row["name"], "--", "cat", "/opt/laia/data/status.json"], check=False)
+            if sj.ok:
+                import json as _json
+                status_json = _json.loads(sj.stdout)
+        except Exception:
+            pass
+        rows.append({
+            "slug": slug,
+            "container": row["name"],
+            "lxd_state": row["state"],
+            "ipv4": row["ipv4"],
+            "snapshots": row["snapshots"],
+            "service": service,
+            "runtime_status": status_json.get("status", "unknown"),
+            "version": status_json.get("version", ""),
+        })
+    return rows
+
+
+def fleet_action(slugs: list[str], action_fn, label: str) -> dict:
+    results = {}
+    for slug in slugs:
+        result = action_fn(slug)
+        results[slug] = {
+            "ok": result.ok,
+            "returncode": result.returncode,
+            "output": result.stdout.strip().split("\n")[-1] if result.stdout else "",
+            "error": result.stderr.strip()[:100] if result.stderr else "",
+        }
+    return results
+
+
+def restart_all_agents() -> dict:
+    return fleet_action(all_slugs(), restart_agent, "restart")
+
+
+def upgrade_all_runtimes(paths: config.Paths, rolling: int = 0) -> dict:
+    slugs = all_slugs()
+    results = {}
+    for i, slug in enumerate(slugs):
+        result = install_agent_runtime(paths, slug)
+        results[slug] = {"ok": result.ok, "returncode": result.returncode}
+        if rolling and not result.ok:
+            results["_aborted_after"] = i
+            results["_aborted_at"] = slug
+            break
+    return results

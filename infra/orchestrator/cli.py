@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 
 from . import config, lxd, state
@@ -79,16 +80,6 @@ def build_parser() -> argparse.ArgumentParser:
     verify_agent.add_argument("slug")
     verify_agent.set_defaults(func=cmd_verify_agent)
 
-    for command, help_text, func in (
-        ("start-agent", "Start laia-agent.service inside the container", cmd_start_agent),
-        ("stop-agent", "Stop laia-agent.service inside the container", cmd_stop_agent),
-        ("restart-agent", "Restart laia-agent.service inside the container", cmd_restart_agent),
-        ("agent-status", "Show runtime status and recent logs", cmd_agent_status),
-    ):
-        item = sub.add_parser(command, help=help_text)
-        item.add_argument("slug")
-        item.set_defaults(func=func)
-
     snapshot = sub.add_parser("snapshot-agent", help="Create an LXD snapshot for one agent")
     snapshot.add_argument("slug")
     snapshot.add_argument("snapshot")
@@ -107,8 +98,40 @@ def build_parser() -> argparse.ArgumentParser:
     delete.set_defaults(func=cmd_delete_agent)
 
     sub.add_parser("list-agents", help="List real LAIA LXD agent containers").set_defaults(func=cmd_list_agents)
-    sub.add_parser("verify", help="Verify LXD setup and known agents").set_defaults(func=cmd_verify)
-    sub.add_parser("state-path", help="Print local orchestrator state paths").set_defaults(func=cmd_state_path)
+    sub.add_parser("fleet-status", help="Show fleet-wide status with runtime health").set_defaults(func=cmd_fleet_status)
+
+    provision = sub.add_parser("provision-agent", help="Provision one agent end-to-end: create + runtime + workspace + profile + verify")
+    provision.add_argument("slug", help="Employee slug")
+    provision.add_argument("--image", default=config.DEFAULT_IMAGE_ALIAS)
+    provision.set_defaults(func=cmd_provision_agent)
+
+    for cmd_name, action_fn in (
+        ("restart-agents", lxd.restart_all_agents),
+    ):
+        item = sub.add_parser(cmd_name, help=f"Restart all agent services (fleet-wide)")
+        item.set_defaults(func=lambda args, paths, fn=action_fn: _fleet_cmd(fn))
+
+    upgrade = sub.add_parser("upgrade-all", help="Upgrade runtime on all agents")
+    upgrade.add_argument("--rolling", type=int, default=0, metavar="N",
+                         help="Upgrade N at a time, abort on first failure (0 = all at once)")
+    upgrade.set_defaults(func=cmd_upgrade_all)
+
+    for cmd_name, help_text, action_slug in (
+        ("restart-agent", "Restart laia-agent.service inside one container", "restart"),
+        ("stop-agent", "Stop laia-agent.service inside one container", "stop"),
+        ("start-agent", "Start laia-agent.service inside one container", "start"),
+        ("agent-status", "Show runtime status and recent logs", "status"),
+    ):
+        item = sub.add_parser(cmd_name, help=help_text)
+        item.add_argument("slug", nargs="?", default=None)
+        item.add_argument("--all", action="store_true", help="Apply to all agents")
+        func = {
+            "start": cmd_start_agent,
+            "stop": cmd_stop_agent,
+            "restart": cmd_restart_agent,
+            "status": cmd_agent_status,
+        }[action_slug]
+        item.set_defaults(func=func)
     return parser
 
 
@@ -276,25 +299,105 @@ def cmd_verify_agent(args: argparse.Namespace, paths: config.Paths) -> int:
 
 
 def cmd_start_agent(args: argparse.Namespace, _paths: config.Paths) -> int:
-    result = lxd.start_agent(args.slug)
-    print_result(result)
-    return result.returncode
+    if getattr(args, "all", False):
+        return _fleet_action_cmd(lxd.start_agent, "start")
+    return _single_cmd(lxd.start_agent, args.slug)
 
 
 def cmd_stop_agent(args: argparse.Namespace, _paths: config.Paths) -> int:
-    result = lxd.stop_agent(args.slug)
-    print_result(result)
-    return result.returncode
+    if getattr(args, "all", False):
+        return _fleet_action_cmd(lxd.stop_agent, "stop")
+    return _single_cmd(lxd.stop_agent, args.slug)
 
 
 def cmd_restart_agent(args: argparse.Namespace, _paths: config.Paths) -> int:
-    result = lxd.restart_agent(args.slug)
-    print_result(result)
-    return result.returncode
+    if getattr(args, "all", False):
+        return _fleet_action_cmd(lxd.restart_agent, "restart")
+    return _single_cmd(lxd.restart_agent, args.slug)
 
 
 def cmd_agent_status(args: argparse.Namespace, _paths: config.Paths) -> int:
-    result = lxd.agent_status(args.slug)
+    if getattr(args, "all", False):
+        for slug in lxd.all_slugs():
+            print(f"\n=== {slug} ===")
+            print_result(lxd.agent_status(slug))
+        return 0
+    return _single_cmd(lxd.agent_status, args.slug)
+
+
+def cmd_fleet_status(_args: argparse.Namespace, _paths: config.Paths) -> int:
+    rows = lxd.fleet_status()
+    if not rows:
+        print("No LAIA agent containers found.")
+        return 0
+    print(f"{'SLUG':12s} {'CONTAINER':18s} {'LXD':10s} {'IP':14s} {'SERVICE':10s} {'RUNTIME':12s} {'VERSION'}")
+    print("-" * 90)
+    for r in rows:
+        print(f"{r['slug']:12s} {r['container']:18s} {r['lxd_state']:10s} {r['ipv4']:14s} {r['service']:10s} {r['runtime_status']:12s} {r.get('version', ''):10s}")
+    return 0
+
+
+def cmd_provision_agent(args: argparse.Namespace, paths: config.Paths) -> int:
+    print(f"Provisioning agent '{args.slug}'...")
+    result = lxd.provision_agent(paths, args.slug, image=args.image)
+    print_result(result)
+    if result.ok:
+        state.upsert_agent(paths.agents_state, args.slug, {
+            "slug": args.slug,
+            "container": lxd.container_name(args.slug),
+            "status": "provisioned",
+            "runtime": "laia-agent-runtime",
+            "workspace": "/opt/laia/workspaces/personal/workspace.db",
+        })
+    return result.returncode
+
+
+def cmd_upgrade_all(args: argparse.Namespace, paths: config.Paths) -> int:
+    slugs = lxd.all_slugs()
+    if not slugs:
+        print("No agents to upgrade.")
+        return 0
+    print(f"Upgrading runtime on {len(slugs)} agents...")
+    results = lxd.upgrade_all_runtimes(paths, rolling=args.rolling)
+    failed = 0
+    for slug, r in results.items():
+        if slug.startswith("_"):
+            print(f"  {slug}: {r}")
+        elif r["ok"]:
+            print(f"  {slug}: OK")
+        else:
+            print(f"  {slug}: FAILED (rc={r['returncode']})")
+            failed += 1
+    print(f"\n{len(slugs)-failed}/{len(slugs)} upgraded successfully.")
+    return 1 if failed else 0
+
+
+def _fleet_cmd(fn) -> int:
+    result = fn()
+    print(json.dumps(result, indent=2))
+    return 0
+
+
+def _fleet_action_cmd(action_fn, label: str) -> int:
+    slugs = lxd.all_slugs()
+    if not slugs:
+        print("No agents found.")
+        return 0
+    failed = 0
+    for slug in slugs:
+        print(f"{label} {slug}...")
+        result = action_fn(slug)
+        print(f"  {'OK' if result.ok else 'FAILED'}")
+        if not result.ok:
+            failed += 1
+    return 1 if failed else 0
+
+
+def _single_cmd(fn, slug: str) -> int:
+    if not slug:
+        print(f"Error: slug required (or use --all)")
+        return 2
+    result = fn(slug)
     print_result(result)
     return result.returncode
 
