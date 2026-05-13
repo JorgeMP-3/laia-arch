@@ -1,0 +1,150 @@
+/* ============================================================
+   AGORA · design tokens
+   Light "cockpit" surfaces (DoYouWin chrome) + dark "operator"
+   surfaces for AI/data panels. Density + accent are tweakable.
+   ============================================================ */
+
+:root {
+  /* accent (overridden by tweaks) */
+  --acc:        #FF5A3C;
+  --acc-ink:    #FFFFFF;
+  --acc-soft:   #FFEDE7;
+  --acc-line:   #FFC7B7;
+
+  /* light scale (warm, DoYouWin) */
+  --l-bg:       #FBFAF6;
+  --l-card:     #FFFFFF;
+  --l-subtle:   #F4F1E9;
+  --l-line:     #EBE6D9;
+  --l-line-2:   #E2DCCC;
+  --l-ink:      #15161A;
+  --l-ink-2:    #3B3C42;
+  --l-muted:    #75747A;
+  --l-muted-2:  #9A9892;
+
+  /* dark scale (AI / data) */
+  --d-bg:       #0C0E12;
+  --d-card:     #14161D;
+  --d-subtle:   #1A1D26;
+  --d-line:     #232732;
+  --d-line-2:   #2D3242;
+  --d-ink:      #F2F0EA;
+  --d-ink-2:    #C9C7C0;
+  --d-muted:    #82848E;
+  --d-muted-2:  #5C5E68;
+
+  /* semantic */
+  --ok:         #1F8A5B;
+  --warn:       #C68A1E;
+  --bad:        #C8442C;
+
+  /* radii */
+  --r-xs: 4px;
+  --r-sm: 6px;
+  --r-md: 10px;
+  --r-lg: 14px;
+  --r-xl: 22px;
+
+  /* density (overridden by tweak) */
+  --pad:    14px;
+  --pad-2:  20px;
+  --gap:    12px;
+  --line-h: 1.45;
+  --row-h:  36px;
+
+  /* type */
+  --f-sans:    "Instrument Sans", ui-sans-serif, system-ui, sans-serif;
+  --f-display: "Instrument Serif", "Instrument Sans", serif;
+  --f-mono:    "JetBrains Mono", ui-monospace, "SFMono-Regular", monospace;
+}
+
+[data-density="compact"] {
+  --pad:    10px;
+  --pad-2:  14px;
+  --gap:    8px;
+  --line-h: 1.38;
+  --row-h:  30px;
+}
+[data-density="comfy"] {
+  --pad:    18px;
+  --pad-2:  26px;
+  --gap:    16px;
+  --line-h: 1.55;
+  --row-h:  44px;
+}
+
+/* dark mode for V1 (cockpit) — flip light tokens to dark */
+[data-mode="dark"] {
+  --l-bg:     #0C0E12;
+  --l-card:   #14161D;
+  --l-subtle: #1A1D26;
+  --l-line:   #232732;
+  --l-line-2: #2D3242;
+  --l-ink:    #F2F0EA;
+  --l-ink-2:  #C9C7C0;
+  --l-muted:  #82848E;
+  --l-muted-2:#5C5E68;
+}
+
+/* base reset */
+*, *::before, *::after { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; height: 100%; }
+body {
+  font-family: var(--f-sans);
+  background: var(--l-bg);
+  color: var(--l-ink);
+  font-size: 14px;
+  line-height: var(--line-h);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  font-feature-settings: "ss01", "cv11";
+}
+button { font: inherit; color: inherit; }
+button, input, textarea { font-family: inherit; }
+.mono { font-family: var(--f-mono); font-feature-settings: "zero","ss01"; }
+.serif { font-family: var(--f-display); font-style: italic; }
+.tab-num { font-variant-numeric: tabular-nums; }
+
+/* scrollbars */
+.thin-scroll::-webkit-scrollbar { width: 8px; height: 8px; }
+.thin-scroll::-webkit-scrollbar-track { background: transparent; }
+.thin-scroll::-webkit-scrollbar-thumb {
+  background: color-mix(in oklab, currentColor 18%, transparent);
+  border-radius: 4px; border: 2px solid transparent; background-clip: content-box;
+}
+.thin-scroll { scrollbar-width: thin; scrollbar-color: color-mix(in oklab, currentColor 18%, transparent) transparent; }
+
+/* utility */
+.dotgrid {
+  background-image:
+    radial-gradient(circle at 1px 1px, color-mix(in oklab, currentColor 9%, transparent) 1px, transparent 0);
+  background-size: 14px 14px;
+}
+.hairline { border: 1px solid var(--l-line); }
+.hairline-d { border: 1px solid var(--d-line); }
+
+/* keyframes */
+@keyframes pulse-dot {
+  0%,100% { opacity:.35; transform: scale(1); }
+  50%     { opacity:1;   transform: scale(1.25); }
+}
+@keyframes fadein { from { opacity: 0; transform: translateY(4px); } to { opacity:1; transform: none; } }
+@keyframes blink { 0%,49%{opacity:1} 50%,100%{opacity:0} }
+@keyframes shimmer {
+  0% { background-position: -200px 0; }
+  100% { background-position: 200px 0; }
+}
+@keyframes spin-slow { to { transform: rotate(360deg); } }
+
+.cursor-blink::after {
+  content: "▎"; display: inline-block; margin-left: 2px;
+  animation: blink 1.05s steps(1) infinite;
+  color: var(--acc);
+}
+
+/* focus */
+:focus-visible {
+  outline: 2px solid var(--acc);
+  outline-offset: 2px;
+  border-radius: 4px;
+}

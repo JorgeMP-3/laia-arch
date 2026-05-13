@@ -1,0 +1,66 @@
+# LAIA-AGORA — Configuración base para contenedores de empleados
+#
+# Este archivo se copia a /opt/data/config.yaml dentro del contenedor
+# en el primer arranque (via entrypoint bootstrap).
+# Los empleados pueden modificar su config dentro de los límites marcados.
+
+# =============================================================================
+# Modelo
+# =============================================================================
+model:
+  default: "anthropic/claude-sonnet-4-6"
+  provider: "auto"
+
+# =============================================================================
+# Toolset — SOLO agora, sin herramientas de host
+# =============================================================================
+toolsets:
+  - agora
+
+# =============================================================================
+# Terminal — solo backend local (dentro del contenedor)
+# No cambiar: ssh, docker, singularity, modal, daytona están prohibidos.
+# =============================================================================
+terminal:
+  backend: "local"
+  cwd: "/opt/data"
+
+# =============================================================================
+# Agente
+# =============================================================================
+agent:
+  auto_mode: false
+  max_turns: 50
+  reasoning_effort: "medium"
+
+approvals:
+  mode: "manual"
+  timeout: 120
+
+# =============================================================================
+# Delegación — profundidad máxima 1 (no sub-sub-agentes)
+# =============================================================================
+delegation:
+  max_spawn_depth: 1
+  inherit_toolset: false
+  default_toolset: "agora"
+
+# =============================================================================
+# Memoria
+# =============================================================================
+memory:
+  provider: "workspace-context"
+
+# =============================================================================
+# Compresión de contexto
+# =============================================================================
+compression:
+  enabled: true
+  strategy: "auto"
+
+# =============================================================================
+# Plugins — solo workspace-context del usuario
+# =============================================================================
+plugins:
+  - name: workspace-context
+    path: plugins/workspace-context

@@ -1,0 +1,67 @@
+# LAIA-AGORA — Docker Compose
+#
+# v0.1: un único usuario de prueba (test)
+#
+# Uso:
+#   docker compose -f docker-compose.agora.yml up -d
+#   docker compose -f docker-compose.agora.yml logs -f agora-test
+#
+# Prerequisitos:
+#   1. Imagen laia-arch:latest construida en el host
+#   2. Imagen laia-agora:latest construida: docker build -t laia-agora:latest .
+#   3. Directorio de datos del usuario creado: sudo mkdir -p /opt/agora/test
+#
+# Puertos:
+#   agora-test → 127.0.0.1:9200:9000
+
+services:
+
+  agora-test:
+    image: laia-agora:latest
+    container_name: agora-test
+    restart: unless-stopped
+
+    # Red bridge (aislada del host, sin acceso a red interna del host)
+    network_mode: bridge
+
+    ports:
+      # Solo accesible desde localhost — nginx hace el proxy público
+      - "127.0.0.1:9200:9000"
+
+    volumes:
+      # Datos del usuario: workspace, config, memorias, sesiones
+      - /opt/agora/test:/opt/data
+      # Config base agora (read-only — se copia al volumen en primer arranque)
+      - ./config/agora.yaml:/opt/hermes/cli-config.yaml.example:ro
+      # NO se monta:
+      #   - Docker socket (/var/run/docker.sock)
+      #   - Directorios del host (/home/laia-arch, /opt/hermes del host)
+
+    environment:
+      - AGORA_USER=test
+      - HERMES_TOOLSET=agora
+      - HERMES_USER_MODE=restricted
+      # UID fijo — no usar el del host (aislamiento deliberado)
+      - HERMES_UID=10001
+      - HERMES_GID=10001
+
+    # Sin privilegios extra
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETUID
+      - SETGID
+
+    # Límites de recursos (ajustar según RAM disponible)
+    deploy:
+      resources:
+        limits:
+          memory: 2g
+          cpus: "1.5"
+        reservations:
+          memory: 512m
+
+    command: ["gateway", "run"]
