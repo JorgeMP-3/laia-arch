@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+# laia: menu principal de herramientas de terminal
+export LAIA_ROOT="${LAIA_ROOT:-/home/laia-hermes/LAIA}"
+export LAIA_BIN="$LAIA_ROOT/infra/bin"
+
+BOLD="\e[1m"; CYAN="\e[36m"; DIM="\e[2m"; GREEN="\e[32m"; RESET="\e[0m"
+
+# Subcomando directo
+if [[ $# -gt 0 && "$1" != "-h" && "$1" != "--help" ]]; then
+    cmd="$LAIA_BIN/laia-$1"
+    if [[ -x "$cmd" ]]; then
+        shift
+        exec "$cmd" "$@"
+    fi
+    echo "comando desconocido: laia $1"
+    echo "usa 'laia' sin argumentos para ver el menu"
+    exit 1
+fi
+
+# Menu interactivo
+echo -e "${BOLD}${CYAN}╔══════════════════════════════════════════════════╗${RESET}"
+echo -e "${BOLD}${CYAN}║              LAIA Terminal Tools                ║${RESET}"
+echo -e "${BOLD}${CYAN}╚══════════════════════════════════════════════════╝${RESET}"
+echo ""
+echo -e "  ${BOLD}laia status${RESET}    ${DIM}vista general del servidor${RESET}"
+echo -e "  ${BOLD}laia health${RESET}    ${DIM}chequeo completo de salud${RESET}"
+echo -e "  ${BOLD}laia service${RESET}   ${DIM}gestion de servicios systemd${RESET}"
+echo -e "  ${BOLD}laia logs${RESET}      ${DIM}ver logs de cualquier componente${RESET}"
+echo -e "  ${BOLD}laia backup${RESET}    ${DIM}backups de DB, workspaces, agentes${RESET}"
+echo -e "  ${BOLD}laia deploy${RESET}    ${DIM}desplegar AGORA o ARCH${RESET}"
+echo -e "  ${BOLD}laia watch${RESET}     ${DIM}monitor de recursos en vivo${RESET}"
+echo -e "  ${BOLD}laiactl${RESET}        ${DIM}gestion de agentes LXD${RESET}"
+echo ""
+echo -e "  ${DIM}ejemplo: laia service restart agora${RESET}"
+echo -e "  ${DIM}ejemplo: laia logs agent jorge -f${RESET}"
+echo -e "  ${DIM}ejemplo: laia backup all${RESET}"
+echo ""
+
+# Quick status on launch
+echo -e "${DIM}── estado rapido ──${RESET}"
+for svc in postgresql nginx cloudflared agora-backend; do
+    state=$(systemctl is-active "$svc" 2>/dev/null || echo "down")
+    d="$GREEN●$RESET"; [[ "$state" != "active" ]] && d="$DIM●$RESET"
+    printf "  %b ${DIM}%-16s${RESET} %s\n" "$d" "$svc" "$state"
+done 2>/dev/null
+echo ""

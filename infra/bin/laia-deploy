@@ -1,0 +1,101 @@
+#!/usr/bin/env bash
+set -euo pipefail
+# laia-deploy: desplegar componentes de LAIA
+
+BOLD="\e[1m"; GREEN="\e[32m"; RED="\e[31m"; CYAN="\e[36m"; DIM="\e[2m"; RESET="\e[0m"
+LAIA_ROOT="${LAIA_ROOT:-/home/laia-hermes/LAIA}"
+
+usage() {
+    echo "uso: laia-deploy <que>"
+    echo ""
+    echo "que:"
+    echo "  agora-frontend   build y desplegar frontend de AGORA"
+    echo "  agora-backend    reiniciar backend de AGORA"
+    echo "  agora-all        frontend + backend"
+    echo "  arch-frontend    build y desplegar frontend de ARCH"
+    echo "  runtime          actualizar runtime en todos los agentes"
+    echo "  status           ver estado de despliegues"
+    exit 1
+}
+
+[[ $# -eq 0 || "$1" == "-h" || "$1" == "--help" ]] && usage
+
+what="$1"
+
+deploy_agora_frontend() {
+    echo -e "${BOLD}${CYAN}Build AGORA frontend...${RESET}"
+    cd "$LAIA_ROOT/laia-ui"
+    pnpm build:agora || { echo -e "${RED}Build fallido${RESET}"; return 1; }
+    local dst="/srv/laia/agora/frontend/dist"
+    rm -rf "$dst"
+    mkdir -p "$(dirname "$dst")"
+    cp -r "$LAIA_ROOT/laia-ui/packages/agora-app/dist" "$dst"
+    echo -e "${GREEN}OK${RESET} Frontend desplegado en $dst"
+    echo -e "  Accede en: ${CYAN}http://localhost:8088${RESET}"
+}
+
+deploy_agora_backend() {
+    echo -e "${BOLD}${CYAN}Restart AGORA backend...${RESET}"
+    pkill -f "uvicorn app.main:app.*8088" 2>/dev/null || true
+    sleep 2
+    cd "$LAIA_ROOT/services/agora-backend"
+    nohup .venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8088 > /dev/null 2>&1 &
+    sleep 3
+    if curl -sf --max-time 5 http://localhost:8088/api/health > /dev/null; then
+        echo -e "${GREEN}OK${RESET} Backend corriendo en :8088"
+    else
+        echo -e "${RED}FAIL${RESET} Backend no responde"
+    fi
+}
+
+deploy_arch_frontend() {
+    echo -e "${BOLD}${CYAN}Build ARCH frontend...${RESET}"
+    cd "$LAIA_ROOT/laia-ui"
+    pnpm build:arch || { echo -e "${RED}Build fallido${RESET}"; return 1; }
+    local src="$LAIA_ROOT/laia-ui/packages/arch-app/dist"
+    local dst="$LAIA_ROOT/.laia-arch/workspace-ui/frontend/dist"
+    rm -rf "$dst"
+    mkdir -p "$(dirname "$dst")"
+    cp -r "$src" "$dst"
+    echo -e "${GREEN}OK${RESET} ARCH desplegado en $dst"
+}
+
+deploy_runtime() {
+    echo -e "${BOLD}${CYAN}Actualizar runtime en agentes...${RESET}"
+    "$LAIA_ROOT/infra/laiactl" upgrade-all 2>/dev/null || \
+        echo -e "${RED}laiactl no disponible${RESET}"
+}
+
+deploy_status() {
+    echo -e "${BOLD}${CYAN}Estado de despliegues${RESET}"
+    echo ""
+    # AGORA frontend
+    if [[ -f /srv/laia/agora/frontend/dist/index.html ]]; then
+        echo -e "  ${GREEN}●${RESET} AGORA frontend  ${DIM}/srv/laia/agora/frontend/dist${RESET}"
+    else
+        echo -e "  ${RED}●${RESET} AGORA frontend  ${DIM}no desplegado${RESET}"
+    fi
+    # AGORA backend
+    if curl -sf --max-time 3 http://localhost:8088/api/health > /dev/null 2>&1; then
+        local ver=$(curl -sf http://localhost:8088/api/health | python3 -c "import sys,json; print(json.load(sys.stdin).get('version','?'))" 2>/dev/null || echo "?")
+        echo -e "  ${GREEN}●${RESET} AGORA backend   ${DIM}v$ver en :8088${RESET}"
+    else
+        echo -e "  ${RED}●${RESET} AGORA backend   ${DIM}no responde${RESET}"
+    fi
+    # ARCH frontend
+    if [[ -f "$LAIA_ROOT/.laia-arch/workspace-ui/frontend/dist/index.html" ]]; then
+        echo -e "  ${GREEN}●${RESET} ARCH frontend   ${DIM}.laia-arch/workspace-ui${RESET}"
+    else
+        echo -e "  ${RED}●${RESET} ARCH frontend   ${DIM}no desplegado${RESET}"
+    fi
+}
+
+case "$what" in
+    agora-frontend) deploy_agora_frontend ;;
+    agora-backend)  deploy_agora_backend ;;
+    agora-all)      deploy_agora_frontend && deploy_agora_backend ;;
+    arch-frontend)  deploy_arch_frontend ;;
+    runtime)        deploy_runtime ;;
+    status)         deploy_status ;;
+    *) usage ;;
+esac

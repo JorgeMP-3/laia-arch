@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+set -euo pipefail
+# laia-service: gestion de servicios systemd de LAIA
+
+SERVICES="nginx postgresql cloudflared hermes workspace-ui agora-backend"
+
+usage() {
+    echo "uso: laia-service <accion> [servicio]"
+    echo ""
+    echo "acciones:"
+    echo "  status   mostrar estado de todos los servicios"
+    echo "  start    arrancar servicio(s)"
+    echo "  stop     parar servicio(s)"
+    echo "  restart  reiniciar servicio(s)"
+    echo "  all      aplicar accion a todos los servicios"
+    echo "  logs     mostrar logs del servicio"
+    echo ""
+    echo "servicios: $SERVICES"
+    exit 1
+}
+
+action="${1:-status}"
+target="${2:-}"
+
+[[ "$action" == "-h" || "$action" == "--help" ]] && usage
+
+BOLD="\e[1m"; GREEN="\e[32m"; RED="\e[31m"; RESET="\e[0m"
+
+do_svc() {
+    local act="$1" svc="$2"
+    case "$act" in
+        status)
+            state=$(systemctl is-active "$svc" 2>/dev/null || echo "missing")
+            case "$state" in active) c="$GREEN" ;; *) c="$RED" ;; esac
+            printf "  ${BOLD}%-18s${RESET} %b%s%b\n" "$svc" "$c" "$state" "$RESET"
+            ;;
+        logs)
+            echo -e "${BOLD}=== $svc ===${RESET}"
+            sudo journalctl -u "$svc" --no-pager -n 20 2>/dev/null || echo "  sin logs"
+            ;;
+        *)
+            sudo systemctl "$act" "$svc" 2>/dev/null && echo -e "  ${GREEN}OK${RESET} $svc $act" || echo -e "  ${RED}FAIL${RESET} $svc $act"
+            ;;
+    esac
+}
+
+if [[ "$target" == "all" ]]; then
+    for svc in $SERVICES; do
+        do_svc "$action" "$svc"
+    done
+elif [[ -n "$target" ]]; then
+    do_svc "$action" "$target"
+elif [[ "$action" == "status" ]]; then
+    for svc in $SERVICES; do
+        do_svc status "$svc"
+    done
+else
+    echo "error: especifica un servicio o 'all'"
+    usage
+fi

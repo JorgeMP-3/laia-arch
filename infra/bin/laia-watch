@@ -1,0 +1,76 @@
+#!/usr/bin/env bash
+# laia-watch: monitor de recursos en vivo
+# Uso: laia-watch [intervalo_segundos]
+
+INTERVAL="${1:-3}"
+BOLD="\e[1m"; GREEN="\e[32m"; YELLOW="\e[33m"; RED="\e[31m"; CYAN="\e[36m"; DIM="\e[2m"; RESET="\e[0m"
+
+cleanup() { echo -e "\n${DIM}bye${RESET}"; exit 0; }
+trap cleanup INT TERM
+
+SVC_LIST="nginx postgresql hermes workspace-ui agora-backend"
+
+while true; do
+    clear
+    echo -e "${BOLD}${CYAN}╔══════════════════════════════════════════════════╗${RESET}"
+    echo -e "${BOLD}${CYAN}║              LAIA Watch  (${INTERVAL}s)                  ║${RESET}"
+    echo -e "${BOLD}${CYAN}╚══════════════════════════════════════════════════╝${RESET}"
+    echo -e "  ${DIM}$(date)${RESET}"
+    echo ""
+
+    # ── Servicios ──────────────────────────────────────────────────────────
+    echo -e "${BOLD}servicios${RESET}"
+    for svc in $SVC_LIST; do
+        state=$(systemctl is-active "$svc" 2>/dev/null || echo "down")
+        case "$state" in active) c="$GREEN" ;; *) c="$RED" ;; esac
+        printf "  %b%-18s %s%b\n" "$c" "$svc" "$state" "$RESET"
+    done
+    echo ""
+
+    # ── RAM ────────────────────────────────────────────────────────────────
+    echo -e "${BOLD}memoria${RESET}"
+    free -h | awk '/^Mem/ {
+        used=$3; total=$2; avail=$7
+        pct=int(used/total*100)
+        if(pct>80) c="\033[31m"; else if(pct>60) c="\033[33m"; else c="\033[32m"
+        printf "  usado: %s / %s  disponible: %s  %s%d%%\033[0m\n", used, total, avail, c, pct
+    }'
+    echo ""
+
+    # ── CPU ─────────────────────────────────────────────────────────────────
+    echo -e "${BOLD}cpu${RESET}"
+    load=$(uptime | awk -F'load average:' '{print $2}')
+    printf "  load:${DIM}%s${RESET}\n" "$load"
+    echo ""
+
+    # ── Disco ───────────────────────────────────────────────────────────────
+    echo -e "${BOLD}disco${RESET}"
+    df -h / /srv/laia 2>/dev/null | tail -n +2 | while read -r fs size used avail pct mnt; do
+        pnum=${pct%%%}
+        if [[ "$pnum" -gt 90 ]]; then c="$RED"
+        elif [[ "$pnum" -gt 80 ]]; then c="$YELLOW"
+        else c="$GREEN"; fi
+        printf "  ${DIM}%-12s${RESET} %s/%s %b%s%b usado\n" "$mnt" "$used" "$size" "$c" "$pct" "$RESET"
+    done
+    echo ""
+
+    # ── LXD containers ──────────────────────────────────────────────────────
+    echo -e "${BOLD}agentes lxd${RESET}"
+    if command -v lxc &>/dev/null; then
+        agents=$(lxc list --format csv 2>/dev/null | grep '^laia-' | wc -l || echo "0")
+        running=$(lxc list --format csv 2>/dev/null | grep '^laia-' | grep ',RUNNING,' | wc -l || echo "0")
+        echo -e "  total: $agents  corriendo: ${GREEN}$running${RESET}"
+    else
+        echo -e "  ${DIM}LXD no disponible${RESET}"
+    fi
+    echo ""
+
+    # ── Conexiones activas ──────────────────────────────────────────────────
+    echo -e "${BOLD}conexiones${RESET}"
+    for port in 8088 8077 80; do
+        count=$(ss -tn state established 2>/dev/null | grep ":$port" | wc -l || echo "0")
+        echo -e "  :$port ${DIM}$count conexiones${RESET}"
+    done
+
+    sleep "$INTERVAL"
+done

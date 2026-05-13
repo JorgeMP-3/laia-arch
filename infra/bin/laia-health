@@ -1,0 +1,83 @@
+#!/usr/bin/env bash
+set -euo pipefail
+# laia-health: chequeo completo de salud del servidor LAIA
+
+BOLD="\e[1m"; GREEN="\e[32m"; RED="\e[31m"; CYAN="\e[36m"; DIM="\e[2m"; RESET="\e[0m"
+PASS=0; FAIL=0
+
+check() {
+    local label="$1"; shift
+    if "$@" &>/dev/null; then
+        echo -e "  ${GREEN}✓${RESET} $label"
+        ((PASS++)) || true
+    else
+        echo -e "  ${RED}✗${RESET} $label"
+        ((FAIL++)) || true
+    fi
+}
+
+echo -e "${BOLD}${CYAN}╔══════════════════════════════════════════════════╗${RESET}"
+echo -e "${BOLD}${CYAN}║              LAIA Health Check                  ║${RESET}"
+echo -e "${BOLD}${CYAN}╚══════════════════════════════════════════════════╝${RESET}"
+echo ""
+
+# ── Sistema ──────────────────────────────────────────────────────────────
+echo -e "${BOLD}sistema${RESET}"
+check "kernel $(uname -r)" true
+check "uptime: $(uptime -p | sed 's/up //')" true
+check "load: $(uptime | awk -F'load average:' '{print $2}' | xargs)" true
+echo ""
+
+# ── Servicios ─────────────────────────────────────────────────────────────
+echo -e "${BOLD}servicios systemd${RESET}"
+for svc in nginx postgresql cloudflared hermes workspace-ui agora-backend; do
+    check "$svc" systemctl is-active --quiet "$svc"
+done
+echo ""
+
+# ── Puertos ───────────────────────────────────────────────────────────────
+echo -e "${BOLD}puertos${RESET}"
+for port in 80 5432 8077 8088; do
+    check ":$port escuchando" ss -tlnp 2>/dev/null | grep -q ":$port "
+done
+echo ""
+
+# ── LXD ───────────────────────────────────────────────────────────────────
+echo -e "${BOLD}LXD${RESET}"
+check "lxc instalado" command -v lxc
+check "LXD responde" lxc version
+echo ""
+
+# ── APIs ──────────────────────────────────────────────────────────────────
+echo -e "${BOLD}APIs${RESET}"
+check "AGORA backend :8088/health" curl -sf --max-time 5 http://localhost:8088/api/health
+check "ARCH UI :8077" curl -sf --max-time 5 -o /dev/null http://localhost:8077/
+echo ""
+
+# ── Disco ─────────────────────────────────────────────────────────────────
+echo -e "${BOLD}disco${RESET}"
+root_pct=$(df / | tail -1 | awk '{print $5}' | tr -d '%')
+if [[ "$root_pct" -lt 80 ]]; then
+    check "disco /: ${root_pct}%" true
+else
+    check "disco /: ${root_pct}% CRITICO" false
+fi
+if [[ -d /srv/laia ]]; then
+    srv_pct=$(df /srv/laia 2>/dev/null | tail -1 | awk '{print $5}' | tr -d '%' || echo "0")
+    if [[ "$srv_pct" -lt 90 ]]; then
+        check "disco /srv/laia: ${srv_pct}%" true
+    else
+        check "disco /srv/laia: ${srv_pct}% CRITICO" false
+    fi
+fi
+echo ""
+
+# ── Resultado ─────────────────────────────────────────────────────────────
+echo -e "${BOLD}RESULTADO${RESET}"
+total=$((PASS + FAIL))
+if [[ $FAIL -eq 0 ]]; then
+    echo -e "  ${GREEN}${PASS}/${total} checks OK${RESET}"
+else
+    echo -e "  ${GREEN}${PASS} OK${RESET}  ${RED}${FAIL} FAIL${RESET}  (${total} total)"
+fi
+echo ""

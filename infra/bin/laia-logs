@@ -1,0 +1,67 @@
+#!/usr/bin/env bash
+set -euo pipefail
+# laia-logs: tail de logs de cualquier componente LAIA
+
+BOLD="\e[1m"; CYAN="\e[36m"; DIM="\e[2m"; RESET="\e[0m"
+
+usage() {
+    echo "uso: laia-logs <componente> [-f] [-n N]"
+    echo ""
+    echo "componentes:"
+    echo "  nginx       logs de nginx"
+    echo "  postgres    logs de PostgreSQL"
+    echo "  hermes      logs de Hermes"
+    echo "  workspace   logs de workspace-ui"
+    echo "  agora       logs de AGORA backend"
+    echo "  cloudflared logs de Cloudflare tunnel"
+    echo "  agent NAME  logs de un agente LXD"
+    echo "  all         todos los logs (modo resumen)"
+    echo ""
+    echo "flags:"
+    echo "  -f   seguir en vivo (tail -f)"
+    echo "  -n N mostrar N lineas (default 50)"
+    exit 1
+}
+
+[[ $# -eq 0 || "$1" == "-h" || "$1" == "--help" ]] && usage
+
+comp="$1"; shift
+follow=false; lines=50
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -f) follow=true ;;
+        -n) lines="$2"; shift ;;
+    esac
+    shift
+done
+
+tail_opts="-n $lines"
+$follow && tail_opts="-f"
+
+log_cmd() {
+    sudo journalctl -u "$1" --no-pager "$tail_opts" 2>/dev/null
+}
+
+case "$comp" in
+    nginx)     log_cmd nginx ;;
+    postgres)  log_cmd postgresql ;;
+    hermes)    log_cmd hermes ;;
+    workspace) log_cmd workspace-ui ;;
+    agora)     log_cmd agora-backend ;;
+    cloudflared) log_cmd cloudflared ;;
+    agent)
+        name="${2:-}"
+        [[ -z "$name" ]] && { echo "error: especifica nombre del agente"; exit 1; }
+        echo -e "${BOLD}${CYAN}=== laia-$name ===${RESET}"
+        lxc exec "laia-$name" -- tail "$tail_opts" /opt/laia/logs/agent.log 2>/dev/null || echo "  agente no encontrado"
+        ;;
+    all)
+        echo -e "${BOLD}${CYAN}=== RESUMEN DE LOGS ===${RESET}"
+        for svc in nginx postgresql cloudflared hermes workspace-ui agora-backend; do
+            echo -e "\n${BOLD}$svc${RESET} ${DIM}(ultimas 5 lineas)${RESET}"
+            sudo journalctl -u "$svc" --no-pager -n 5 2>/dev/null || echo "  sin logs"
+        done
+        ;;
+    *) usage ;;
+esac

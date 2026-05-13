@@ -1,0 +1,79 @@
+#!/usr/bin/env bash
+set -euo pipefail
+# laia-status: vista general del servidor LAIA
+
+BOLD="\e[1m"
+DIM="\e[2m"
+GREEN="\e[32m"
+YELLOW="\e[33m"
+RED="\e[31m"
+CYAN="\e[36m"
+RESET="\e[0m"
+OK="${GREEN}●${RESET}"
+WARN="${YELLOW}●${RESET}"
+BAD="${RED}●${RESET}"
+
+echo -e "${BOLD}${CYAN}╔══════════════════════════════════════════════════╗${RESET}"
+echo -e "${BOLD}${CYAN}║              LAIA Server Status                 ║${RESET}"
+echo -e "${BOLD}${CYAN}╚══════════════════════════════════════════════════╝${RESET}"
+echo ""
+
+# ── Servicios systemd ────────────────────────────────────────────────────
+echo -e "${BOLD}SERVICIOS${RESET}"
+for svc in nginx postgresql cloudflared hermes workspace-ui agora-backend; do
+    state=$(systemctl is-active "$svc" 2>/dev/null || echo "missing")
+    case "$state" in
+        active)   dot="$OK"; color="$GREEN" ;;
+        inactive) dot="$WARN"; color="$YELLOW" ;;
+        *)        dot="$BAD"; color="$RED" ;;
+    esac
+    printf "  %b ${DIM}%-18s${RESET} %b%s%b\n" "$dot" "$svc" "$color" "$state" "$RESET"
+done 2>/dev/null
+echo ""
+
+# ── LXD containers ───────────────────────────────────────────────────────
+echo -e "${BOLD}AGENTES LXD${RESET}"
+if command -v lxc &>/dev/null && lxc list &>/dev/null 2>&1; then
+    lxc list --format csv 2>/dev/null | while IFS=',' read -r name state ipv4 _ _ _; do
+        [[ "$name" == laia-* ]] || continue
+        sdot="$OK"; sc="$GREEN"
+        [[ "$state" == "STOPPED" ]] && { sdot="$BAD"; sc="$RED"; }
+        [[ "$state" == "FROZEN" ]] && { sdot="$WARN"; sc="$YELLOW"; }
+        printf "  %b ${DIM}%-20s${RESET} %b%-10s%b  %s\n" "$sdot" "$name" "$sc" "$state" "$RESET" "$ipv4"
+    done
+else
+    echo "  ${DIM}LXD no disponible${RESET}"
+fi
+echo ""
+
+# ── Puertos en escucha ───────────────────────────────────────────────────
+echo -e "${BOLD}PUERTOS${RESET}"
+for port in 80 443 5432 8000 8077 8088 9000; do
+    if ss -tlnp 2>/dev/null | grep -q ":$port "; then
+        pid=$(ss -tlnp 2>/dev/null | grep ":$port " | awk '{print $NF}' | sed 's/.*pid=\([0-9]*\).*/\1/')
+        proc=$(ps -p "$pid" -o comm= 2>/dev/null || echo "?")
+        printf "  %b :%-5s ${DIM}%s${RESET}\n" "$OK" "$port" "$proc"
+    else
+        printf "  ${DIM}  :%-5s libre${RESET}\n" "$port"
+    fi
+done
+echo ""
+
+# ── Disco ─────────────────────────────────────────────────────────────────
+echo -e "${BOLD}DISCO${RESET}"
+df -h / /srv/laia 2>/dev/null | tail -n +2 | while read -r fs size used avail pct mnt; do
+    printf "  ${DIM}%-12s${RESET} %5s / %5s  %4s usado  ${DIM}%s${RESET}\n" "$mnt" "$used" "$size" "$pct" "$fs"
+done
+echo ""
+
+# ── RAM ───────────────────────────────────────────────────────────────────
+echo -e "${BOLD}MEMORIA${RESET}"
+free -h | awk '/^Mem/ {printf "  usado: %s / %s  disponible: %s\n", $3, $2, $7}'
+echo ""
+
+# ── Acceso rapido ─────────────────────────────────────────────────────────
+echo -e "${BOLD}ACCESO${RESET}"
+echo -e "  AGORA:   ${CYAN}http://localhost:8088${RESET}"
+echo -e "  ARCH:    ${CYAN}http://localhost:8077${RESET}"
+echo -e "  Tailnet: ${CYAN}http://100.73.36.92:8088${RESET}"
+echo ""
