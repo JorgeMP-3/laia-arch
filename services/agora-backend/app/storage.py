@@ -207,15 +207,23 @@ class AgoraStore:
 
     def save_tasks(self, tasks: list[Task]) -> None:
         for t in tasks:
-            d = t.model_dump()
-            self.db.conn.execute(
-                "INSERT OR REPLACE INTO tasks (id, title, description, assignee_id, priority, status, created_at, updated_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                (d["id"], d["title"], d.get("description", ""), d.get("assignee_id"),
-                 d.get("priority", "medium"), d.get("status", "pending"),
-                 d.get("created_at", now_iso()), d.get("updated_at", now_iso())),
-            )
+            self.save_task(t)
+
+    def save_task(self, task: Task) -> None:
+        d = task.model_dump()
+        self.db.conn.execute(
+            "INSERT OR REPLACE INTO tasks (id, title, description, assignee_id, priority, status, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (d["id"], d["title"], d.get("description", ""), d.get("assignee_id"),
+             d.get("priority", "medium"), d.get("status", "pending"),
+             d.get("created_at", now_iso()), d.get("updated_at", now_iso())),
+        )
         self.db.conn.commit()
+
+    def delete_task(self, task_id: str) -> bool:
+        cur = self.db.conn.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
+        self.db.conn.commit()
+        return cur.rowcount > 0
 
     def update_task(self, task_id: str, **changes) -> Task | None:
         existing = self.db.conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()

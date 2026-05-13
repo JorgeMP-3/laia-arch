@@ -125,7 +125,11 @@ def get_metrics(_: User = Depends(require_roles("agora_admin"))):
 
 
 @app.post("/api/login", response_model=LoginResponse)
-def login(payload: LoginRequest):
+def login(payload: LoginRequest, request: Request):
+    from .security import should_rate_limit
+    client_ip = request.client.host if request.client else "unknown"
+    if should_rate_limit(client_ip):
+        raise HTTPException(status_code=429, detail="too many requests. wait 5 minutes")
     user = authenticate(payload.username, payload.password)
     if not user:
         raise HTTPException(status_code=401, detail="invalid credentials")
@@ -294,6 +298,18 @@ def update_task(task_id: str, payload: TaskUpdate, user: User = Depends(current_
     task = store.update_task(task_id, **payload.model_dump(exclude_unset=True))
     store.record_event(Event(event_type="task_updated", actor_id=user.id, summary=task.title, payload={"task_id": task.id}))
     return task
+
+
+@app.delete("/api/tasks/{task_id}")
+def delete_task(task_id: str, user: User = Depends(current_user)):
+    existing = next((task for task in store.tasks() if task.id == task_id), None)
+    if not existing:
+        raise HTTPException(status_code=404, detail="task not found")
+    if not can_access_user_scope(user, existing.assignee_id):
+        raise HTTPException(status_code=403, detail="cannot delete task outside user scope")
+    store.delete_task(task_id)
+    store.record_event(Event(event_type="task_deleted", actor_id=user.id, summary=existing.title, payload={"task_id": task_id}))
+    return {"ok": True}
 
 
 @app.get("/api/events")
@@ -611,6 +627,38 @@ def snapshot_agent(slug: str, payload: SnapshotRequest, _: User = Depends(requir
         raise HTTPException(status_code=400, detail=str(exc))
 
 
+@app.get("/api/agents/{slug}/snapshots")
+def list_snapshots(slug: str, _: User = Depends(require_roles("agora_admin"))):
+    import subprocess, re
+    container = f"laia-{slug}"
+    try:
+        r = subprocess.run(["lxc", "info", container], capture_output=True, text=True, timeout=10)
+        snapshots = []
+        for line in r.stdout.split("\n"):
+            m = re.match(r"\s+(\S+)\s+\(taken at (.+?)\s+\S+\)", line)
+            if m:
+                snapshots.append({"name": m.group(1), "taken_at": m.group(2)})
+        return {"snapshots": snapshots}
+    except subprocess.TimeoutExpired:
+        raise HTTPException(status_code=500, detail="lxc timeout")
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.post("/api/agents/{slug}/restore")
+def restore_snapshot(slug: str, payload: SnapshotRequest, _: User = Depends(require_roles("agora_admin"))):
+    import subprocess
+    container = f"laia-{slug}"
+    try:
+        r = subprocess.run(
+            ["lxc", "restore", container, payload.name],
+            capture_output=True, text=True, timeout=60,
+        )
+        return {"ok": r.returncode == 0, "output": r.stdout, "error": r.stderr}
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
 @app.get("/api/agents/{slug}/logs")
 def get_agent_logs(slug: str, _: User = Depends(require_roles("agora_admin"))):
     try:
@@ -656,6 +704,29 @@ def delete_agent(slug: str, _: User = Depends(require_roles("agora_admin"))):
         return orchestrator.delete_agent(slug)
     except OrchestratorError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.get("/api/fleet/status")
+def fleet_status_endpoint(_: User = Depends(require_roles("agora_admin"))):
+    agents_list = store.agents()
+    try:
+        lxd_agents = orchestrator.list_agents()
+    except OrchestratorError:
+        lxd_agents = []
+    result = []
+    for a in agents_list:
+        slug = a.container_name.removeprefix("laia-")
+        lxd = next((la for la in lxd_agents if la.get("slug") == slug), {})
+        result.append({
+            "slug": slug,
+            "container": a.container_name,
+            "user_id": a.user_id,
+            "status": a.status,
+            "lxd_state": lxd.get("lxd_state", "unknown"),
+            "ipv4": lxd.get("ipv4", ""),
+            "snapshots": lxd.get("snapshots", "0"),
+        })
+    return {"agents": result, "total": len(result)}
 
 
 # ── SPA fallback (serve frontend) ─────────────────────────────────────────
