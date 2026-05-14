@@ -35,7 +35,7 @@ WORKSPACES_DIR = LAIA_ROOT / "workspaces"
 INIT_SCRIPT = LAIA_ROOT / "scripts" / "init-workspace-git.sh"
 
 # Workspaces cuyo código vive fuera de su propia carpeta workspaces/X/code/
-EXCLUDED_WORKSPACES = {"laia_arch"}
+EXCLUDED_WORKSPACES = {"laia-arch"}
 
 # ─── WorkspaceGitManager ──────────────────────────────────────────────────────
 
@@ -896,7 +896,7 @@ def main():
             "  python git-manager.py                          # TUI interactiva\n"
             "  python git-manager.py --list                   # JSON con todos los workspaces\n"
             "  python git-manager.py --status arete           # Estado de un workspace\n"
-            "  python git-manager.py --init servidor_jmp      # Inicializar git\n"
+            "  python git-manager.py --init servidor-jmp      # Inicializar git\n"
             "  python git-manager.py --push arete             # Push a GitHub\n"
             "  python git-manager.py --configure arete --repo-name mi-repo --visibility private\n"
         ),

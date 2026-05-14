@@ -289,9 +289,9 @@ Result is sorted descending; top-N nodes selected until `max_chars` (default 800
 
 | Document | Purpose | Path |
 |----------|---------|------|
-| **SOUL.md** (lines 61-79) | Agent workspace context contract — mandatory tool order | `/Users/servidor_jmp/.hermes/SOUL.md` |
-| **workspace-daily skill** | Daily usage guide — search/read/update workflow, multi-agent tips, migration command | `/Users/servidor_jmp/.hermes/skills/workspace-daily/SKILL.md` |
-| **context-engine skill** | Technical reference — plugin architecture, full tool list, prefetch formula | `/Users/servidor_jmp/.hermes/skills/context-engine/SKILL.md` |
+| **SOUL.md** (lines 61-79) | Agent workspace context contract — mandatory tool order | `/Users/servidor-jmp/.hermes/SOUL.md` |
+| **workspace-daily skill** | Daily usage guide — search/read/update workflow, multi-agent tips, migration command | `/Users/servidor-jmp/.hermes/skills/workspace-daily/SKILL.md` |
+| **context-engine skill** | Technical reference — plugin architecture, full tool list, prefetch formula | `/Users/servidor-jmp/.hermes/skills/context-engine/SKILL.md` |
 | **workspace-doc.md** | Per-workspace integration documentation prompt | `workspaces/{name}/workspace-doc.md` |
 | **CLAUDE.md** | Per-workspace agent instructions | `workspaces/{name}/CLAUDE.md` |
 
@@ -317,15 +317,15 @@ Result is sorted descending; top-N nodes selected until `max_chars` (default 800
 
 | Component | Path |
 |-----------|------|
-| WorkspaceStore (Python) | `/Users/servidor_jmp/.hermes/workspace_store/__init__.py` |
+| WorkspaceStore (Python) | `/Users/servidor-jmp/.hermes/workspace_store/__init__.py` |
 | Schema version | Line 5 of above — `SCHEMA_VERSION = 1` |
 
 **Plugin**
 
 | Component | Path |
 |-----------|------|
-| Plugin entry point | `/Users/servidor_jmp/.hermes/plugins/workspace-context/__init__.py` |
-| Plugin config schema | `/Users/servidor_jmp/.hermes/plugins/workspace-context/plugin.yaml` |
+| Plugin entry point | `/Users/servidor-jmp/.hermes/plugins/workspace-context/__init__.py` |
+| Plugin config schema | `/Users/servidor-jmp/.hermes/plugins/workspace-context/plugin.yaml` |
 | Provider class | `WorkspaceContextProvider` in above |
 | 20 tools | Defined in plugin `get_tools()` |
 
@@ -333,34 +333,34 @@ Result is sorted descending; top-N nodes selected until `max_chars` (default 800
 
 | Component | Path |
 |-----------|------|
-| FastAPI backend | `/Users/servidor_jmp/.hermes/workspace-ui/backend/main.py` |
-| Frontend API client | `/Users/servidor_jmp/.hermes/workspace-ui/frontend/src/lib/api.ts` |
-| React app entry | `/Users/servidor_jmp/.hermes/workspace-ui/frontend/src/main.tsx` |
-| Theme/styling | `/Users/servidor_jmp/.hermes/workspace-ui/frontend/src/index.css` |
+| FastAPI backend | `/Users/servidor-jmp/.hermes/workspace-ui/backend/main.py` |
+| Frontend API client | `/Users/servidor-jmp/.hermes/workspace-ui/frontend/src/lib/api.ts` |
+| React app entry | `/Users/servidor-jmp/.hermes/workspace-ui/frontend/src/main.tsx` |
+| Theme/styling | `/Users/servidor-jmp/.hermes/workspace-ui/frontend/src/index.css` |
 
 **Scripts**
 
 | Script | Path |
 |--------|------|
-| create-workspace | `/Users/servidor_jmp/.hermes/scripts/create-workspace.py` |
-| run-agent | `/Users/servidor_jmp/.hermes/scripts/run-agent.sh` |
-| run-all-agents | `/Users/servidor_jmp/.hermes/scripts/run-all-agents.sh` |
-| doctor | `/Users/servidor_jmp/.hermes/scripts/doctor.py` |
-| export-docs | `/Users/servidor_jmp/.hermes/scripts/export-docs.py` |
-| All scripts dir | `/Users/servidor_jmp/.hermes/scripts/` |
+| create-workspace | `/Users/servidor-jmp/.hermes/scripts/create-workspace.py` |
+| run-agent | `/Users/servidor-jmp/.hermes/scripts/run-agent.sh` |
+| run-all-agents | `/Users/servidor-jmp/.hermes/scripts/run-all-agents.sh` |
+| doctor | `/Users/servidor-jmp/.hermes/scripts/doctor.py` |
+| export-docs | `/Users/servidor-jmp/.hermes/scripts/export-docs.py` |
+| All scripts dir | `/Users/servidor-jmp/.hermes/scripts/` |
 
 **Skills**
 
 | Skill | Path |
 |-------|------|
-| workspace-daily | `/Users/servidor_jmp/.hermes/skills/workspace-daily/SKILL.md` |
-| context-engine | `/Users/servidor_jmp/.hermes/skills/context-engine/SKILL.md` |
+| workspace-daily | `/Users/servidor-jmp/.hermes/skills/workspace-daily/SKILL.md` |
+| context-engine | `/Users/servidor-jmp/.hermes/skills/context-engine/SKILL.md` |
 
 **Config**
 
 | File | Path |
 |------|------|
-| Main config | `/Users/servidor_jmp/.hermes/config.yaml` |
+| Main config | `/Users/servidor-jmp/.hermes/config.yaml` |
 | Active workspace key | `plugins.workspace-context.workspace` |
 | Inject mode key | `plugins.workspace-context.inject_mode` |
 
@@ -368,21 +368,21 @@ Result is sorted descending; top-N nodes selected until `max_chars` (default 800
 
 | Resource | Path |
 |----------|------|
-| All workspaces | `/Users/servidor_jmp/.hermes/workspaces/` |
-| Per-workspace DB | `/Users/servidor_jmp/.hermes/workspaces/{name}/workspace.db` |
-| Per-workspace code | `/Users/servidor_jmp/.hermes/workspaces/{name}/code/` |
-| Backups | `/Users/servidor_jmp/.hermes/backups/` (or custom `--backup-root`) |
+| All workspaces | `/Users/servidor-jmp/.hermes/workspaces/` |
+| Per-workspace DB | `/Users/servidor-jmp/.hermes/workspaces/{name}/workspace.db` |
+| Per-workspace code | `/Users/servidor-jmp/.hermes/workspaces/{name}/code/` |
+| Backups | `/Users/servidor-jmp/.hermes/backups/` (or custom `--backup-root`) |
 
 **Documentation**
 
 | Doc | Path |
 |-----|------|
-| This index | `/Users/servidor_jmp/.hermes/docs/context-engine/00-index.md` |
-| WorkspaceStore | `/Users/servidor_jmp/.hermes/docs/context-engine/01-workspace-store.md` |
-| Plugin | `/Users/servidor_jmp/.hermes/docs/context-engine/02-plugin.md` |
-| Web UI | `/Users/servidor_jmp/.hermes/docs/context-engine/03-web-ui.md` |
-| Migration | `/Users/servidor_jmp/.hermes/docs/context-engine/04-migration.md` |
-| Scripts | `/Users/servidor_jmp/.hermes/docs/context-engine/05-scripts.md` |
+| This index | `/Users/servidor-jmp/.hermes/docs/context-engine/00-index.md` |
+| WorkspaceStore | `/Users/servidor-jmp/.hermes/docs/context-engine/01-workspace-store.md` |
+| Plugin | `/Users/servidor-jmp/.hermes/docs/context-engine/02-plugin.md` |
+| Web UI | `/Users/servidor-jmp/.hermes/docs/context-engine/03-web-ui.md` |
+| Migration | `/Users/servidor-jmp/.hermes/docs/context-engine/04-migration.md` |
+| Scripts | `/Users/servidor-jmp/.hermes/docs/context-engine/05-scripts.md` |
 
 ---
 

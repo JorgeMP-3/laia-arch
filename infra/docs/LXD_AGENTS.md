@@ -70,7 +70,7 @@ Estado verificado el 2026-05-11:
 - `laia-jorge/runtime-ready` creado tras instalar runtime completo;
 - `laia-jorge/runtime-installed` creado tras instalar el runtime real;
 - `laia-jorge/workspace-initialized` creado tras inicializar WorkspaceStore personal;
-- `/opt/laia/healthcheck.sh` devuelve `laia-agent-runtime-ok`.
+- `/opt/laia/healthcheck.sh` devuelve `laia-runtime-ok`.
 - `python3-pip`, `python3-venv`, `jq`, `git` y `curl` verificados.
 - contenedor temporal `laia-smoke` creado desde `laia-agent`, verificado y eliminado.
 - servicio `laia-agent.service` activo y habilitado dentro de `laia-jorge`;
@@ -122,7 +122,7 @@ infra/laiactl restore-agent jorge pre-cambio --yes
 Codigo fuente:
 
 ```text
-services/laia-agent-runtime
+services/laia-runtime
 ```
 
 Instalar o actualizar dentro de un contenedor:

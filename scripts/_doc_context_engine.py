@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Upsert full documentation for Context Engine nodes in laia_arch workspace."""
+"""Upsert full documentation for Context Engine nodes in laia-arch workspace."""
 
 from __future__ import annotations
 import sys
@@ -11,7 +11,7 @@ sys.path.insert(0, str(HERMES_HOME))
 
 from workspace_store import WorkspaceStore
 
-store = WorkspaceStore(Path(HERMES_HOME) / "workspaces" / "laia_arch")
+store = WorkspaceStore(Path(HERMES_HOME) / "workspaces" / "laia-arch")
 
 body_00 = """# Context Engine — Índice General
 
@@ -53,7 +53,7 @@ workspace_migrate_legacy()       → Migrar legacy
 ```yaml
 plugins:
   workspace-context:
-    workspace: "laia_arch"
+    workspace: "laia-arch"
     inject_mode: "index"
     max_chars: 8000
 ```
@@ -79,7 +79,7 @@ plugins:
 ```bash
 python3 ~/.hermes/scripts/health-check.py
 python3 ~/.hermes/scripts/show-injected.py --query "mi pregunta"
-python3 ~/.hermes/scripts/sync-workspace-markdown.py --workspace laia_arch --watch
+python3 ~/.hermes/scripts/sync-workspace-markdown.py --workspace laia-arch --watch
 python3 ~/.hermes/scripts/workspace-daily-diagnostic.py
 ```
 
@@ -428,7 +428,7 @@ Plugin DB-first que proporciona contexto nodal al agente en cada sesión. Reempl
 ```yaml
 plugins:
   workspace-context:
-    workspace: "laia_arch"
+    workspace: "laia-arch"
     inject_mode: "index"
     max_chars: 8000
 ```
@@ -827,13 +827,13 @@ FRONTEND_DIST = Path(__file__).parent.parent / "frontend" / "dist"
 {
   "workspaces": [
     {
-      "name": "laia_arch",
-      "path": "/home/familiamp/.hermes/workspaces/laia_arch",
+      "name": "laia-arch",
+      "path": "/home/familiamp/.hermes/workspaces/laia-arch",
       "has_db": true,
       "has_index": true
     }
   ],
-  "active": "laia_arch"
+  "active": "laia-arch"
 }
 ```
 
@@ -1104,7 +1104,7 @@ python3 ~/.hermes/scripts/create-workspace.py --name mi-workspace --repair
 
 ```bash
 python3 ~/.hermes/scripts/health-check.py
-python3 ~/.hermes/scripts/health-check.py --workspace laia_arch
+python3 ~/.hermes/scripts/health-check.py --workspace laia-arch
 python3 ~/.hermes/scripts/health-check.py --fix
 ```
 
@@ -1157,16 +1157,16 @@ python3 ~/.hermes/scripts/show-injected.py --workspace pixelcore
 
 ```bash
 # Sincronizar un workspace
-python3 ~/.hermes/scripts/sync-workspace-markdown.py --workspace laia_arch
+python3 ~/.hermes/scripts/sync-workspace-markdown.py --workspace laia-arch
 
 # Sincronizar todos
 python3 ~/.hermes/scripts/sync-workspace-markdown.py --all
 
 # Modo watch
-python3 ~/.hermes/scripts/sync-workspace-markdown.py --workspace laia_arch --watch
+python3 ~/.hermes/scripts/sync-workspace-markdown.py --workspace laia-arch --watch
 
 # Output dir personalizado
-python3 ~/.hermes/scripts/sync-workspace-markdown.py --workspace laia_arch --output-dir /tmp/snapshot
+python3 ~/.hermes/scripts/sync-workspace-markdown.py --workspace laia-arch --output-dir /tmp/snapshot
 ```
 
 ### Dos Vistas Exportadas
@@ -1201,7 +1201,7 @@ python3 ~/.hermes/scripts/workspace-daily-diagnostic.py --case metodo-doyouwin
 |----|-------|-----------|---------------|
 | `metodo-doyouwin` | `metodo doyouwin fases` | doyouwin | `02b-metodo-doyouwin` |
 | `pixelcore-infra` | `infraestructura pixelcore` | pixelcore | `40-infraestructura` |
-| `laia-arch-honesty` | `arquitectura laia` | laia_arch | `00-index` |
+| `laia-arch-honesty` | `arquitectura laia` | laia-arch | `00-index` |
 | `pixelcore-servidor` | `pixelcore servidor infraestructura` | pixelcore | `40-infraestructura` |
 
 ---

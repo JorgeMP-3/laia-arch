@@ -1,7 +1,7 @@
 # WorkspaceStore Data Layer
 
 **Module:** `workspace_store`
-**File:** `/Users/servidor_jmp/.hermes/workspace_store/__init__.py`
+**File:** `/Users/servidor-jmp/.hermes/workspace_store/__init__.py`
 **Schema Version:** 1
 **Total Lines:** 1727
 

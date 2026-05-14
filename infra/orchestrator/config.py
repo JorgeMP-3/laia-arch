@@ -23,7 +23,7 @@ def discover_paths() -> Paths:
         infra_root=infra_root,
         state_root=state_root,
         agents_state=state_root / "agents.json",
-        agent_runtime_root=laia_root / "services" / "laia-agent-runtime",
+        agent_runtime_root=laia_root / "services" / "laia-runtime",
     )
 
 

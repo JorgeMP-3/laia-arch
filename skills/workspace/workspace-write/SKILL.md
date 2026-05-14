@@ -527,7 +527,7 @@ distinta porque es un proceso separado.
 ```
 # El archivo dice una cosa
 grep active_workspaces $HERMES_HOME/config.yaml
-# -> ['pixelcore', 'laia_arch']
+# -> ['pixelcore', 'laia-arch']
 
 # Pero las workspace tools dicen otra
 workspace_list_workspaces()

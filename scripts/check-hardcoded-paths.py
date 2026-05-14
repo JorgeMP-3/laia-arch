@@ -44,7 +44,7 @@ PATH_HOME_HERMES_RE = re.compile(r"(?:pathlib\.)?Path\.home\(\)\s*/\s*['\"]\.her
 TILDE_HERMES_STRING_RE = re.compile(r"['\"][^'\"]*~/\.hermes[^'\"]*['\"]")
 EXPANDUSER_HERMES_RE = re.compile(r"os\.path\.expanduser\(\s*['\"]~/\.hermes(?:/[^'\"]*)?['\"]\s*\)")
 ABS_LAIA_HOME_STRING_RE = re.compile(r"['\"][^'\"]*/home/laia-arch(?:/[^'\"]*)?['\"]")
-DEFAULT_WORKSPACE_NAMES = ("arete", "doyouwin", "pixelcore", "laia_arch", "servidor_jmp", "demo-completo")
+DEFAULT_WORKSPACE_NAMES = ("arete", "doyouwin", "pixelcore", "laia-arch", "servidor-jmp", "demo-completo")
 WORKSPACE_NAME_RE = re.compile(
     r"['\"](" + "|".join(re.escape(name) for name in DEFAULT_WORKSPACE_NAMES) + r")['\"]"
 )
@@ -58,7 +58,7 @@ WORKSPACE_NAME_ALLOWED_FILES = {
 
 # Pattern 4: workspace assigned directly from a string literal (e.g. workspace = "arete")
 HARDCODED_WORKSPACE_ASSIGN_RE = re.compile(
-    r"""workspace\s*=\s*["'](arete|doyouwin|pixelcore|laia_arch|servidor_jmp)["']"""
+    r"""workspace\s*=\s*["'](arete|doyouwin|pixelcore|laia-arch|servidor-jmp)["']"""
 )
 HARDCODED_WORKSPACE_ASSIGN_EXCLUDE_DIRS = {"workspace_store", "workspaces"}
 HARDCODED_WORKSPACE_ASSIGN_EXCLUDE_SUFFIXES = {"workspace.db", "config.yaml", "config.yml"}

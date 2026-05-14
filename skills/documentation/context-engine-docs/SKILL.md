@@ -2,8 +2,8 @@
 name: context-engine-docs
 description: >
   Documentar features del Context Engine desde analisis de codigo fuente hasta nodos
-  en la BD de laia_arch. Workflow: leer BD existente -> investigar codigo real ->
-  generar plan -> esperar aprobacion -> ejecutar. Solo para el workspace laia_arch.
+  en la BD de laia-arch. Workflow: leer BD existente -> investigar codigo real ->
+  generar plan -> esperar aprobacion -> ejecutar. Solo para el workspace laia-arch.
 version: "1.0.0"
 author: Hermes Agent
 license: MIT
@@ -15,13 +15,13 @@ metadata:
 
 # Context Engine — Documentacion Desde Codigo Fuente
 
-Skill para documentar implementaciones nuevas del Context Engine en la BD de laia_arch.
+Skill para documentar implementaciones nuevas del Context Engine en la BD de laia-arch.
 Usa esta skill cuando una implementacion de plugin/backend/frontend cambio el comportamiento
 del Context Engine y hay que reflejarlo en la documentacion de la BD.
 
 ## Contexto
 
-El Context Engine tiene su documentacion en `workspace laia_arch`.
+El Context Engine tiene su documentacion en `workspace laia-arch`.
 La fuente de verdad para el codigo es:
 - Plugin: `/home/laia-arch/LAIA/plugins/workspace-context/__init__.py`
 - Backend: `/home/laia-arch/LAIA/.laia-arch/workspace-ui/backend/main.py`
@@ -35,7 +35,7 @@ No generar ningun plan hasta haber leido la documentacion actual.
 
 ```
 workspace_get_node("context-engine")           # proyecto indice
-workspace_search_nodes("nombre de feature", workspace="laia_arch", limit=8)
+workspace_search_nodes("nombre de feature", workspace="laia-arch", limit=8)
 workspace_get_node("context-engine-docs-02-plugin")  # plugin actual
 ```
 
@@ -74,7 +74,7 @@ El plan debe incluir:
 - Que contenido nuevo o reescrito necesitan
 - Criterios de verificacion: como confirmar que la doc esta bien despues
 
-**Nota sobre agentes**: documentar en laia_arch es trabajo para UN SOLO AGENTE por defecto.
+**Nota sobre agentes**: documentar en laia-arch es trabajo para UN SOLO AGENTE por defecto.
 Solo considerar multi-agente si el usuario pide explícitamente distribuir tareas o hay volumen que justifique paralelización real.
 
 Regla: presentar plan ANTES de ejecutar. No documentar sin aprobacion.
@@ -89,7 +89,7 @@ Regla: presentar plan ANTES de ejecutar. No documentar sin aprobacion.
 ## Errores Comunes
 
 - **Generar plan multi-agente para trabajo monousuario**: el usuario lo ha corregido explicitamente.
-  Documentar nodos en laia_arch es trabajo para UN SOLO AGENTE. No asignar trabajo a "Claude Code 2" o "Codex".
+  Documentar nodos en laia-arch es trabajo para UN SOLO AGENTE. No asignar trabajo a "Claude Code 2" o "Codex".
   Solo considerar multi-agente si el usuario pide explícitamente distribuir tareas o hay volumen que justifique paralelización real.
 - **Generar plan sin leer la BD primero**: el usuario lo ha rechazado explicitamente.
   Siempre leer `context-engine` y la doc existente antes de hacer nada.
@@ -102,10 +102,10 @@ Regla: presentar plan ANTES de ejecutar. No documentar sin aprobacion.
 - **No distinguir entre nodos heredados y nodos reescritos**: un nodo reescrito necesita
   actualizarse completamente; no vale anadir una nota al final.
 
-## Estructura De Nodos Esperada En laia_arch
+## Estructura De Nodos Esperada En laia-arch
 
 ```
-laia_arch workspace (id=1)
+laia-arch workspace (id=1)
 ├── context-engine                           kind=project
 │   ├── context-engine-docs-02-plugin        kind=doc  (plugin + prefetch)
 │   ├── context-engine-docs-03-web-ui        kind=doc  (backend + frontend)
@@ -144,6 +144,6 @@ PREFETCH_MIN_SCORE = 0.05  # umbral BM25 minimo para incluir resultado
 
 ## Nodos De Contexto Relevantes
 
-- `laia_arch/context-engine` (id=62) — proyecto indice del Context Engine
-- `laia_arch/context-engine-docs-02-plugin` (id=63) — documentacion del plugin
-- `laia_arch/integrated-workspace-tools` (id=55) — skills workspace-read/write
+- `laia-arch/context-engine` (id=62) — proyecto indice del Context Engine
+- `laia-arch/context-engine-docs-02-plugin` (id=63) — documentacion del plugin
+- `laia-arch/integrated-workspace-tools` (id=55) — skills workspace-read/write

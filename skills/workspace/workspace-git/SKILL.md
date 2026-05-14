@@ -24,7 +24,7 @@ Gestión completa de git y GitHub para los workspaces LAIA en `~/LAIA/workspaces
 
 ## Reglas importantes
 
-- **`laia_arch` está excluido** — su código vive en `/home/laia-arch/LAIA` directamente, no en `workspaces/laia_arch/code/`. Nunca ejecutes operaciones git sobre él desde este gestor.
+- **`laia-arch` está excluido** — su código vive en `/home/laia-arch/LAIA` directamente, no en `workspaces/laia-arch/code/`. Nunca ejecutes operaciones git sobre él desde este gestor.
 - La config de GitHub (nombre del repo, visibilidad) se guarda en `workspace_meta` de cada `workspace.db`.
 - Requiere `gh` CLI autenticado para crear repos o hacer push.
 
@@ -53,7 +53,7 @@ mgr = WorkspaceGitManager()
 workspaces = mgr.list_all()
 for ws in workspaces:
     if ws['excluded']:
-        continue  # laia_arch — ignorar
+        continue  # laia-arch — ignorar
     print(f"{ws['workspace']}: {ws['topology']} — {len(ws['repos'])} repos")
 ```
 
@@ -87,7 +87,7 @@ status = mgr.get_status("arete")
 ### Inicializar git en un workspace sin git
 
 ```python
-result = mgr.init_git("servidor_jmp")
+result = mgr.init_git("servidor-jmp")
 # Inicializa code/ con git init, .gitignore y commit inicial
 # Si ya existe git, no hace nada (idempotente)
 ```
@@ -155,7 +155,7 @@ python3 ~/LAIA/scripts/git-manager.py --list
 python3 ~/LAIA/scripts/git-manager.py --status arete
 
 # Init git
-python3 ~/LAIA/scripts/git-manager.py --init servidor_jmp
+python3 ~/LAIA/scripts/git-manager.py --init servidor-jmp
 
 # Push
 python3 ~/LAIA/scripts/git-manager.py --push arete

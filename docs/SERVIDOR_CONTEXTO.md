@@ -168,7 +168,7 @@ nginx (reverse proxy)
 ├── laia-ui/                      # UI monorepo (ARCH + AGORA)
 ├── services/
 │   ├── agora-backend/            # Backend FastAPI de AGORA
-│   └── laia-agent-runtime/       # Runtime que se despliega en cada LXD
+│   └── laia-runtime/       # Runtime que se despliega en cada LXD
 ├── infra/
 │   ├── laiactl                   # CLI de gestion de agentes
 │   ├── orchestrator/             # Modulo Python del orquestador

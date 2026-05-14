@@ -22,7 +22,7 @@ class HealthHandler(BaseHTTPRequestHandler):
             self.end_headers()
             return
         ok = True
-        info = {"service": "laia-agent-runtime", "time": utc_now()}
+        info = {"service": "laia-runtime", "time": utc_now()}
         if _healthcheck_fn:
             try:
                 info.update(_healthcheck_fn())

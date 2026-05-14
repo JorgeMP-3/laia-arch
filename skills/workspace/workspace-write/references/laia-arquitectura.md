@@ -26,8 +26,8 @@ LAIA (el ser / la IA)
 | Workspace | Qué contiene |
 |---|---|
 | `laia-ecosystem` | Documentación de todo el ecosistema LAIA (ARCH, AGORA, AGENTE, Hermes) — workspace maestro |
-| `laia_arch` | Documentación técnica de Hermes (legacy, se migra a `laia-ecosystem`) |
-| `arete`, `doyouwin`, `pixelcore`, `servidor_jmp` | Workspaces de proyectos independientes — NO se tocan |
+| `laia-arch` | Documentación técnica de Hermes (legacy, se migra a `laia-ecosystem`) |
+| `arete`, `doyouwin`, `pixelcore`, `servidor-jmp` | Workspaces de proyectos independientes — NO se tocan |
 
 ## Conceptos clave
 

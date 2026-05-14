@@ -28,4 +28,4 @@ test -s /opt/laia/data/profile/skills.json
 test -s /opt/laia/data/profile/preferences.json
 run_agent env PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/opt/laia/agent/src /opt/laia/runtime/venv/bin/python -m laia_agent --workspace-init
 test -s /opt/laia/workspaces/personal/workspace.db
-echo "laia-agent-runtime-ok"
+echo "laia-runtime-ok"

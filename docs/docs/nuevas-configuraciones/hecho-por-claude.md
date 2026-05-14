@@ -19,7 +19,7 @@
     Verificación:
 
     - workspace-daily-diagnostic.py: OK, sin ModuleNotFoundError.
-    - show-injected.py: muestra ✓ para arete, doyouwin, pixelcore, laia_arch, servidor_jmp.
+    - show-injected.py: muestra ✓ para arete, doyouwin, pixelcore, laia-arch, servidor-jmp.
     - health-check.py: OK en todos los workspaces.
     - check-hardcoded-paths.py: OK, sin violaciones.
     - py_compile: OK; solo queda un SyntaxWarning no bloqueante en _doc_context_engine.py.
@@ -80,7 +80,7 @@
 ● Bash(python3 /home/laia-arch/LAIA/scripts/workspace-daily-diagnostic.py 2>&1 | head -5; echo "---"; python3
       /home/laia-arch/LAIA/scripts/show-injected.py 2>&1 | grep…)
   ⎿  Diagnóstico DB-first
-     Workspaces detectados: arete, demo-completo, doyouwin, laia_arch, pixelcore, servidor_jmp
+     Workspaces detectados: arete, demo-completo, doyouwin, laia-arch, pixelcore, servidor-jmp
      … +30 lines (ctrl+o to expand)
   ⎿  Allowed by auto mode classifier
 
@@ -650,8 +650,8 @@
      - arete
      - doyouwin
      - pixelcore
-     - laia_arch
-     - servidor_jmp
+     - laia-arch
+     - servidor-jmp
 
  - active_workspaces vacío → hereda [workspace] (compatibilidad hacia atrás)
  - _active_workspace() devuelve el primero de active_workspaces (sigue como antes)

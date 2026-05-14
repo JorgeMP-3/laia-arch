@@ -167,9 +167,9 @@ def install_agent_runtime(paths: config.Paths, slug: str) -> Result:
          "id -u laia-agent >/dev/null 2>&1 || "
          "useradd --system --home /opt/laia --shell /usr/sbin/nologin laia-agent"],
         # Instalar código del runtime
-        ["lxc", "exec", name, "--", "rm", "-rf", "/opt/laia/agent", "/tmp/laia-agent-runtime"],
+        ["lxc", "exec", name, "--", "rm", "-rf", "/opt/laia/agent", "/tmp/laia-runtime"],
         ["lxc", "file", "push", "-r", "-p", str(paths.agent_runtime_root), f"{name}/tmp"],
-        ["lxc", "exec", name, "--", "mv", "/tmp/laia-agent-runtime", "/opt/laia/agent"],
+        ["lxc", "exec", name, "--", "mv", "/tmp/laia-runtime", "/opt/laia/agent"],
         # Vendor: workspace_store
         ["lxc", "exec", name, "--", "mkdir", "-p", "/opt/laia/agent/vendor"],
         ["lxc", "file", "push", "-r", "-p",

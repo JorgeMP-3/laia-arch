@@ -62,8 +62,8 @@
        - arete
        - doyouwin
        - pixelcore
-       - laia_arch
-       - servidor_jmp
+       - laia-arch
+       - servidor-jmp
 
    - active_workspaces vacío → hereda [workspace] (compatibilidad hacia atrás)
    - _active_workspace() devuelve el primero de active_workspaces (sigue como antes)
@@ -260,7 +260,7 @@
   backend; las llamadas usarán los endpoints previstos y harán actualización optimista sobre active_workspaces.
 
 • Explored
-  └ Search arete|doyouwin|pixelcore|laia_arch|servidor_jmp|demo-completo in scripts
+  └ Search arete|doyouwin|pixelcore|laia-arch|servidor-jmp|demo-completo in scripts
 
 • Edited LAIA/.laia-arch/workspace-ui/frontend/src/lib/api.ts (+6 -0)
     158    max_chars: number
@@ -433,7 +433,7 @@
 
 • Edited LAIA/scripts/check-hardcoded-paths.py (+25 -1)
      46  ABS_LAIA_HOME_STRING_RE = re.compile(r"['\"][^'\"]*/home/laia-arch(?:/[^'\"]*)?['\"]")
-     47 +DEFAULT_WORKSPACE_NAMES = ("arete", "doyouwin", "pixelcore", "laia_arch", "servidor_jmp", "demo-completo")
+     47 +DEFAULT_WORKSPACE_NAMES = ("arete", "doyouwin", "pixelcore", "laia-arch", "servidor-jmp", "demo-completo")
      48 +WORKSPACE_NAME_RE = re.compile(
      49 +    r"['\"](" + "|".join(re.escape(name) for name in DEFAULT_WORKSPACE_NAMES) + r")['\"]"
      50 +)
@@ -1585,8 +1585,8 @@ print("total_chars=", body.get("total_chars"))
   │ import asyncio, os, sys
   │ … +13 lines
   └ cfg_active_workspaces= ['arete']
-    cfg_workspaces= ['arete', 'doyouwin', 'pixelcore', 'laia_arch', 'servidor_jmp']
-    injected_workspaces= ['arete', 'doyouwin', 'laia_arch', 'pixelcore', 'servidor_jmp']
+    cfg_workspaces= ['arete', 'doyouwin', 'pixelcore', 'laia-arch', 'servidor-jmp']
+    injected_workspaces= ['arete', 'doyouwin', 'laia-arch', 'pixelcore', 'servidor-jmp']
     total_chars= 10453
 
 • Waited for background terminal
@@ -1687,7 +1687,7 @@ print("total_chars=", body.get("total_chars"))
   │ from pathlib import Path
   │ … +7 lines
   └ {"error": "El workspace 'doyouwin' es de solo lectura; edicion por terminal bloqueada.", "active_workspaces": ["arete"],
-    "readonly_workspaces": ["doyouwin", "pixelcore", "laia_arch", "servidor_jmp"], "hint": "Activa el workspace en Context Engine ->
+    "readonly_workspaces": ["doyouwin", "pixelcore", "laia-arch", "servidor-jmp"], "hint": "Activa el workspace en Context Engine ->
     Configuracion o usa workspace_list_workspaces antes de intentar editar."}
 
 • Ran timeout 20s /home/laia-arch/LAIA/.laia-arch/venv/bin/python -c '
@@ -1695,7 +1695,7 @@ print("total_chars=", body.get("total_chars"))
   │ from pathlib import Path
   │ … +7 lines
   └ {"error": "El workspace 'doyouwin' es de solo lectura; patch bloqueada.", "active_workspaces": ["arete"], "readonly_workspaces":
-    ["doyouwin", "pixelcore", "laia_arch", "servidor_jmp"], "hint": "Activa el workspace en Context Engine -> Configuracion o usa
+    ["doyouwin", "pixelcore", "laia-arch", "servidor-jmp"], "hint": "Activa el workspace en Context Engine -> Configuracion o usa
     workspace_list_workspaces antes de intentar editar."}
     {"bytes_written": 1, "dirs_created": true}
 
@@ -1727,7 +1727,7 @@ print("total_chars=", body.get("total_chars"))
   pixelcore
   EDITABLE
 
-  laia_arch
+  laia-arch
   SOLO LECTURA
 
 
@@ -1901,8 +1901,8 @@ print("total_chars=", body.get("total_chars"))
   │ import os, sys
   │ from pathlib import Path
   │ … +7 lines
-  └ {'workspace': 'arete', 'workspaces': ['arete', 'doyouwin', 'pixelcore', 'laia_arch', 'servidor_jmp'], 'active_workspaces': ['arete',
-    'doyouwin', 'pixelcore', 'servidor_jmp'], 'readonly_workspaces': ['laia_arch']}
+  └ {'workspace': 'arete', 'workspaces': ['arete', 'doyouwin', 'pixelcore', 'laia-arch', 'servidor-jmp'], 'active_workspaces': ['arete',
+    'doyouwin', 'pixelcore', 'servidor-jmp'], 'readonly_workspaces': ['laia-arch']}
     None
 
 • Ran timeout 20s /home/laia-arch/LAIA/.laia-arch/venv/bin/python -c '
@@ -1910,7 +1910,7 @@ print("total_chars=", body.get("total_chars"))
   │ from pathlib import Path
   │ … +6 lines
   └ {'workspace': 'arete', 'inject_mode': 'all-indexes', 'max_chars': 20000, 'workspaces': ['arete', 'doyouwin', 'pixelcore',
-    'laia_arch', 'servidor_jmp'], 'active_workspaces': ['arete', 'doyouwin', 'pixelcore', 'servidor_jmp']}
+    'laia-arch', 'servidor-jmp'], 'active_workspaces': ['arete', 'doyouwin', 'pixelcore', 'servidor-jmp']}
   orden de import/env.
 
 • Explored
@@ -1925,8 +1925,8 @@ print("total_chars=", body.get("total_chars"))
   │ … +7 lines
   └ main.HERMES_HOME /home/laia-arch/LAIA
 
-        - servidor_jmp
-        - laia_arch
+        - servidor-jmp
+        - laia-arch
 
 
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -1971,9 +1971,9 @@ print("total_chars=", body.get("total_chars"))
   │ import importlib.util, os, sys
   │ from pathlib import Path
   │ … +11 lines
-  └ active ['servidor_jmp', 'laia_arch', 'pixelcore']
-    [WORKSPACE ACTIVO: arete | MODO: all-indexes | EDITABLES: servidor_jmp, laia_arch, pixelcore]
-    {"error": "El workspace 'arete' es de solo lectura.", "active_workspaces": ["servidor_jmp", "laia_arch", "pixelcore"], "hint": "Usa
+  └ active ['servidor-jmp', 'laia-arch', 'pixelcore']
+    [WORKSPACE ACTIVO: arete | MODO: all-indexes | EDITABLES: servidor-jmp, laia-arch, pixelcore]
+    {"error": "El workspace 'arete' es de solo lectura.", "active_workspaces": ["servidor-jmp", "laia-arch", "pixelcore"], "hint": "Usa
     workspace_list_workspaces para ver los workspaces editables."}
 
 • Ran npm run build
@@ -1993,7 +1993,7 @@ transforming...✓ 1925 modules transformed.
   └ (no output)
 
 • Ran HERMES_HOME=/home/laia-arch/LAIA python3 scripts/show-injected.py | rg "WORKSPACE ACTIVO|EDITABLES"
-  └   [WORKSPACE ACTIVO: arete | MODO: all-indexes | EDITABLES: servidor_jmp, laia_arch, pixelcore]
+  └   [WORKSPACE ACTIVO: arete | MODO: all-indexes | EDITABLES: servidor-jmp, laia-arch, pixelcore]
 
 • Waited for background terminal
 
@@ -2017,7 +2017,7 @@ transforming...✓ 1925 modules transformed.
 
   Verificado ahora:
 
-  - Prompt diagnóstico muestra: EDITABLES: servidor_jmp, laia_arch, pixelcore
+  - Prompt diagnóstico muestra: EDITABLES: servidor-jmp, laia-arch, pixelcore
   - arete queda en readonly_workspaces.
   - Escritura por terminal/sqlite sobre arete queda bloqueada.
   - Escritura vía workspace_upsert_node sobre arete devuelve: El workspace 'arete' es de solo lectura.

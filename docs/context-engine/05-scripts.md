@@ -354,7 +354,7 @@ El script retorna (imprime) un diccionario con:
 |----|----------|-------|-----------|---------------|
 | `metodo-doyouwin` | ¿Cuáles son las 3 fases del Método DoYouWin? | `metodo doyouwin fases` | `doyouwin` | `02b-metodo-doyouwin` |
 | `pixelcore-infra` | Explícame la infraestructura de PixelCore | `infraestructura pixelcore` | `pixelcore` | `40-infraestructura` |
-| `laia-arch-honesty` | ¿Qué sabe laia_arch y qué no sabe todavía? | `arquitectura laia` | `laia_arch` | `00-index` |
+| `laia-arch-honesty` | ¿Qué sabe laia-arch y qué no sabe todavía? | `arquitectura laia` | `laia-arch` | `00-index` |
 | `pixelcore-servidor` | Relaciona PixelCore con Servidor_JMP | `pixelcore servidor infraestructura` | `pixelcore` | `40-infraestructura` |
 
 ### Que Valida Cada Caso

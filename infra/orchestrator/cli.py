@@ -194,7 +194,7 @@ def cmd_install_agent_runtime(args: argparse.Namespace, paths: config.Paths) -> 
                 "slug": args.slug,
                 "container": lxd.container_name(args.slug),
                 "status": "runtime-installed",
-                "runtime": "laia-agent-runtime",
+                "runtime": "laia-runtime",
                 "service": "laia-agent.service",
                 "workspace": "/opt/laia/workspaces/personal/workspace.db",
             },
@@ -346,7 +346,7 @@ def cmd_provision_agent(args: argparse.Namespace, paths: config.Paths) -> int:
             "slug": args.slug,
             "container": lxd.container_name(args.slug),
             "status": "provisioned",
-            "runtime": "laia-agent-runtime",
+            "runtime": "laia-runtime",
             "workspace": "/opt/laia/workspaces/personal/workspace.db",
         })
     return result.returncode

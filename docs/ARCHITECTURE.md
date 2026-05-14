@@ -22,7 +22,7 @@ Los agentes personales son **hijos de LAIA**, uno por usuario en contenedor LXD 
 | UI compartida | `laia-ui/packages/ui` | Oficial |
 | API compartida/types | `laia-ui/packages/shared` | Oficial |
 | Backend AGORA | `services/agora-backend` | Base inicial creada |
-| Agent Runtime | `services/laia-agent-runtime` | Oficial |
+| Agent Runtime | `services/laia-runtime` | Oficial |
 | Infra servidor | `infra/` | Orquestador + LXD + nginx |
 | Hermes core | `.laia-arch/` | Oficial como core tecnico |
 | WorkspaceStore | `workspace_store/` | Oficial |
@@ -94,7 +94,7 @@ Regla de ownership:
 ├── laia-ui/
 ├── services/
 │   ├── agora-backend/
-│   └── laia-agent-runtime/
+│   └── laia-runtime/
 ├── infra/
 │   ├── laiactl
 │   ├── orchestrator/

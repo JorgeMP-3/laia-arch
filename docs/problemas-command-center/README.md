@@ -61,9 +61,9 @@ command_center_spawn(
 4. Terminal pasa a estado "HTTP 404: Terminal not found"
 
 **Prompt inyectado (resumen):**
-- Leer el plan existente en workspace `laia_arch` (nodo `laia-tools-plan`)
+- Leer el plan existente en workspace `laia-arch` (nodo `laia-tools-plan`)
 - Inventariar los scripts en `/home/laia-arch/LAIA/.laia-arch/bin/`
-- Crear un plan expandido en `/home/laia-arch/LAIA/workspaces/laia_arch/code/laia-tools/PLAN_EXPANDIDO.md`
+- Crear un plan expandido en `/home/laia-arch/LAIA/workspaces/laia-arch/code/laia-tools/PLAN_EXPANDIDO.md`
 
 **Hipótesis:** El prompt era demasiado largo (1329 bytes) para injectar seguido, o el sandbox bwrap no permite que Claude Code ejecute operaciones de filesystem fuera de su working directory, o el proceso padre del PTY muere por alguna señal.
 

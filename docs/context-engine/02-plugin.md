@@ -7,8 +7,8 @@
 **Plugin Metadata:**
 - **Name:** `workspace-context`
 - **Version:** 3.0.0
-- **Plugin File:** `/Users/servidor_jmp/.hermes/plugins/workspace-context/__init__.py`
-- **Config File:** `/Users/servidor_jmp/.hermes/plugins/workspace-context/plugin.yaml`
+- **Plugin File:** `/Users/servidor-jmp/.hermes/plugins/workspace-context/__init__.py`
+- **Config File:** `/Users/servidor-jmp/.hermes/plugins/workspace-context/plugin.yaml`
 
 ### What It Provides
 

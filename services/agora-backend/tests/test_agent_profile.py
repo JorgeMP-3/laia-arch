@@ -37,7 +37,7 @@ FAKE_STATUS = {
     "slug": "jorge",
     "container": "laia-jorge",
     "runtime": "running",
-    "healthcheck": "laia-agent-runtime-ok",
+    "healthcheck": "laia-runtime-ok",
     "lxd_state": "RUNNING",
     "ipv4": "10.99.0.10",
     "service": "active",

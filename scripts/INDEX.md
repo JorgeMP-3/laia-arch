@@ -7,7 +7,7 @@ scripts globales de `$HERMES_HOME/scripts/` y `workspaces/{ws}/code/scripts/`.
 
 | Script | Descripción |
 |--------|-------------|
-| `scripts/_doc_context_engine.py` | Upsert full documentation for Context Engine nodes in laia_arch workspace. |
+| `scripts/_doc_context_engine.py` | Upsert full documentation for Context Engine nodes in laia-arch workspace. |
 | `scripts/agent-documenter.py` | Sincroniza la documentacion agentica DB-first de los workspaces Hermes. |
 | `scripts/agent-monitor.py` | Monitor legible de orquestacion agentica DB-first para Hermes. |
 | `scripts/ai-orchestrator.py` | Orquestador multi-IA DB-first para Hermes. |
@@ -57,7 +57,7 @@ scripts globales de `$HERMES_HOME/scripts/` y `workspaces/{ws}/code/scripts/`.
 |--------|-------------|
 | _(vacío — añadir scripts en code/scripts/)_ | |
 
-## laia_arch
+## laia-arch
 
 | Script | Descripción |
 |--------|-------------|
@@ -69,20 +69,20 @@ scripts globales de `$HERMES_HOME/scripts/` y `workspaces/{ws}/code/scripts/`.
 |--------|-------------|
 | `workspaces/pixelcore/code/scripts/applecore-v5/script.js` | script.js |
 
-## servidor_jmp
+## servidor-jmp
 
 | Script | Descripción |
 |--------|-------------|
-| `workspaces/servidor_jmp/code/scripts/proyecto-wordpress/deploy.sh` | deploy.sh — Despliega la tienda WordPress en el Mac mini |
-| `workspaces/servidor_jmp/code/scripts/server-scripts/combined.sh` | Combined Dashboard — runs sysinfo + dockerinfo + netinfo |
-| `workspaces/servidor_jmp/code/scripts/server-scripts/docker_monitor.py` | Real-time Docker Monitor - Cyberpunk Edition v2.0 |
-| `workspaces/servidor_jmp/code/scripts/server-scripts/dockerinfo.sh` | DOCKER INFO - Cyberpunk Dashboard |
-| `workspaces/servidor_jmp/code/scripts/server-scripts/monitor.py` | Combined Real-time Monitor - ALL IN ONE |
-| `workspaces/servidor_jmp/code/scripts/server-scripts/net_monitor.py` | Real-time Network Monitor - Cyberpunk Edition v2.0 |
-| `workspaces/servidor_jmp/code/scripts/server-scripts/netinfo.sh` | NETINFO.SH — Cyberpunk Network Dashboard for macOS / Mac mini |
-| `workspaces/servidor_jmp/code/scripts/server-scripts/sysinfo.sh` | ██████╗ ███████╗███████╗██╗   ██╗███████╗                    ║ |
-| `workspaces/servidor_jmp/code/scripts/server-scripts/sysinfo_monitor.py` | ╔══════════════════════════════════════════════════════════════════════════════╗ |
-| `workspaces/servidor_jmp/code/scripts/set-tunnel-token.sh` | Uso: ./set-tunnel-token.sh <NUEVO_TOKEN> |
+| `workspaces/servidor-jmp/code/scripts/proyecto-wordpress/deploy.sh` | deploy.sh — Despliega la tienda WordPress en el Mac mini |
+| `workspaces/servidor-jmp/code/scripts/server-scripts/combined.sh` | Combined Dashboard — runs sysinfo + dockerinfo + netinfo |
+| `workspaces/servidor-jmp/code/scripts/server-scripts/docker_monitor.py` | Real-time Docker Monitor - Cyberpunk Edition v2.0 |
+| `workspaces/servidor-jmp/code/scripts/server-scripts/dockerinfo.sh` | DOCKER INFO - Cyberpunk Dashboard |
+| `workspaces/servidor-jmp/code/scripts/server-scripts/monitor.py` | Combined Real-time Monitor - ALL IN ONE |
+| `workspaces/servidor-jmp/code/scripts/server-scripts/net_monitor.py` | Real-time Network Monitor - Cyberpunk Edition v2.0 |
+| `workspaces/servidor-jmp/code/scripts/server-scripts/netinfo.sh` | NETINFO.SH — Cyberpunk Network Dashboard for macOS / Mac mini |
+| `workspaces/servidor-jmp/code/scripts/server-scripts/sysinfo.sh` | ██████╗ ███████╗███████╗██╗   ██╗███████╗                    ║ |
+| `workspaces/servidor-jmp/code/scripts/server-scripts/sysinfo_monitor.py` | ╔══════════════════════════════════════════════════════════════════════════════╗ |
+| `workspaces/servidor-jmp/code/scripts/set-tunnel-token.sh` | Uso: ./set-tunnel-token.sh <NUEVO_TOKEN> |
 
 ---
 *Regenerado con `python3 $HERMES_HOME/scripts/index-scripts.py`.*

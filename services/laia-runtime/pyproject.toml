@@ -1,5 +1,5 @@
 [project]
-name = "laia-agent-runtime"
+name = "laia-runtime"
 version = "0.1.0"
 description = "LAIA personal container agent runtime"
 requires-python = ">=3.10"

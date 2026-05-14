@@ -4,7 +4,7 @@
 
 ```
 workspace_list_workspaces() -> active_workspaces: ["pixelcore"]
-# pero $HERMES_HOME/config.yaml dice: active_workspaces: ['pixelcore', 'laia_arch']
+# pero $HERMES_HOME/config.yaml dice: active_workspaces: ['pixelcore', 'laia-arch']
 ```
 
 ## Paso 1: Verificar archivo real
@@ -72,7 +72,7 @@ kill <pid>
 ```bash
 curl -X PUT http://localhost:8077/api/context-engine/config \
   -H "Content-Type: application/json" \
-  -d '{"active_workspaces": ["pixelcore", "laia_arch"]}'
+  -d '{"active_workspaces": ["pixelcore", "laia-arch"]}'
 ```
 Esto solo actualiza el backend, NO el gateway. Necesario combinar con Paso 4a.
 
