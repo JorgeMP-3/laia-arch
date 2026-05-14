@@ -1,157 +1,162 @@
-# LAIA — Arquitectura oficial del repositorio
+# LAIA — System Architecture
 
-Fecha: 2026-05-12
+## v2.0 (2026-05-14)
 
-Este documento fija la fuente oficial de cada parte del ecosistema para evitar duplicidad entre prototipos.
+## Architecture Overview
 
-## Modelo de producto
+```
+LAIA (parent agent)
+├── Context ARCH (host, admin total)
+│   └── Visible only by admin (Jorge)
+└── Context AGORA (container: laia-agora, coordinator)
+    └── Visible by all users via AGORA platform
+        │
+        ├── Agent "Nombrix" (child, laia-jorge)
+        ├── Agent "MariaBot" (child, laia-maria)
+        └── Agent "CarlosAI" (child, laia-carlos)
+```
 
-LAIA es un ecosistema de agentes con un **agente padre unico** (LAIA) que opera en dos contextos:
+## Directory Structure
 
-- **LAIA ARCH**: contexto admin. Vive en el host nativo. Control total del sistema, infraestructura, LXD, agentes, workspaces y seguridad. Solo accesible por el administrador.
-- **LAIA AGORA**: contexto coordinador. Vive en su propio contenedor LXD (`laia-agora`). Monitoriza el trabajo de los usuarios, asigna tareas via la plataforma AGORA y alerta a LAIA ARCH. NO puede modificar contenedores de usuarios. Accesible por todos los usuarios.
+```
+~/LAIA/                              # Project root
+├── .laia-core/                       # AI Engine (forked from Hermes 0.11.0)
+│   ├── laia                          # CLI entry point
+│   ├── laia_constants.py             # Path resolution (LAIA_HOME)
+│   ├── laia_paths.py                 # Path Registry module
+│   ├── laia_cli/                     # CLI subcommands
+│   ├── agent/                        # Agent internals (providers, memory, caching)
+│   ├── gateway/                      # Multi-platform messaging gateway
+│   │   └── run.py                    # Gateway orchestrator
+│   ├── tools/                        # 71 built-in tools
+│   ├── skills/                       # Built-in agent skills
+│   ├── plugins/                      # Core plugins (memory providers)
+│   ├── laia-ui-server/               # ARCH admin UI backend
+│   └── venv/                         # Python virtual environment
+│
+├── laia-ui/                          # Frontend monorepo (pnpm workspaces)
+│   ├── packages/arch-app/            # ARCH admin dashboard (React + Vite)
+│   ├── packages/agora-app/           # AGORA user platform (React + Vite)
+│   ├── packages/ui/                  # Shared design system
+│   └── packages/shared/              # Shared API types
+│
+├── services/                         # Backend services
+│   ├── agora-backend/                # AGORA platform API (FastAPI)
+│   │   ├── app/
+│   │   │   ├── main.py               # 30+ endpoints, serves SPA frontend
+│   │   │   ├── auth.py               # JWT + pbkdf2_hmac authentication
+│   │   │   ├── storage.py            # SQLite storage (agora.db)
+│   │   │   ├── coordinator.py        # LAIA AGORA monitor loop
+│   │   │   ├── monitor.py            # FleetMonitor health daemon
+│   │   │   ├── websocket.py          # Real-time push manager
+│   │   │   ├── orchestrator.py       # LXD agent orchestration
+│   │   │   ├── security.py           # Password hashing + JWT (stdlib)
+│   │   │   ├── database.py           # SQLite connection manager
+│   │   │   ├── logging.py            # JSON structured logging
+│   │   │   └── metrics.py            # Request counters
+│   │   └── tests/                    # 69 tests
+│   └── laia-runtime/                 # Per-container agent runtime
+│       └── src/laia_agent/
+│           ├── daemon.py             # Main loop + signal handling
+│           ├── tasks.py              # Task queue (13+ types)
+│           ├── profile.py            # Editable agent profile
+│           ├── workspace.py          # Personal workspace.db
+│           ├── plugins.py            # Plugin system
+│           └── health.py             # HTTP :9090/health
+│
+├── infra/                            # Infrastructure as Code
+│   ├── laiactl                       # CLI entry point (25+ commands)
+│   ├── bin/                          # Terminal toolkit (8 scripts)
+│   ├── pathd/                        # Atlas — Path Registry Daemon
+│   ├── orchestrator/                 # Python LXD orchestration
+│   ├── nginx/                        # Reverse proxy configs
+│   ├── lxd/                          # LXD profiles and scripts
+│   ├── systemd/                      # Service unit files
+│   ├── scripts/                      # Deploy and maintenance scripts
+│   └── docs/                         # Infrastructure docs
+│
+├── workspace_store/                  # Shared WorkspaceStore library
+├── plugins/                          # Host-level plugins (source)
+│   ├── workspace-context/            # DB-first memory provider
+│   └── README.md
+├── workspaces/                       # Workspace data (DB-first)
+│   ├── laia-ecosystem/               # This workspace
+│   ├── laia-arch/                    # Architecture docs
+│   ├── arete/                        # Arete project
+│   ├── doyouwin/                     # DoYouWin project
+│   ├── pixelcore/                    # PixelCore project
+│   ├── servidor-jmp/                 # Server docs
+│   └── demo-completo/                # Demo workspace
+├── skills/                           # Agent skill marketplace
+├── docs/                             # Documentation (API, CLI, Architecture, etc.)
+├── scripts/                          # Utility scripts
+├── archived/                         # Legacy versions (archived)
+├── Makefile                          # Standard dev/deploy targets
+├── CHANGELOG.md                      # Version history
+├── CONTRIBUTING.md                   # Developer onboarding
+├── SECURITY.md                       # Security policy
+└── .gitignore                        # Clean, organized
 
-Los agentes personales son **hijos de LAIA**, uno por usuario en contenedor LXD (`laia-{usuario}`). Cada usuario elige el nombre de su agente (NO puede llamarse "LAIA") y puede editar sus ficheros de comportamiento, skills, memories y plugins propios.
+~/.laia/                             # Runtime data (LAIA_HOME)
+├── config.yaml                       # Agent + project configuration
+├── .env                              # Environment secrets
+├── auth.json                         # Provider credentials
+├── .env.paths                        # Path registry snapshot (auto-generated)
+├── atlas/                            # Symlink farm (32 symlinks)
+├── plugins/                          # Installed plugins (workspace-context)
+├── workspace_store/                  # Vendored WorkspaceStore
+├── state.db                          # SQLite session database
+├── response_store.db                 # Response cache
+├── pathd.sock                        # Atlas daemon Unix socket
+├── sessions/                         # Session trajectories
+├── logs/                             # Agent + gateway logs
+├── backups/                          # Automated backups
+├── cache/                            # Model + media caches
+├── skills → ../LAIA/skills           # Symlink to repo skills
+└── state/                            # Daemon state (path-cache.json)
 
-## Fuentes oficiales
-
-| Area | Ruta oficial | Estado |
-|---|---|---|
-| UI ARCH | `laia-ui/packages/arch-app` | Oficial |
-| UI AGORA | `laia-ui/packages/agora-app` | Oficial |
-| UI compartida | `laia-ui/packages/ui` | Oficial |
-| API compartida/types | `laia-ui/packages/shared` | Oficial |
-| Backend AGORA | `services/agora-backend` | Base inicial creada |
-| Agent Runtime | `services/laia-runtime` | Oficial |
-| Infra servidor | `infra/` | Orquestador + LXD + nginx |
-| Hermes core | `.laia-arch/` | Oficial como core tecnico |
-| WorkspaceStore | `workspace_store/` | Oficial |
-| Plugin workspace-context | `plugins/workspace-context/` | Oficial (solo visible por LAIA ARCH) |
-| Workspaces DB-first | `workspaces/` | Oficial |
-
-## Prototipos y material legacy
-
-| Ruta | Clasificacion | Uso permitido |
-|---|---|---|
-| `laia-agora/` | Prototipo/legacy | Referencia visual/infra; no desarrollar ahi features nuevas. |
-| `workspaces/laia-ecosystem/code/agora/monorepo/` | Prototipo documental | Extraer ideas/config si sirven; no es base productiva. |
-| `.laia-arch/workspace-ui/` | Runtime servido de ARCH | Destino de despliegue para `arch-app/dist`; no editar UI fuente ahi. |
-| `hermes-agent-upstream-test/` | Upstream/test | Referencia de Hermes; no mezclar con LAIA productivo. |
-
-## Regla de desarrollo
-
-1. Toda UI nueva de ARCH/AGORA se desarrolla en `laia-ui`.
-2. Todo backend propio de AGORA se desarrolla en `services/agora-backend`.
-3. Toda configuracion de servidor va en `infra/`.
-4. Los datos productivos viven fuera del repo, bajo `/srv/laia`.
-5. Los agentes personales se implementan con LXD, no con Docker como estrategia principal.
-6. Docker puede usarse para servicios de app, pero no debe montar `.hermes`, `~/LAIA` ni Docker socket en AGORA produccion.
-7. Los plugins del host (`/home/laia-hermes/LAIA/plugins/`) NO son visibles para los agentes hijos.
-
-## Frontera de responsabilidades
-
-LAIA ARCH (contexto admin, host nativo):
-
-- administra todos los contenedores LXD, incluyendo `laia-agora`;
-- ejecuta `laiactl`;
-- crea, elimina, actualiza, reinicia y restaura agentes;
-- controla despliegues, networking, snapshots, limites y seguridad;
-- puede ver el estado global de todos los agentes;
-- recibe alertas de LAIA AGORA.
-
-LAIA AGORA (contexto coordinador, contenedor `laia-agora`):
-
-- monitoriza el estado de los agentes personales;
-- asigna tareas a traves de la plataforma AGORA;
-- gestiona el marketplace de skills;
-- envia alertas a LAIA ARCH;
-- NO ejecuta comandos en contenedores de usuarios;
-- NO modifica ficheros de agentes personales;
-- NO gestiona infraestructura.
-
-AGORA (plataforma web):
-
-- expone al usuario su propio agente personal;
-- permite editar nombre, perfil, skills, comportamiento, memories y plugins propios;
-- permite ver tareas asignadas por LAIA AGORA;
-- acceso al marketplace de skills;
-- no puede listar agentes ajenos;
-- no puede crear ni borrar contenedores;
-- no puede ejecutar operaciones globales de infraestructura.
-
-Regla de ownership:
-
-- `usuario jorge` -> contenedor `laia-jorge` -> agente "Nombrix" (nombre elegido por Jorge)
-- `usuario maria` -> contenedor `laia-maria` -> agente "MariaBot" (nombre elegido por Maria)
-- `coordinador` -> contenedor `laia-agora` -> LAIA AGORA
-- AGORA siempre debe validar la relacion usuario-contenedor antes de tocar runtime, perfil o workspace.
-
-## Topologia objetivo en servidor
-
-```text
-/home/laia-hermes/LAIA/
-├── .laia-arch/
-├── laia-ui/
-├── services/
-│   ├── agora-backend/
-│   └── laia-runtime/
-├── infra/
-│   ├── laiactl
-│   ├── orchestrator/
-│   ├── nginx/
-│   ├── systemd/
-│   ├── docker/
-│   └── lxd/
-├── workspace_store/
-├── plugins/
-└── workspaces/
-
-LXD containers:
-├── laia-agora      (LAIA AGORA — coordinador)
-├── laia-jorge      (agente personal de Jorge)
-├── laia-maria      (agente personal de Maria)
-└── laia-carlos     (agente personal de Carlos)
-
-/srv/laia/
-├── agora/
+/srv/laia/                           # Production data (outside repo)
+├── agora/                            # AGORA platform data
 │   ├── app-data/
-│   └── uploads/
-├── arch/
-│   └── state/
-├── agents/
-│   └── registry.json
-└── backups/
+│   └── frontend/dist/                # Built AGORA SPA
+├── state/                            # Production state
+├── agents/                           # Agent registry
+└── backups/                          # Production backups
 ```
 
-## Despliegue UI
+## Network Architecture
 
-ARCH:
+```
+Internet
+    │
+    ▼
+Cloudflare (DNS + SSL + WAF)
+    │ Cloudflare Tunnel
+    ▼
+cloudflared (host)
+    │
+    ▼
+nginx :80 (reverse proxy)
+    │
+    ├── laiajmp.org ──────► arete-backend :8000 (Node/PM2)
+    ├── app.laiajmp.org ──► arete-backend :8000
+    ├── tienda.laiajmp.org ► WordPress Docker :9000
+    └── agora.laiajmp.org ► /srv/laia/agora/frontend/dist
+                             /api/* → agora-backend :8088
 
-```bash
-cd /home/laia-hermes/LAIA/laia-ui
-pnpm build:arch
-rm -rf /home/laia-hermes/LAIA/.laia-arch/workspace-ui/frontend/dist
-cp -r /home/laia-hermes/LAIA/laia-ui/packages/arch-app/dist /home/laia-hermes/LAIA/.laia-arch/workspace-ui/frontend/dist
+Internal services:
+    workspace-ui :8077 (ARCH admin, FastAPI)
+    laia-gateway (multi-platform, host network)
+    postgresql :5432
 ```
 
-AGORA:
+## Key Rules
 
-```bash
-cd /home/laia-hermes/LAIA/laia-ui
-pnpm build:agora
-```
-
-AGORA aun necesita servicio/nginx oficial antes de desplegarse en produccion.
-
-## Siguiente bloque
-
-Completar `services/agora-backend` como backend de la plataforma AGORA:
-
-- auth basica y ownership usuario -> agente;
-- healthcheck;
-- endpoints para perfil, workspace y tareas del agente propio;
-- endpoints del coordinador (LAIA AGORA);
-- lectura de estado del agente propio;
-- bloqueo explicito de operaciones globales.
-
-Las operaciones globales sobre LXD y el fleet de agentes quedan del lado de LAIA ARCH.
+1. **LAIA** is the parent agent. Not duplicated.
+2. **No agent** may be named "LAIA" (reserved for coordinator).
+3. **LAIA AGORA** monitors but does NOT modify user containers.
+4. **Child agents** do NOT see host plugins.
+5. **Child agents** do NOT see LAIA ARCH.
+6. **All paths** resolved through Atlas Path Registry (`config.yaml → paths:`).
+7. **All secrets** in `~/.laia/` with `chmod 600`, never in repo.
+8. **Runtime data** in `~/.laia/`, production data in `/srv/laia/`.
