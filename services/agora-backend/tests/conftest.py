@@ -1,12 +1,12 @@
-import os, tempfile, pytest
+import os
+import shutil
+import tempfile
 
-@pytest.fixture(autouse=True)
-def _force_dev_env(monkeypatch):
-    """Force tests to use a temp dir, not production /srv/laia/."""
-    tmp = tempfile.mkdtemp(prefix="agora_test_")
-    monkeypatch.setenv("AGORA_ENV", "dev")
-    monkeypatch.setenv("AGORA_DATA_DIR", tmp)
-    monkeypatch.setenv("AGORA_DEV_DATA_DIR", tmp)
-    yield
-    import shutil
-    shutil.rmtree(tmp, ignore_errors=True)
+# Must run BEFORE any app imports
+_test_dir = tempfile.mkdtemp(prefix="agora_test_")
+os.environ["AGORA_ENV"] = "dev"
+os.environ["AGORA_DATA_DIR"] = _test_dir
+os.environ["AGORA_DEV_DATA_DIR"] = _test_dir
+
+import atexit
+atexit.register(lambda: shutil.rmtree(_test_dir, ignore_errors=True))
