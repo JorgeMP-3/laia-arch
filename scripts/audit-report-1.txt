@@ -1,0 +1,606 @@
+=== Agente MiniMax 1: Paths Hardcodeados ===
+Fecha: 2026-05-04
+Total hallazgos: 374
+  (9 Pattern 1 en .laia-arch/scripts/update-services.sh + 363 Pattern 2/3 en archivos Python,
+   con 184 en .laia-arch/ — mismos archivos que hermes-agent/ via symlink — y 173 en
+   hermes-agent-upstream-test/ y 6 adicionales en skills/)
+
+NOTA ESTRUCTURAL: /home/laia-arch/LAIA/hermes-agent es un SYMLINK a .laia-arch/.
+Los hallazgos listados bajo ".laia-arch/" afectan también a hermes-agent/ por ser el mismo inode.
+hermes-agent-upstream-test/ es una copia separada con los mismos problemas.
+Se listan los hallazgos una sola vez usando la ruta canonica (.laia-arch/ o skills/).
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+PATRON 1 -- /home/laia-arch hardcodeado en shell (9 lineas, 1 archivo)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+[1] .laia-arch/scripts/update-services.sh:9
+    Tipo: /home/laia-arch hardcodeado
+    Fragmento: WorkingDirectory=/home/laia-arch/LAIA/.laia-arch
+
+[2] .laia-arch/scripts/update-services.sh:10
+    Tipo: /home/laia-arch hardcodeado
+    Fragmento: ExecStart=/home/laia-arch/LAIA/.laia-arch/venv/bin/hermes gateway run
+
+[3] .laia-arch/scripts/update-services.sh:13
+    Tipo: /home/laia-arch hardcodeado
+    Fragmento: Environment=HOME=/home/laia-arch
+
+[4] .laia-arch/scripts/update-services.sh:14
+    Tipo: /home/laia-arch hardcodeado
+    Fragmento: Environment=HERMES_HOME=/home/laia-arch/LAIA
+
+[5] .laia-arch/scripts/update-services.sh:27
+    Tipo: /home/laia-arch hardcodeado
+    Fragmento: WorkingDirectory=/home/laia-arch/LAIA/.laia-arch/workspace-ui/backend
+
+[6] .laia-arch/scripts/update-services.sh:28
+    Tipo: /home/laia-arch hardcodeado
+    Fragmento: ExecStart=/home/laia-arch/LAIA/.laia-arch/venv/bin/uvicorn main:app --host 0.0.0.0 --port 8077
+
+[7] .laia-arch/scripts/update-services.sh:31
+    Tipo: /home/laia-arch hardcodeado
+    Fragmento: Environment=HOME=/home/laia-arch
+
+[8] .laia-arch/scripts/update-services.sh:32
+    Tipo: /home/laia-arch hardcodeado
+    Fragmento: Environment=HERMES_HOME=/home/laia-arch/LAIA
+
+[9] .laia-arch/scripts/update-services.sh:33
+    Tipo: /home/laia-arch hardcodeado
+    Fragmento: Environment=HERMES_VENV=/home/laia-arch/LAIA/.laia-arch/venv
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+PATRON 2 -- ~/.hermes sin env var en la misma linea (codigo Python)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+SUBCATEGORIA 2a -- Strings literales con "~/.hermes" en codigo ejecutable
+(print, return, f-strings, diccionarios, help= de argparse, etc.)
+
+[10] .laia-arch/agent/auxiliary_client.py:1773
+    Tipo: ~/.hermes sin env var
+    Fragmento: "OPENAI_BASE_URL from ~/.hermes/.env",
+
+[11] .laia-arch/agent/credential_sources.py:180
+    Tipo: ~/.hermes sin env var
+    Fragmento: f"(not in ~/.hermes/.env).",
+
+[12] .laia-arch/agent/credential_sources.py:387
+    Tipo: ~/.hermes sin env var
+    Fragmento: description="~/.hermes/.anthropic_oauth.json",
+
+[13] .laia-arch/agent/curator.py:279
+    Tipo: ~/.hermes sin env var
+    Fragmento: "into ~/.hermes/skills/.archive/) is the maximum destructive action. "
+
+[14] .laia-arch/agent/curator.py:323
+    Tipo: ~/.hermes sin env var
+    Fragmento: "~/.hermes/skills/<umbrella>/references/ && mv ... <umbrella>/"
+
+[15] .laia-arch/agent/curator.py:519
+    Tipo: ~/.hermes sin env var
+    Fragmento: lines.append("_Archived skills are at `~/.hermes/skills/.archive/`. "
+
+[16] .laia-arch/agent/curator.py:562
+    Tipo: ~/.hermes sin env var
+    Fragmento: lines.append("- All archives live under `~/.hermes/skills/.archive/` and are recoverable by `mv`")
+
+[17] .laia-arch/agent/gemini_native_adapter.py:807
+    Tipo: ~/.hermes sin env var
+    Fragmento: "Set GOOGLE_API_KEY or GEMINI_API_KEY in your environment / ~/.hermes/.env "
+
+[18] .laia-arch/agent/google_oauth.py:366
+    Tipo: ~/.hermes sin env var
+    Fragmento: "  2. Set HERMES_GEMINI_CLIENT_ID and HERMES_GEMINI_CLIENT_SECRET in ~/.hermes/.env\n"
+
+[19] .laia-arch/gateway/platforms/base.py:393
+    Tipo: ~/.hermes sin env var
+    Fragmento: "Load this skill in the local CLI to be prompted, or add the key to ~/.hermes/.env manually."
+
+[20] .laia-arch/gateway/run.py:2378
+    Tipo: ~/.hermes sin env var
+    Fragmento: "Set GATEWAY_ALLOW_ALL_USERS=true in ~/.hermes/.env to allow open access, "
+
+[21] .laia-arch/hermes_cli/auth.py:1262
+    Tipo: ~/.hermes sin env var
+    Fragmento: "OPENAI_API_KEY, etc.) in ~/.hermes/.env.",
+
+[22] .laia-arch/hermes_cli/auth.py:2070
+    Tipo: ~/.hermes sin env var
+    Fragmento: print("Saved HERMES_SPOTIFY_CLIENT_ID to ~/.hermes/.env")
+
+[23] .laia-arch/hermes_cli/auth.py:2638
+    Tipo: ~/.hermes sin env var
+    Fragmento: "~/.hermes/auth.json) called POST /api/oauth/token with Hermes's "
+
+[24] .laia-arch/hermes_cli/claw.py:475
+    Tipo: ~/.hermes sin env var
+    Fragmento: "Each conflict is an item whose target already exists in ~/.hermes/. "
+
+[25] .laia-arch/hermes_cli/config.py:2819
+    Tipo: ~/.hermes sin env var
+    Fragmento: hint_path = os.environ.get("HERMES_HOME", "~/.hermes")
+
+[26] .laia-arch/hermes_cli/doctor.py:430
+    Tipo: ~/.hermes sin env var
+    Fragmento: "(check ~/.hermes/.env or run 'hermes setup')",
+
+[27] .laia-arch/hermes_cli/gateway.py:3211
+    Tipo: ~/.hermes sin env var
+    Fragmento: print_info("  3. Hermes will store the returned account_id/token in ~/.hermes/.env.")
+
+[28] .laia-arch/hermes_cli/gateway.py:3970
+    Tipo: ~/.hermes sin env var
+    Fragmento: print("  nohup hermes gateway run > ~/.hermes/logs/gateway.log 2>&1 &  # background")
+
+[29] .laia-arch/hermes_cli/gateway.py:4035
+    Tipo: ~/.hermes sin env var
+    Fragmento: print("  nohup hermes gateway run > ~/.hermes/logs/gateway.log 2>&1 &  # background")
+
+[30] .laia-arch/hermes_cli/gateway.py:4238
+    Tipo: ~/.hermes sin env var
+    Fragmento: print("  nohup hermes gateway run > ~/.hermes/logs/gateway.log 2>&1 &  # Best-effort background start")
+
+[31] .laia-arch/hermes_cli/gateway.py:4241
+    Tipo: ~/.hermes sin env var
+    Fragmento: print("  nohup hermes gateway run > ~/.hermes/logs/gateway.log 2>&1 &  # background")
+
+[32] .laia-arch/hermes_cli/hooks.py:58
+    Tipo: ~/.hermes sin env var
+    Fragmento: print("No shell hooks configured in ~/.hermes/config.yaml.")
+
+[33] .laia-arch/hermes_cli/main.py:7518
+    Tipo: ~/.hermes sin env var
+    Fragmento: print(f"Switched to: default (~/.hermes)")
+
+[34] .laia-arch/hermes_cli/main.py:7948
+    Tipo: ~/.hermes sin env var
+    Fragmento: help="Ignore ~/.hermes/config.yaml and fall back to built-in defaults..."
+
+[35] .laia-arch/hermes_cli/main.py:8080
+    Tipo: ~/.hermes sin env var
+    Fragmento: help="Ignore ~/.hermes/config.yaml and fall back to built-in defaults..."
+
+[36] .laia-arch/hermes_cli/main.py:8757
+    Tipo: ~/.hermes sin env var
+    Fragmento: "Inspect shell-script hooks declared in ~/.hermes/config.yaml, "
+
+[37] .laia-arch/hermes_cli/main.py:8759
+    Tipo: ~/.hermes sin env var
+    Fragmento: "consent allowlist at ~/.hermes/shell-hooks-allowlist.json."
+
+[38] .laia-arch/hermes_cli/main.py:9132
+    Tipo: ~/.hermes sin env var
+    Fragmento: "Clear a bundled skill's entry from the sync manifest (~/.hermes/skills/.bundled_manifest) "
+
+[39] .laia-arch/hermes_cli/main.py:9883
+    Tipo: ~/.hermes sin env var
+    Fragmento: help="Skip the pre-migration zip snapshot of ~/.hermes/ (by default a "
+
+[40] .laia-arch/hermes_cli/main.py:9884
+    Tipo: ~/.hermes sin env var
+    Fragmento: "single restore-point archive is written to ~/.hermes/backups/ "
+
+[41] .laia-arch/hermes_cli/memory_setup.py:229
+    Tipo: ~/.hermes sin env var
+    Fragmento: print("  Install a plugin to ~/.hermes/plugins/ and try again.\n")
+
+[42] .laia-arch/hermes_cli/memory_setup.py:433
+    Tipo: ~/.hermes sin env var
+    Fragmento: print(f"  Install the '{provider_name}' memory plugin to ~/.hermes/plugins/")
+
+[43] .laia-arch/hermes_cli/profiles.py:404
+    Tipo: ~/.hermes sin env var
+    Fragmento: "Cannot create a profile named 'default' -- it is the built-in profile (~/.hermes)."
+
+[44] .laia-arch/hermes_cli/profiles.py:511
+    Tipo: ~/.hermes sin env var
+    Fragmento: "Cannot delete the default profile (~/.hermes).\n"
+
+[45] .laia-arch/hermes_cli/profiles.py:921
+    Tipo: ~/.hermes sin env var
+    Fragmento: "Cannot import as 'default' -- that is the built-in root profile (~/.hermes). "
+
+[46] .laia-arch/hermes_cli/runtime_provider.py:710
+    Tipo: ~/.hermes sin env var
+    Fragmento: "~/.hermes/.env or run 'hermes model' to configure."
+
+[47] .laia-arch/hermes_cli/setup.py:1127
+    Tipo: ~/.hermes sin env var
+    Fragmento: "Direct OpenAI credentials are still configured and may take precedence until removed from ~/.hermes/.env."
+
+[48] .laia-arch/hermes_cli/skills_hub.py:228
+    Tipo: ~/.hermes sin env var
+    Fragmento: "[bold]Category[/] [dim](optional -- press Enter to install flat at ~/.hermes/skills/<name>/)[/]"
+
+[49] .laia-arch/hermes_cli/tips.py:215
+    Tipo: ~/.hermes sin env var
+    Fragmento: "SOUL.md at ~/.hermes/SOUL.md is the agent's primary identity...",
+
+[50] .laia-arch/hermes_cli/tips.py:236
+    Tipo: ~/.hermes sin env var
+    Fragmento: "Checkpoints use shadow repos in ~/.hermes/checkpoints/ -- your project's .git is never touched.",
+
+[51] .laia-arch/hermes_cli/tips.py:267
+    Tipo: ~/.hermes sin env var
+    Fragmento: "Cron scripts live in ~/.hermes/scripts/ and run before the agent...",
+
+[52] .laia-arch/hermes_cli/tips.py:270
+    Tipo: ~/.hermes sin env var
+    Fragmento: "SOUL.md is auto-seeded with a default personality on first run. Edit ~/.hermes/SOUL.md to customize.",
+
+[53] .laia-arch/hermes_cli/tips.py:293
+    Tipo: ~/.hermes sin env var
+    Fragmento: "The skills audit log at ~/.hermes/skills/.hub/audit.log tracks every install and removal operation.",
+
+[54] .laia-arch/hermes_cli/tips.py:299
+    Tipo: ~/.hermes sin env var
+    Fragmento: "Every interrupt during an agent run is logged to ~/.hermes/interrupt_debug.log with timestamps.",
+
+[55] .laia-arch/hermes_cli/tips.py:331
+    Tipo: ~/.hermes sin env var
+    Fragmento: "MCP ${ENV_VAR} placeholders in config are resolved at server spawn -- including vars from ~/.hermes/.env.",
+
+[56] .laia-arch/hermes_cli/tips.py:333
+    Tipo: ~/.hermes sin env var
+    Fragmento: "The skills quarantine at ~/.hermes/skills/.hub/quarantine/ holds skills pending security review.",
+
+[57] .laia-arch/optional-skills/migration/openclaw-migration/scripts/openclaw_to_hermes.py:76
+    Tipo: ~/.hermes sin env var
+    Fragmento: "description": "Copy OpenClaw skills into ~/.hermes/skills/openclaw-imports/.",
+
+[58] .laia-arch/optional-skills/migration/openclaw-migration/scripts/openclaw_to_hermes.py:80
+    Tipo: ~/.hermes sin env var
+    Fragmento: "description": "Copy compatible workspace TTS assets into ~/.hermes/tts/.",
+
+[59] .laia-arch/optional-skills/migration/openclaw-migration/scripts/openclaw_to_hermes.py:2949
+    Tipo: ~/.hermes sin env var
+    Fragmento: "- Review `~/.hermes/config.yaml` for any adjustments",
+
+[60] .laia-arch/optional-skills/migration/openclaw-migration/scripts/openclaw_to_hermes.py:3070
+    Tipo: ~/.hermes sin env var -- STRING CONCATENACION ACTIVA (CRITICO)
+    Fragmento: dest = "~/.hermes/" + dest[len(str(report["target_root"])) + 1:]
+
+[61] .laia-arch/optional-skills/migration/openclaw-migration/scripts/openclaw_to_hermes.py:3116
+    Tipo: ~/.hermes sin env var
+    Fragmento: print("    1. Review ~/.hermes/config.yaml")
+
+[62] .laia-arch/optional-skills/productivity/canvas/scripts/canvas_api.py:33
+    Tipo: ~/.hermes sin env var
+    Fragmento: "Set them in ~/.hermes/.env or export them in your shell.\n"
+
+[63] .laia-arch/optional-skills/productivity/telephony/scripts/telephony.py:72
+    Tipo: ~/.hermes sin env var -- USADO COMO PATH REAL (CRITICO)
+    Fragmento: return Path(os.environ.get("HERMES_HOME", "~/.hermes")).expanduser()
+
+[64] .laia-arch/optional-skills/productivity/telephony/scripts/telephony.py:289
+    Tipo: ~/.hermes sin env var
+    Fragmento: "TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN in ~/.hermes/.env."
+
+[65] .laia-arch/optional-skills/productivity/telephony/scripts/telephony.py:423
+    Tipo: ~/.hermes sin env var
+    Fragmento: "'twilio-set-default', or set TWILIO_PHONE_NUMBER in ~/.hermes/.env."
+
+[66] .laia-arch/optional-skills/productivity/telephony/scripts/telephony.py:759
+    Tipo: ~/.hermes sin env var
+    Fragmento: "Vapi is not configured. Use 'save-vapi' or set VAPI_API_KEY in ~/.hermes/.env first."
+
+[67] .laia-arch/optional-skills/productivity/telephony/scripts/telephony.py:806
+    Tipo: ~/.hermes sin env var
+    Fragmento: "Bland.ai is not configured. Use 'save-bland' or set BLAND_API_KEY in ~/.hermes/.env."
+
+[68] .laia-arch/optional-skills/productivity/telephony/scripts/telephony.py:884
+    Tipo: ~/.hermes sin env var
+    Fragmento: "Vapi is not configured. Use 'save-vapi' or set VAPI_API_KEY in ~/.hermes/.env."
+
+[69] .laia-arch/optional-skills/productivity/telephony/scripts/telephony.py:890
+    Tipo: ~/.hermes sin env var
+    Fragmento: "'vapi-import-twilio --save-env' or set VAPI_PHONE_NUMBER_ID in ~/.hermes/.env."
+
+[70] .laia-arch/optional-skills/productivity/telephony/scripts/telephony.py:1094
+    Tipo: ~/.hermes sin env var
+    Fragmento: "message": "Twilio credentials saved to ~/.hermes/.env.",
+
+[71] .laia-arch/optional-skills/productivity/telephony/scripts/telephony.py:1114
+    Tipo: ~/.hermes sin env var
+    Fragmento: "message": "Bland.ai configuration saved to ~/.hermes/.env.",
+
+[72] .laia-arch/optional-skills/productivity/telephony/scripts/telephony.py:1141
+    Tipo: ~/.hermes sin env var
+    Fragmento: "message": "Vapi configuration saved to ~/.hermes/.env.",
+
+[73] .laia-arch/optional-skills/productivity/telephony/scripts/telephony.py:1154
+    Tipo: ~/.hermes sin env var
+    Fragmento: p = sub.add_parser("save-twilio", help="Save Twilio credentials to ~/.hermes/.env")
+
+[74] .laia-arch/optional-skills/productivity/telephony/scripts/telephony.py:1160
+    Tipo: ~/.hermes sin env var
+    Fragmento: p = sub.add_parser("save-bland", help="Save Bland.ai settings to ~/.hermes/.env")
+
+[75] .laia-arch/optional-skills/productivity/telephony/scripts/telephony.py:1164
+    Tipo: ~/.hermes sin env var
+    Fragmento: p = sub.add_parser("save-vapi", help="Save Vapi settings to ~/.hermes/.env")
+
+[76] .laia-arch/optional-skills/productivity/telephony/scripts/telephony.py:1315
+    Tipo: ~/.hermes sin env var
+    Fragmento: "or set PHONE_PROVIDER in ~/.hermes/.env."
+
+[77] .laia-arch/optional-skills/productivity/telephony/scripts/telephony.py:1325
+    Tipo: ~/.hermes sin env var
+    Fragmento: "or set PHONE_PROVIDER in ~/.hermes/.env."
+
+[78] .laia-arch/rl_cli.py:300
+    Tipo: ~/.hermes sin env var
+    Fragmento: print("   Add them to ~/.hermes/.env")
+
+[79] .laia-arch/scripts/scripts/_doc_context_engine.py:892
+    Tipo: ~/.hermes sin env var -- STRING ASIGNADA COMO VARIABLE DE RUTA (CRITICO)
+    Fragmento: backup_dir = "~/.hermes/backups/legacy-workspaces/"
+
+[80] .laia-arch/scripts/scripts/ai-orchestrator.py:600
+    Tipo: ~/.hermes sin env var
+    Fragmento: sub.add_parser("init-config", help="Crear ~/.hermes/ai-agents.json de ejemplo")
+
+[81] .laia-arch/scripts/scripts/delete-workspace.py:86
+    Tipo: ~/.hermes sin env var -- F-STRING EN COMANDO EJECUTADO (CRITICO)
+    Fragmento: f"python3 ~/.hermes/scripts/delete-workspace.py --workspace {workspace} "
+
+[82] .laia-arch/scripts/scripts/index-scripts.py:112
+    Tipo: ~/.hermes sin env var
+    Fragmento: "scripts globales de `~/.hermes/scripts/` y `workspaces/{ws}/code/scripts/`.",
+
+[83] .laia-arch/scripts/scripts/index-scripts.py:121
+    Tipo: ~/.hermes sin env var
+    Fragmento: lines.extend(["---", "*Regenerado con `python3 ~/.hermes/scripts/index-scripts.py`.*", ""])
+
+[84] .laia-arch/tools/code_execution_tool.py:1540
+    Tipo: os.path.expanduser("~/.hermes") sin env var -- EXPANSION DIRECTA DE PATH (CRITICO)
+    Fragmento: "(os.path.expanduser('~/.hermes/.env')) or terminal()/read_file() for user files."
+
+[85] .laia-arch/tools/command_center_tool.py:54
+    Tipo: ~/.hermes sin env var
+    Fragmento: "Is workspace-ui running? Start with: cd ~/.hermes/workspace-ui/backend && uvicorn main:app --port 8077"
+
+[86] .laia-arch/tools/command_center_tool.py:159
+    Tipo: ~/.hermes sin env var
+    Fragmento: "description": "Working directory for the terminal (absolute path). Defaults to ~/.hermes.",
+
+[87] .laia-arch/tools/cronjob_tools.py:194
+    Tipo: ~/.hermes sin env var -- F-STRING EN MENSAJE DE ERROR OPERACIONAL (CRITICO)
+    Fragmento: f"Script path must be relative to ~/.hermes/scripts/. "
+
+[88] .laia-arch/tools/cronjob_tools.py:196
+    Tipo: ~/.hermes sin env var -- F-STRING EN MENSAJE DE ERROR OPERACIONAL (CRITICO)
+    Fragmento: f"Place scripts in ~/.hermes/scripts/ and use just the filename."
+
+[89] .laia-arch/tools/mcp_tool.py:1647
+    Tipo: ~/.hermes sin env var -- F-STRING EN MENSAJE DE ERROR (CRITICO)
+    Fragmento: f"file under ~/.hermes/mcp-tokens/ and restart). Do NOT retry "
+
+[90] .laia-arch/tools/rl_training_tool.py:736
+    Tipo: ~/.hermes sin env var -- VALOR EN DICT DE RESPUESTA DE API (CRITICO)
+    Fragmento: "error": "TINKER_API_KEY not set. Add it to ~/.hermes/.env",
+
+[91] .laia-arch/tools/send_message_tool.py:252
+    Tipo: ~/.hermes sin env var -- F-STRING EN RETORNO DE HERRAMIENTA (CRITICO)
+    Fragmento: return tool_error(f"Platform not configured. Set up credentials in ~/.hermes/config.yaml or environment variables.")
+
+[92] .laia-arch/tools/send_message_tool.py:254
+    Tipo: ~/.hermes sin env var -- F-STRING EN RETORNO DE HERRAMIENTA (CRITICO)
+    Fragmento: return tool_error(f"Platform not configured. Set up credentials in ~/.hermes/config.yaml or environment variables.")
+
+[93] .laia-arch/tools/skills_sync.py:420
+    Tipo: ~/.hermes sin env var
+    Fragmento: print("Syncing bundled skills into ~/.hermes/skills/ ...")
+
+[94] .laia-arch/tools/skills_tool.py:1037
+    Tipo: ~/.hermes sin env var -- F-STRING EN APPEND DE ADVERTENCIAS (CRITICO)
+    Fragmento: _warnings.append(f"skill file is outside the trusted skills directory (~/.hermes/skills/): {skill_md}")
+
+[95] .laia-arch/tools/terminal_tool.py:967
+    Tipo: ~/.hermes sin env var -- F-STRING EN MENSAJE DE ERROR (CRITICO)
+    Fragmento: f"Check ~/.hermes/.env or environment variables."
+
+SUBCATEGORIA 2b -- os.path.expanduser("~/.hermes") en codigo sin env var
+
+[96] .laia-arch/agent/file_safety.py:16
+    Tipo: os.path.expanduser("~/.hermes") sin env var -- PATH DIRECTO (CRITICO)
+    Fragmento: return Path(os.path.expanduser("~/.hermes"))
+
+[97] .laia-arch/skills/red-teaming/godmode/scripts/godmode_race.py:10
+    Tipo: os.path.expanduser("~/.hermes") -- como fallback con HERMES_HOME
+    Fragmento: exec(open(os.path.join(os.environ.get("HERMES_HOME", os.path.expanduser("~/.hermes")), ...)).read())
+
+[98] .laia-arch/skills/red-teaming/godmode/scripts/load_godmode.py:6
+    Tipo: os.path.expanduser("~/.hermes") -- como fallback con HERMES_HOME
+    Fragmento: os.path.join(os.environ.get("HERMES_HOME", os.path.expanduser("~/.hermes")), "skills/...")
+
+[99] .laia-arch/skills/red-teaming/godmode/scripts/parseltongue.py:14
+    Tipo: os.path.expanduser("~/.hermes") -- como fallback con HERMES_HOME
+    Fragmento: exec(open(os.path.join(os.environ.get("HERMES_HOME", os.path.expanduser("~/.hermes")), ...)).read())
+
+[100] skills/red-teaming/godmode/scripts/auto_jailbreak.py:10
+    Tipo: os.path.expanduser("~/.hermes") -- como fallback con HERMES_HOME (skills/ independiente)
+    Fragmento: os.path.join(os.environ.get("HERMES_HOME", os.path.expanduser("~/.hermes")), "skills/...")
+
+[101] skills/red-teaming/godmode/scripts/godmode_race.py:10
+    Tipo: os.path.expanduser("~/.hermes") -- como fallback con HERMES_HOME
+    Fragmento: exec(open(os.path.join(os.environ.get("HERMES_HOME", os.path.expanduser("~/.hermes")), ...)).read())
+
+[102] skills/red-teaming/godmode/scripts/load_godmode.py:6
+    Tipo: os.path.expanduser("~/.hermes") -- como fallback con HERMES_HOME
+    Fragmento: os.path.join(os.environ.get("HERMES_HOME", os.path.expanduser("~/.hermes")), "skills/...")
+
+[103] skills/red-teaming/godmode/scripts/parseltongue.py:14
+    Tipo: os.path.expanduser("~/.hermes") -- como fallback con HERMES_HOME
+    Fragmento: exec(open(os.path.join(os.environ.get("HERMES_HOME", os.path.expanduser("~/.hermes")), ...)).read())
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+PATRON 3 -- Path.home() / ".hermes" sin env var en la misma linea
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+[104] .laia-arch/hermes_constants.py:18
+    Tipo: Path.home()/.hermes sin env var -- FALLBACK EN FUNCION CENTRAL (val leido en linea anterior)
+    Fragmento: return Path(val) if val else Path.home() / ".hermes"
+
+[105] .laia-arch/hermes_constants.py:37
+    Tipo: Path.home()/.hermes sin env var -- REFERENCIA PARA COMPARACION (borderline)
+    Fragmento: native_home = Path.home() / ".hermes"
+
+[106] .laia-arch/hermes_cli/auth.py:735
+    Tipo: Path.home()/.hermes sin env var -- PATH DIRECTO EN CODIGO DE PRODUCCION (CRITICO)
+    Fragmento: real_home_auth = (Path.home() / ".hermes" / "auth.json").resolve(strict=False)
+
+[107] .laia-arch/hermes_cli/gateway.py:1512
+    Tipo: Path.home()/.hermes sin env var -- PATH DIRECTO EN LOGICA DE MIGRACION (CRITICO)
+    Fragmento: current_default = (Path.home() / ".hermes").resolve()
+
+[108] .laia-arch/hermes_cli/slack_cli.py:131
+    Tipo: Path.home()/.hermes sin env var -- PATH FALLBACK SIN get_hermes_home() (CRITICO)
+    Fragmento: target = Path.home() / ".hermes" / "slack-manifest.json"
+
+[109] .laia-arch/plugins/disk-cleanup/disk_cleanup.py:38
+    Tipo: Path.home()/.hermes sin env var -- FALLBACK EN EXCEPT BLOCK (borderline)
+    Fragmento: return Path(val).resolve() if val else (Path.home() / ".hermes").resolve()
+
+[110] .laia-arch/plugins/memory/honcho/client.py:76
+    Tipo: Path.home()/.hermes sin env var -- PATH DE FALLBACK SECUNDARIO
+    Fragmento: default_path = Path.home() / ".hermes" / "honcho.json"
+
+[111] .laia-arch/optional-skills/migration/openclaw-migration/scripts/openclaw_to_hermes.py:2963
+    Tipo: Path.home()/.hermes sin env var -- VALOR DEFAULT EN argparse
+    Fragmento: parser.add_argument("--target", default=str(Path.home() / ".hermes"), help="Hermes home directory")
+
+[112] .laia-arch/skills/productivity/google-workspace/scripts/_hermes_home.py:32
+    Tipo: Path.home()/.hermes sin env var -- FALLBACK EN FUNCION get_hermes_home() LOCAL
+    Fragmento: return Path(val) if val else Path.home() / ".hermes"
+
+[113] .laia-arch/skills/skills/productivity/google-workspace/scripts/_hermes_home.py:32
+    Tipo: Path.home()/.hermes sin env var -- DUPLICADO EN skills/skills/
+    Fragmento: return Path(val) if val else Path.home() / ".hermes"
+
+[114] skills/productivity/google-workspace/scripts/_hermes_home.py:32
+    Tipo: Path.home()/.hermes sin env var -- TERCERA COPIA EN skills/
+    Fragmento: return Path(val) if val else Path.home() / ".hermes"
+
+[115] .laia-arch/workspace-ui/seed_demo.py:38
+    Tipo: Path.home()/.hermes sin env var -- PATH DIRECTO EN SEED SCRIPT (CRITICO)
+    Fragmento: ws_path = pathlib.Path.home() / ".hermes" / "workspaces" / "demo-completo"
+
+HALLAZGOS EN hermes-agent-upstream-test/ (COPIA SEPARADA - MISMOS PROBLEMAS):
+Los siguientes son los mas criticos de la copia upstream-test:
+
+[116] hermes-agent-upstream-test/agent/file_safety.py:16
+    Tipo: os.path.expanduser("~/.hermes") sin env var -- PATH DIRECTO (CRITICO)
+    Fragmento: return Path(os.path.expanduser("~/.hermes"))
+
+[117] hermes-agent-upstream-test/hermes_cli/auth.py:735
+    Tipo: Path.home()/.hermes sin env var -- PATH DIRECTO (CRITICO)
+    Fragmento: real_home_auth = (Path.home() / ".hermes" / "auth.json").resolve(strict=False)
+
+[118] hermes-agent-upstream-test/hermes_cli/slack_cli.py:131
+    Tipo: Path.home()/.hermes sin env var (CRITICO)
+    Fragmento: target = Path.home() / ".hermes" / "slack-manifest.json"
+
+[119] hermes-agent-upstream-test/scripts/profile-tui.py:41
+    Tipo: Path.home()/.hermes sin env var -- SIN PROTECCION HERMES_HOME (CRITICO)
+    Fragmento: DEFAULT_STATE_DB = Path.home() / ".hermes" / "state.db"
+
+[120] hermes-agent-upstream-test/plugins/memory/honcho/client.py:76
+    Tipo: Path.home()/.hermes sin env var
+    Fragmento: default_path = Path.home() / ".hermes" / "honcho.json"
+
+[Nota: hermes-agent-upstream-test/ tiene 173 hallazgos Python adicionales equivalentes a
+los de .laia-arch/. Se omiten por ser copias identicas.]
+
+=== FIN REPORTE ===
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+RESUMEN
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+ARCHIVOS MAS CRITICOS (hallazgos funcionales que afectan comportamiento real):
+
+PRIORIDAD 1 -- CRITICO (paths usados directamente en logica, no solo mensajes):
+
+  1. .laia-arch/agent/file_safety.py (linea 16)
+     os.path.expanduser("~/.hermes") devuelto directamente. Si HERMES_HOME apunta a
+     otro lugar, file_safety ignorara esa configuracion y cerrara el sandbox incorrecto.
+     FIX: usar get_hermes_home() (ya disponible en hermes_constants).
+
+  2. .laia-arch/hermes_cli/auth.py (linea 735)
+     (Path.home() / ".hermes" / "auth.json") usado para comparacion de seguridad en tests
+     y en produccion. Ignora HERMES_HOME completamente.
+     FIX: usar get_hermes_home() / "auth.json".
+
+  3. .laia-arch/hermes_cli/slack_cli.py (linea 131)
+     target = Path.home() / ".hermes" / "slack-manifest.json" en bloque except.
+     El get_hermes_home() falla silenciosamente y cae en ruta fija.
+     FIX: usar Path(get_hermes_home()) / "slack-manifest.json".
+
+  4. .laia-arch/workspace-ui/seed_demo.py (linea 38)
+     ws_path hardcodeado a ~/.hermes/workspaces/demo-completo. No respeta HERMES_HOME.
+     FIX: usar get_hermes_home() / "workspaces" / "demo-completo".
+
+  5. .laia-arch/optional-skills/productivity/telephony/scripts/telephony.py (linea 72)
+     return Path(os.environ.get("HERMES_HOME", "~/.hermes")).expanduser()
+     El fallback "~/.hermes" como string necesita expanduser DESPUES del get.
+     FIX: Path(os.environ.get("HERMES_HOME") or (Path.home() / ".hermes")).
+
+  6. .laia-arch/optional-skills/migration/openclaw-migration/scripts/openclaw_to_hermes.py (linea 3070)
+     dest = "~/.hermes/" + dest[...] (concatenacion de string activa como ruta real).
+     FIX: usar str(get_hermes_home()) + "/" + ...
+
+  7. .laia-arch/scripts/scripts/delete-workspace.py (linea 86)
+     f-string en comando shell ejecutado usa ~/.hermes/ hardcodeado.
+     FIX: obtener hermes_home dinamicamente via os.environ.get("HERMES_HOME").
+
+  8. hermes-agent-upstream-test/scripts/profile-tui.py (linea 41)
+     DEFAULT_STATE_DB = Path.home() / ".hermes" / "state.db" sin proteccion HERMES_HOME.
+     FIX: Path(os.environ.get("HERMES_HOME") or (Path.home() / ".hermes")) / "state.db"
+
+  9. .laia-arch/scripts/update-services.sh (lineas 9-33) -- TODOS
+     Genera archivos systemd con /home/laia-arch hardcodeado. NO portable a otros usuarios.
+     FIX: usar variables de entorno en el script generador:
+       WorkingDirectory=${HERMES_HOME:-${HOME}/.hermes}
+       ExecStart=${HERMES_VENV:-${HOME}/.hermes/venv}/bin/hermes gateway run
+
+PRIORIDAD 2 -- MODERADO (mensajes de error con path hardcodeado -- confunden en perfiles):
+  Afectan la experiencia de usuario en despliegues con HERMES_HOME personalizado:
+  - .laia-arch/tools/cronjob_tools.py:194,196 (f-strings en errores de validacion)
+  - .laia-arch/tools/send_message_tool.py:252,254 (f-strings en tool_error)
+  - .laia-arch/tools/terminal_tool.py:967 (f-string en mensaje de error)
+  - .laia-arch/tools/mcp_tool.py:1647 (f-string en mensaje de error)
+  - .laia-arch/hermes_cli/gateway.py:3970,4035,4238,4241 (print con paths en guias de uso)
+  - .laia-arch/hermes_cli/tips.py (8 lineas) -- tips mostrados al usuario
+  FIX recomendado: reemplazar "~/.hermes" por display_hermes_home() en mensajes al usuario.
+
+PRIORIDAD 3 -- BAJO (docstrings/comentarios en codigo que se muestran como texto):
+  La mayoria de los ~250 hallazgos restantes son docstrings y help strings que mencionan
+  ~/.hermes como documentacion. No causan fallos funcionales pero generan confusion en
+  despliegues con HERMES_HOME customizado (perfil, docker, CI).
+
+ARCHIVOS CON MAS HALLAZGOS (codigo .laia-arch/ unicamente, sin tests):
+  1. telephony.py:           15 hallazgos (optional-skills/productivity/telephony/scripts/)
+  2. hermes_cli/main.py:      9 hallazgos
+  3. hermes_cli/tips.py:      8 hallazgos
+  4. hermes_cli/auth.py:      7 hallazgos
+  5. openclaw_to_hermes.py:   6 hallazgos (optional-skills/migration/)
+  6. hermes_cli/gateway.py:   6 hallazgos
+  7. agent/curator.py:        5 hallazgos
+  8. hermes_cli/config.py:    4 hallazgos
+
+NOTA SOBRE DUPLICACION:
+  hermes-agent-upstream-test/ tiene exactamente los mismos problemas que .laia-arch/
+  (173 hallazgos Python espejados). Es prioritario sincronizar fixes entre ambas copias
+  o eliminar la duplicacion del codigo base. La solucion ideal seria que hermes-agent-upstream-test/
+  tambien fuera un symlink, o que se gestione como una rama del mismo repositorio.
+
+RECOMENDACION DE FIX GLOBAL:
+  - Para mensajes al usuario: usar display_hermes_home() (ya en hermes_constants)
+    en lugar de "~/.hermes" hardcodeado.
+  - Para paths funcionales: usar get_hermes_home() consistentemente.
+  - Para el script systemd (update-services.sh): usar $HOME o $USER del shell,
+    o leer HERMES_HOME del entorno en tiempo de ejecucion del script.
+  - Para skills/red-teaming/godmode/: los expanduser() son fallbacks validos pero
+    usar Path(os.environ.get("HERMES_HOME") or (Path.home() / ".hermes")) es mas idiomatico.

@@ -1,0 +1,6 @@
+name: doyouwin
+description: >
+  Reads all .md files under memories/doyouwin/ and injects them into the
+  system prompt as context. Zero-dependency local plugin — no API keys needed.
+  Activate with: memory.provider: doyouwin in config.yaml
+version: "1.0.0"

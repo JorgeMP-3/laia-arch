@@ -1,0 +1,8 @@
+{
+  "last_report_path": "/home/laia-hermes/LAIA/logs/curator/20260513-214802",
+  "last_run_at": "2026-05-13T21:48:02.510846+00:00",
+  "last_run_duration_seconds": 18.751087,
+  "last_run_summary": "auto: no changes; llm: API call failed after 3 retries: HTTP 429: usage limit exceeded (2056)",
+  "paused": false,
+  "run_count": 3
+}

@@ -1,0 +1,18 @@
+{
+  "agents": {
+    "jorge": {
+      "container": "laia-jorge",
+      "created_at": "2026-05-11T15:36:36+00:00",
+      "image": "laia-agent",
+      "profile_status": "updated",
+      "runtime": "laia-agent-runtime",
+      "service": "laia-agent.service",
+      "slug": "jorge",
+      "snapshot": "initial",
+      "status": "verified",
+      "updated_at": "2026-05-12T07:08:31+00:00",
+      "workspace": "/opt/laia/workspaces/personal/workspace.db",
+      "workspace_status": "initialized"
+    }
+  }
+}

@@ -1,0 +1,34 @@
+name: workspace-context
+description: >
+  DB-first nodal context provider for Hermes. Reads workspaces/{workspace}/workspace.db
+  and injects nodal context into the system prompt. Supports inject_mode: index,
+  all-indexes. Activate with: memory.provider: workspace-context
+version: "3.0.0"
+config_schema:
+  - key: workspace
+    type: string
+    description: Default workspace for writes without an explicit workspace.
+    default: doyouwin
+  - key: inject_mode
+    type: string
+    description: Context injection mode.
+    default: index
+    choices:
+      - index
+      - all-indexes
+  - key: max_chars
+    type: integer
+    description: Maximum total characters to inject into the system prompt.
+    default: 8000
+  - key: workspaces
+    type: array
+    items: string
+    description: Workspaces readable in all-indexes mode. Empty means auto-discover.
+    default: []
+  - key: active_workspaces
+    type: array
+    items: string
+    description: Writable workspaces. Empty falls back to [workspace].
+    default: []
+    validation:
+      subset_of: workspaces

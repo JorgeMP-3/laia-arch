@@ -1,0 +1,59 @@
+AUDIT REPORT 3 - Configuracion inconsistente
+Fecha: 2026-05-04
+Config real: /home/laia-arch/LAIA/config.yaml
+Plugin: plugins/workspace-context/
+
+Campos reales en config.yaml
+----------------------------
+plugins.workspace-context contiene:
+- inject_mode: all-indexes
+- max_chars: 20000
+- recursive: true
+- workspace: arete
+- workspaces: arete, doyouwin, pixelcore, laia_arch, servidor_jmp
+
+Campos usados por el codigo
+---------------------------
+plugins/workspace-context/__init__.py lee:
+- workspace
+- inject_mode
+- max_chars
+- workspaces
+
+.laia-arch/workspace-ui/backend/main.py lee:
+- workspace
+- inject_mode
+- max_chars
+- workspaces
+
+Estado tras el fix
+------------------
+- El backend ya incluye `workspaces` en /api/context-engine/config.
+- /api/context-engine/injected ya itera todos los workspaces cuando inject_mode == "all-indexes".
+- El backend ya usa default `index`, alineado con DEFAULT_INJECT_MODE del plugin.
+
+Discrepancias
+-------------
+1. Campo `recursive`
+   - Existe en config.yaml.
+   - No lo lee el plugin.
+   - No lo lee el endpoint de contexto.
+   - workspace-switch.py lo preserva por compatibilidad, pero no tiene efecto runtime observado.
+
+2. plugin.yaml incompleto
+   - plugins/workspace-context/plugin.yaml solo contiene metadatos: name, description, version.
+   - No declara schema de configuracion.
+   - Ademas la descripcion dice que soporta `full`, pero el codigo solo acepta `index` y `all-indexes`.
+
+3. get_config_schema() incompleto
+   - Declara workspace, inject_mode y max_chars.
+   - No declara workspaces, aunque el campo es funcional y necesario para all-indexes configurado.
+
+4. Defaults no coincidentes con runtime
+   - DEFAULT_WORKSPACE = "doyouwin".
+   - config.yaml activa "arete".
+   - No es bug mientras config.yaml exista, pero puede confundir diagnosticos.
+
+Recomendacion
+-------------
+Actualizar plugin.yaml y get_config_schema() para declarar `workspaces`; eliminar o documentar `recursive`; corregir la descripcion que menciona `full`.

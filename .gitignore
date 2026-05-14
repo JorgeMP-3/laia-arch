@@ -1,73 +1,75 @@
-# Runtime hermes — NO en git
-state.db
-state.db-shm
-state.db-wal
-response_store.db*
-sessions/
-workspaces/
-mlx-servers/
+# LAIA .gitignore — 2026-05-13
+
+# Secrets (in ~/.laia/, symlinked here)
 auth.json
 auth.lock
 .env
-backups/
-orchestrator-runs/
-logs/
-audio_cache/
-image_cache/
-cache/
-bin/
+config.yaml
+config.yaml*
+
+# Runtime state (moved to ~/.laia/)
+state.db*
+response_store.db*
 gateway.pid
 gateway.lock
 gateway_state.json
+processes.json
+channel_directory.json
+workspace.db*
+workspace-ui-session-areas.json
+.laia_history
+.skills_prompt_snapshot.json
+.update_check
+.clean_shutdown
+
+# Runtime dirs (moved to ~/.laia/)
+sessions/
+logs/
+backups/
 checkpoints/
 pastes/
-locks/
-.hermes_history
-.skills_prompt_snapshot.json
-models_dev_cache.json
-processes.json
-interrupt_debug.log
-migration/
-workspace_store/
-hooks/
-sandboxes/
 cron/
+memories/
+sandboxes/
+migration/
+orchestrator-runs/
 whatsapp/
 pairing/
-.update_check
-hermes-agent-upstream-test/
-channel_directory.json
-ai-agents-json
-archived-skills/
-.DS_Store
+
+# Caches
+cache/
+audio_cache/
+image_cache/
+models_dev_cache.json
+ollama_cloud_models_cache.json
+context_length_cache.yaml
+
+# Python
 __pycache__/
 *.py[cod]
-*.lock
-*.pid
-*.shm
-*.wal
+*.egg-info/
 
-# Otros runtime
-.clean_shutdown
-config.yaml
-config.yaml.bak*
-ollama_cloud_models_cache.json
-plugins/
-scripts/
-skills/
-SOUL.md
-ai-agents.json
-workspace.db
-workspace.db-shm
-workspace.db-wal
+# macOS
+.DS_Store
 ._*
-.claude/
 
-# Código — tiene su propio repo
-.laia-arch/
-.laia/state/
-hermes-agent
+# Legacy archive (past versions)
+archived/
+archived-skills/
+
+# Core (submodule or separate repo)
+.laia-core/
+.laia-arch
+
+# UI (separate repo)
+laia-ui/
+
+# 3rd party services
+mlx-servers/
+
+# Workspace data
+workspaces/
+
+# Symlinks
 workspace-ui
-workspace-ui-session-areas.json
-memories/
-context_length_cache.yaml
+hermes-agent

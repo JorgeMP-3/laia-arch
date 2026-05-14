@@ -1,0 +1,33 @@
+AUDIT REPORT 2 - Imports externos y dependencias
+Fecha: 2026-05-04
+Scope: scripts/, plugins/, workspace_store/ y Web UI backend
+
+Requirements / manifest
+-----------------------
+- No hay requirements.txt en /home/laia-arch/LAIA.
+- Si existe manifest Python en .laia-arch/pyproject.toml.
+- .laia-arch/pyproject.toml documenta rich, pyyaml, requests y pydantic como dependencias base.
+- .laia-arch/pyproject.toml documenta fastapi y uvicorn en extras web.
+- Flask se usa en scripts/git-manager-web.py pero no aparece documentado en .laia-arch/pyproject.toml ni en un requirements.txt local.
+
+Imports externos sin try/except
+-------------------------------
+- scripts/git-manager.py importa rich en top-level. En este entorno `python3 -c "import rich"` pasa, pero si se ejecuta fuera del entorno preparado fallara sin mensaje degradado.
+- scripts/git-manager-web.py importa flask en top-level. En este entorno `python3 -c "import flask"` pasa, pero Flask no esta documentado en el manifest encontrado.
+- .laia-arch/workspace-ui/backend/main.py importa fastapi/pydantic en top-level. Es esperable para un backend FastAPI; el Python del sistema no tiene fastapi, pero .laia-arch/venv/bin/python si tiene fastapi, pydantic, yaml y uvicorn.
+
+Imports externos protegidos
+---------------------------
+- yaml se importa con try/except o dentro de bloques protegidos en los scripts principales y plugins.
+- plugins/workspace-context/__init__.py y plugins/doyouwin/__init__.py protegen yaml con try/except amplio.
+
+Dependencias usadas por scripts
+-------------------------------
+- rich: usada por scripts/git-manager.py; documentada en .laia-arch/pyproject.toml.
+- flask: usada por scripts/git-manager-web.py; no documentada en el manifest encontrado.
+- PyYAML: usada por scripts y plugins; documentada como pyyaml en .laia-arch/pyproject.toml.
+- fastapi, pydantic, uvicorn: usadas por Web UI backend; documentadas en extras web de .laia-arch/pyproject.toml.
+
+Recomendacion
+-------------
+Anadir Flask al manifest que se use para instalar scripts, o proteger scripts/git-manager-web.py con un try/except ImportError que explique la dependencia faltante.
