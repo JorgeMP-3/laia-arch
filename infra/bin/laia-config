@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# laia-config — Gestion de paths del ecosistema LAIA
+set -euo pipefail
+
+LAIA_HOME="${LAIA_HOME:-$HOME/.laia}"
+CONFIG="$LAIA_HOME/config.yaml"
+ENV_PATHS="$LAIA_HOME/.env.paths"
+
+usage() {
+    echo "uso: laia-config <accion> [args]"
+    echo "  export-paths   Exportar paths a ~/.laia/.env.paths"
+    echo "  show-paths     Mostrar paths resueltos"
+    echo "  get-path KEY   Mostrar un path"
+    exit 1
+}
+
+action="${1:-}"
+case "$action" in
+    export-paths)
+        python3 /home/laia-hermes/LAIA/infra/bin/_laia_paths.py export "$CONFIG" "$ENV_PATHS" "$LAIA_HOME"
+        ;;
+    show-paths)
+        python3 /home/laia-hermes/LAIA/infra/bin/_laia_paths.py show "$CONFIG" "$LAIA_HOME"
+        ;;
+    get-path)
+        python3 /home/laia-hermes/LAIA/infra/bin/_laia_paths.py get "$CONFIG" "$LAIA_HOME" "${2:-}"
+        ;;
+    *)
+        usage
+        ;;
+esac
