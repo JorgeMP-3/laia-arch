@@ -1,4 +1,4 @@
-"""workspace-context — DB-first nodal workspace memory provider for Hermes."""
+"""workspace-context — DB-first nodal workspace memory provider for LAIA."""
 
 from __future__ import annotations
 
@@ -200,7 +200,7 @@ class WorkspaceContextProvider(MemoryProvider):
 
     def _workspace_root(self, workspace: str) -> Path:
         laia_root = self._laia_root()
-        return laia_home / "workspaces" / workspace
+        return laia_root / "workspaces" / workspace
 
     def _ensure_store(self, workspace: str) -> WorkspaceStore:
         store = WorkspaceStore(self._workspace_root(workspace))
@@ -217,7 +217,7 @@ class WorkspaceContextProvider(MemoryProvider):
         names = _as_name_list(configured)
         if not names:
             laia_root = self._laia_root()
-            names = sorted(path.name for path in list_workspaces(laia_home))
+            names = sorted(path.name for path in list_workspaces(laia_root))
         if active and active not in names:
             names.insert(0, active)
         seen: set[str] = set()
@@ -762,7 +762,7 @@ class WorkspaceContextProvider(MemoryProvider):
         try:
             if tool_name == "workspace_list_workspaces":
                 result = []
-                for ws_path in list_workspaces(laia_home):
+                for ws_path in list_workspaces(laia_root):
                     store = WorkspaceStore(ws_path)
                     if not store.exists():
                         store.migrate_from_markdown(force=False)

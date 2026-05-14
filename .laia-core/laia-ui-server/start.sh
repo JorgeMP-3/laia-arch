@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-VENV="${LAIA_VENV:-$HOME/LAIA/.laia-arch/venv}"
+VENV="${LAIA_VENV:-$HOME/LAIA/.laia-core/venv}"
 
 # Build frontend if it exists
 if [ -d "$SCRIPT_DIR/frontend" ]; then

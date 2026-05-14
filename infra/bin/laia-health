@@ -30,7 +30,7 @@ echo ""
 
 # ── Servicios ─────────────────────────────────────────────────────────────
 echo -e "${BOLD}servicios systemd${RESET}"
-for svc in nginx postgresql cloudflared hermes workspace-ui agora-backend; do
+for svc in nginx postgresql cloudflared laia-gateway workspace-ui agora-backend; do
     check "$svc" systemctl is-active --quiet "$svc"
 done
 echo ""

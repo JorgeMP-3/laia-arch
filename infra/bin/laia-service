@@ -2,7 +2,7 @@
 set -euo pipefail
 # laia-service: gestion de servicios systemd de LAIA
 
-SERVICES="nginx postgresql cloudflared hermes workspace-ui agora-backend"
+SERVICES="nginx postgresql cloudflared laia-gateway workspace-ui agora-backend"
 
 usage() {
     echo "uso: laia-service <accion> [servicio]"

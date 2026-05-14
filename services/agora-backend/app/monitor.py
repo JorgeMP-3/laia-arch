@@ -69,7 +69,7 @@ class FleetMonitor:
         alerts: list[dict] = []
 
         for a in agents_list:
-            if not a.active:
+            if not True:
                 continue
             slug = a.container_name.removeprefix("laia-")
             lxd = next((la for la in lxd_agents if la.get("slug") == slug), None)

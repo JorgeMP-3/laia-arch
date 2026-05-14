@@ -59,7 +59,6 @@ archived-skills/
 
 # Core (submodule or separate repo)
 .laia-core/
-.laia-arch
 
 # UI (separate repo)
 laia-ui/
@@ -71,5 +70,4 @@ mlx-servers/
 workspaces/
 
 # Symlinks
-workspace-ui
 hermes-agent
