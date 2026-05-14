@@ -1,11 +1,11 @@
 ---
 name: agent-coordination
 description: >
-  Usa esta skill cuando un agente de Hermes vaya a coordinar trabajo multi-agente,
+  Usa esta skill cuando un agente de LAIA vaya a coordinar trabajo multi-agente,
   consultar o actualizar estado agentico, registrar planes/eventos, repartir tareas,
   o mantener los nodos `agent-team` (agent-note), `agent-log` (agent-log) y planes `agent-plan` desde workspace.db.
 version: "1.0.0"
-author: Hermes Agent
+author: LAIA Agent
 license: MIT
 metadata:
   hermes:
@@ -13,13 +13,13 @@ metadata:
     category: workspace
 ---
 
-# Agent Coordination — Hermes DB-first
+# Agent Coordination — LAIA DB-first
 
 ## Regla central
 
 La fuente de verdad es `workspace.db`.
 
-No trates `team.md` ni `log.md` como archivos fisicos canonicos. En Hermes son nodos:
+No trates `team.md` ni `log.md` como archivos fisicos canonicos. En LAIA son nodos:
 
 - `agent-team` (`kind="agent-note"`)
 - `agent-log` (`kind="agent-log"`)
@@ -98,14 +98,14 @@ No lances Claude Code, Codex u OpenCode desde el orquestador sin haber respetado
 | `workspace_complete_task` | Registrar cierre de tarea |
 | `workspace_record_agent_event` | Registrar eventos estructurados: planes, aprobaciones, handoffs, revisiones |
 | `workspace_sync_agent_docs` | Actualizar `agent-team` y `agent-log` desde `events` |
-| `workspace_agent_status` | Obtener estado resumido para Hermes/UI |
+| `workspace_agent_status` | Obtener estado resumido para LAIA/UI |
 | `workspace_get_node` | Leer `agent-team`, `agent-log` u otro nodo |
 | `workspace_upsert_node` | Crear planes como `agent-plan`, logs como `agent-log`; `agent-note` solo para `agent-team`/`agent-behavior` |
 | `workspace_link_nodes` | Enlazar tareas, planes, docs y proyectos |
 
 ## Orquestador multi-IA
 
-Para maniobrar agentes externos como Claude Code, Codex u OpenCode desde Hermes, usa:
+Para maniobrar agentes externos como Claude Code, Codex u OpenCode desde LAIA, usa:
 
 ```
 ~/.hermes/scripts/ai-orchestrator.py
@@ -119,9 +119,9 @@ Comandos principales:
 |---|---|
 | `init-config` | Crear registry `~/.hermes/ai-agents.json` |
 | `list-agents` | Ver planners/workers configurados |
-| `brief` | Crear request de Hermes como nodo `agent-plan` bajo `agent-team` |
+| `brief` | Crear request de LAIA como nodo `agent-plan` bajo `agent-team` |
 | `request-plan` | Pedir plan a un planner fuerte |
-| `approve-plan` | Registrar validacion de Hermes |
+| `approve-plan` | Registrar validacion de LAIA |
 | `assign-worker` | Crear tarea y asignarla a un worker |
 | `status` | Ver estado agentico del workspace |
 
@@ -130,7 +130,7 @@ Flujo recomendado:
 ```
 python3 ~/.hermes/scripts/ai-orchestrator.py brief \
   --workspace NOMBRE \
-  --objective "Objetivo de Hermes"
+  --objective "Objetivo de LAIA"
 
 python3 ~/.hermes/scripts/ai-orchestrator.py request-plan \
   --workspace NOMBRE \
@@ -228,8 +228,8 @@ Usa `workspace_record_agent_event` para eventos que no son solo inicio/cierre:
 | Event type | Cuando usarlo |
 |---|---|
 | `plan_submitted` | Un planificador entrega un plan |
-| `plan_approved` | Hermes aprueba un plan |
-| `worker_assigned` | Hermes asigna una tarea a un ejecutor |
+| `plan_approved` | LAIA aprueba un plan |
+| `worker_assigned` | LAIA asigna una tarea a un ejecutor |
 | `handoff_recorded` | Un agente deja contexto para otro |
 | `review_done` | Un revisor aprueba o pide correcciones |
 | `blocked` | Una tarea queda bloqueada |
@@ -295,7 +295,7 @@ El documentador es idempotente: si no hay cambios relevantes, no debe ensuciar l
 
 | Rol | Responsabilidad |
 |---|---|
-| Hermes | Orquesta, valida, aprueba planes, reparte tareas y controla estado DB-first |
+| LAIA | Orquesta, valida, aprueba planes, reparte tareas y controla estado DB-first |
 | Planificador | Convierte objetivos en planes tecnicos y tareas verificables |
 | Ejecutor | Implementa tareas acotadas y reporta mediante eventos |
 | Revisor | Verifica diff, tests, scope y registra `review_done` |

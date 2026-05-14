@@ -45,8 +45,8 @@ MUTATING_DB_TOOLS = set(WORKSPACE_TOOL_CODES)
 
 def _load_plugin_config() -> dict:
     try:
-        from hermes_constants import get_hermes_home
-        config_path = get_hermes_home() / "config.yaml"
+        from laia_constants import get_laia_home
+        config_path = get_laia_home() / "config.yaml"
         if not config_path.exists():
             return {}
         import yaml
@@ -90,7 +90,7 @@ class WorkspaceContextProvider(MemoryProvider):
     def __init__(self, config: dict | None = None):
         self._config = config or _load_plugin_config()
         self._config_mtime: float | None = None
-        self._hermes_home: Optional[str] = None
+        self._laia_home: Optional[str] = None
         self._cached_block: Optional[str] = None
         self._watched_mtimes: Dict[str, float] = {}
         self._prefetch_cache: Dict[str, str] = {}
@@ -130,8 +130,8 @@ class WorkspaceContextProvider(MemoryProvider):
             },
         ]
 
-    def save_config(self, values: Dict[str, Any], hermes_home: str) -> None:
-        config_path = Path(hermes_home) / "config.yaml"
+    def save_config(self, values: Dict[str, Any], laia_home: str) -> None:
+        config_path = Path(laia_home) / "config.yaml"
         try:
             import yaml
             existing = {}
@@ -146,17 +146,17 @@ class WorkspaceContextProvider(MemoryProvider):
             logger.warning("workspace-context: failed to save config: %s", exc)
 
     def initialize(self, session_id: str, **kwargs) -> None:
-        hermes_home = kwargs.get("hermes_home")
-        if not hermes_home:
-            from hermes_constants import get_hermes_home
-            hermes_home = str(get_hermes_home())
-        self._hermes_home = hermes_home
+        laia_home = kwargs.get("laia_home")
+        if not laia_home:
+            from laia_constants import get_laia_home
+            laia_home = str(get_laia_home())
+        self._laia_home = laia_home
         self._refresh_config_if_changed(force=True)
         self._ensure_store(self._active_workspace())
         self._rebuild_block()
 
     def _refresh_config_if_changed(self, *, force: bool = False) -> None:
-        config_path = self._hermes_root() / "config.yaml"
+        config_path = self._laia_root() / "config.yaml"
         try:
             mtime = config_path.stat().st_mtime
         except OSError:
@@ -195,12 +195,12 @@ class WorkspaceContextProvider(MemoryProvider):
     def _is_writable(self, workspace: str) -> bool:
         return workspace in self._active_workspaces()
 
-    def _hermes_root(self) -> Path:
-        return Path(self._hermes_home or os.environ.get("HERMES_HOME") or (Path.home() / ".hermes"))
+    def _laia_root(self) -> Path:
+        return Path(self._laia_home or os.environ.get("LAIA_HOME") or (Path.home() / ".laia"))
 
     def _workspace_root(self, workspace: str) -> Path:
-        hermes_home = self._hermes_root()
-        return hermes_home / "workspaces" / workspace
+        laia_root = self._laia_root()
+        return laia_home / "workspaces" / workspace
 
     def _ensure_store(self, workspace: str) -> WorkspaceStore:
         store = WorkspaceStore(self._workspace_root(workspace))
@@ -216,8 +216,8 @@ class WorkspaceContextProvider(MemoryProvider):
         active = self._active_workspace()
         names = _as_name_list(configured)
         if not names:
-            hermes_home = self._hermes_root()
-            names = sorted(path.name for path in list_workspaces(hermes_home))
+            laia_root = self._laia_root()
+            names = sorted(path.name for path in list_workspaces(laia_home))
         if active and active not in names:
             names.insert(0, active)
         seen: set[str] = set()
@@ -687,7 +687,7 @@ class WorkspaceContextProvider(MemoryProvider):
         return workspace, self._ensure_store(workspace)
 
     def _register_workspace_config(self, workspace: str, *, writable: bool = True) -> None:
-        config_path = self._hermes_root() / "config.yaml"
+        config_path = self._laia_root() / "config.yaml"
         try:
             import yaml
 
@@ -757,12 +757,12 @@ class WorkspaceContextProvider(MemoryProvider):
 
     def handle_tool_call(self, tool_name: str, args: Dict[str, Any], **kwargs) -> str:
         self._refresh_config_if_changed()
-        hermes_home = self._hermes_root()
+        laia_root = self._laia_root()
 
         try:
             if tool_name == "workspace_list_workspaces":
                 result = []
-                for ws_path in list_workspaces(hermes_home):
+                for ws_path in list_workspaces(laia_home):
                     store = WorkspaceStore(ws_path)
                     if not store.exists():
                         store.migrate_from_markdown(force=False)

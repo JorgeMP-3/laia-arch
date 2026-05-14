@@ -8,8 +8,8 @@ OK="${GREEN}✔${NC}"; FAIL="${RED}✘${NC}"; WARN="${YELLOW}⚠${NC}"
 
 TWOZERO_URL="https://www.404zero.com/pisang/twozero.tox"
 TOX_PATH="$HOME/Downloads/twozero.tox"
-HERMES_HOME_DIR="${HERMES_HOME:-$HOME/.hermes}"
-HERMES_CFG="${HERMES_HOME_DIR}/config.yaml"
+LAIA_HOME_DIR="${LAIA_HOME:-$HOME/.laia}"
+LAIA_CFG="${LAIA_HOME_DIR}/config.yaml"
 MCP_PORT=40404
 MCP_ENDPOINT="http://localhost:${MCP_PORT}/mcp"
 
@@ -43,18 +43,18 @@ else
     fi
 fi
 
-# ── 3. Ensure Hermes config has twozero_td MCP entry ──
-if [[ ! -f "$HERMES_CFG" ]]; then
-    echo -e " ${FAIL} Hermes config not found at ${HERMES_CFG}"
-    manual_steps+=("Create ${HERMES_CFG} with twozero_td MCP server entry")
-elif grep -q 'twozero_td' "$HERMES_CFG" 2>/dev/null; then
-    echo -e " ${OK} twozero_td MCP entry exists in Hermes config"
+# ── 3. Ensure LAIA config has twozero_td MCP entry ──
+if [[ ! -f "$LAIA_CFG" ]]; then
+    echo -e " ${FAIL} LAIA config not found at ${LAIA_CFG}"
+    manual_steps+=("Create ${LAIA_CFG} with twozero_td MCP server entry")
+elif grep -q 'twozero_td' "$LAIA_CFG" 2>/dev/null; then
+    echo -e " ${OK} twozero_td MCP entry exists in LAIA config"
 else
-    echo -e " ${WARN} Adding twozero_td MCP entry to Hermes config..."
+    echo -e " ${WARN} Adding twozero_td MCP entry to LAIA config..."
     python3 -c "
 import yaml, sys, copy
 
-cfg_path = '$HERMES_CFG'
+cfg_path = '$LAIA_CFG'
 with open(cfg_path, 'r') as f:
     cfg = yaml.safe_load(f) or {}
 
@@ -71,8 +71,8 @@ if 'twozero_td' not in cfg['mcp_servers']:
         yaml.dump(cfg, f, default_flow_style=False, sort_keys=False)
 " 2>/dev/null && echo -e " ${OK} twozero_td MCP entry added to config" \
               || { echo -e " ${FAIL} Could not update config (is PyYAML installed?)"; \
-                   manual_steps+=("Add twozero_td MCP entry to ${HERMES_CFG} manually"); }
-    manual_steps+=("Restart Hermes session to pick up config change")
+                   manual_steps+=("Add twozero_td MCP entry to ${LAIA_CFG} manually"); }
+    manual_steps+=("Restart LAIA session to pick up config change")
 fi
 
 # ── 4. Test if MCP port is responding ──

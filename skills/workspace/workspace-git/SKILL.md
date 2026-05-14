@@ -2,7 +2,7 @@
 name: workspace-git
 description: "Gestiona git y GitHub para los workspaces LAIA: estado, init, push, pull y configuración de repos."
 version: 1.0.0
-author: Hermes Agent
+author: LAIA Agent
 license: MIT
 metadata:
   hermes:

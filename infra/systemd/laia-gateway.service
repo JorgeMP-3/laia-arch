@@ -10,7 +10,7 @@ Group=laia-hermes
 WorkingDirectory=/home/laia-hermes/LAIA/.laia-core
 Environment=HOME=/home/laia-hermes
 Environment=LAIA_HOME=/home/laia-hermes/.laia
-ExecStart=/home/laia-hermes/LAIA/.laia-core/laia gateway run
+ExecStart=/home/laia-hermes/LAIA/.laia-core/venv/bin/python /home/laia-hermes/LAIA/.laia-core/laia gateway run
 Restart=on-failure
 RestartSec=3
 

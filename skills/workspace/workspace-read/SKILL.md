@@ -1,11 +1,11 @@
 ---
 name: workspace-read
 description: >
-  Lectura y busqueda efectiva en workspaces Hermes DB-first. Usar cuando el
+  Lectura y busqueda efectiva en workspaces LAIA DB-first. Usar cuando el
   agente necesite entender un workspace, localizar contexto, leer nodos,
   inspeccionar relaciones o consultar archivos reales sin modificar nada.
 version: "6.0.0"
-author: Hermes Agent
+author: LAIA Agent
 license: MIT
 metadata:
   hermes:

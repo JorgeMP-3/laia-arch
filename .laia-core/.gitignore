@@ -39,7 +39,7 @@ agent-browser/
 privvy*
 images/
 __pycache__/
-hermes_agent.egg-info/
+laia_agent.egg-info/
 wandb/
 testlogs
 
@@ -53,7 +53,7 @@ ignored/
 environments/benchmarks/evals/
 
 # Web UI build output
-hermes_cli/web_dist/
+laia_cli/web_dist/
 
 # Web UI assets — synced from @nous-research/ui at build time via
 # `npm run sync-assets` (see web/package.json).

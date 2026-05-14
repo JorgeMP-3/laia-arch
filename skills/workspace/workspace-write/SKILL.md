@@ -1,12 +1,12 @@
 ---
 name: workspace-write
 description: >
-  Escritura, estructura, mantenimiento y refactor de workspaces Hermes DB-first.
+  Escritura, estructura, mantenimiento y refactor de workspaces LAIA DB-first.
   Define la taxonomia canonica, como esta creada la base de datos, cuando usar
   cada kind, como hacer cambios normales y como reorganizar muchos nodos con
   backup y validacion.
 version: "7.0.0"
-author: Hermes Agent
+author: LAIA Agent
 license: MIT
 metadata:
   hermes:
@@ -20,7 +20,7 @@ metadata:
 
 La fuente de verdad es `workspace.db`. Los exports Markdown son derivados.
 
-Esta es la unica skill de escritura para workspaces Hermes. Tambien es la fuente
+Esta es la unica skill de escritura para workspaces LAIA. Tambien es la fuente
 para reorganizaciones grandes, migraciones, reparaciones y cambios de taxonomia.
 
 Antes de escribir:
@@ -505,7 +505,7 @@ Nunca ejecutes `delete-workspace.py --execute`.
 
 | Componente | HERMES_HOME | Config.yaml |
 |---|---|---|
-| Hermes gateway (hermes.service) | configurable | `HERMES_HOME/config.yaml` |
+| LAIA gateway (hermes.service) | configurable | `HERMES_HOME/config.yaml` |
 | TUI gateway (proceso hijo de tui) | configurable | `HERMES_HOME/config.yaml` |
 | Backend workspace-ui | configurable | `HERMES_HOME/config.yaml` |
 | Terminal shell (python3 scripts) | `HERMES_HOME` env var | `HERMES_HOME/config.yaml` |
