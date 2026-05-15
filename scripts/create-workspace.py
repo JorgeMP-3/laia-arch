@@ -19,16 +19,17 @@ except ImportError:
     yaml = None
 
 import os
-HERMES_HOME = Path(os.environ.get("HERMES_HOME") or (Path.home() / ".hermes"))
-if str(HERMES_HOME) not in sys.path:
-    sys.path.insert(0, str(HERMES_HOME))
+from _laia_runtime_paths import add_workspace_store_to_path, laia_home, workspaces_dir
+
+LAIA_HOME = laia_home()
+add_workspace_store_to_path()
 
 from workspace_store import WorkspaceStore
 
-WORKSPACES_DIR = HERMES_HOME / "workspaces"
-CONFIG_PATH = HERMES_HOME / "config.yaml"
-SCRIPTS_INDEX = HERMES_HOME / "scripts" / "INDEX.md"
-INDEX_SCRIPTS = HERMES_HOME / "scripts" / "index-scripts.py"
+WORKSPACES_DIR = workspaces_dir()
+CONFIG_PATH = LAIA_HOME / "config.yaml"
+SCRIPTS_INDEX = LAIA_HOME / "scripts" / "INDEX.md"
+INDEX_SCRIPTS = LAIA_HOME / "scripts" / "index-scripts.py"
 
 
 def append_agent_log(ws_path: Path, motivo: str, archivos: list[str], descripcion: str) -> None:
@@ -273,7 +274,7 @@ def restart_gateway() -> bool:
 
 
 def verify_tools_loaded(workspace_name: str, timeout: int = 15) -> bool:
-    log_path = HERMES_HOME / "logs" / "agent.log"
+    log_path = LAIA_HOME / "logs" / "agent.log"
     if not log_path.exists():
         return False
     deadline = time.time() + timeout
@@ -413,7 +414,7 @@ def do_apply_restart(name: str) -> None:
             print("  ✓ workspace-context cargado con tools activos")
         else:
             print("  AVISO: no se pudo verificar en los logs. Comprueba manualmente:")
-            print(f"    tail -5 {HERMES_HOME}/logs/agent.log | grep tools")
+            print(f"    tail -5 {LAIA_HOME}/logs/agent.log | grep tools")
     else:
         print("  AVISO: no se pudo reiniciar el gateway automáticamente.")
         print("    launchctl kickstart -k gui/$(id -u)/ai.hermes.gateway")

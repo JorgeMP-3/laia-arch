@@ -9,9 +9,11 @@ import sys
 from pathlib import Path
 
 import os
-HERMES_HOME = Path(os.environ.get("HERMES_HOME") or (Path.home() / ".hermes"))
-if str(HERMES_HOME) not in sys.path:
-    sys.path.insert(0, str(HERMES_HOME))
+from _laia_runtime_paths import add_workspace_store_to_path, laia_home, workspaces_dir
+
+LAIA_HOME = laia_home()
+WORKSPACES_DIR = workspaces_dir()
+add_workspace_store_to_path()
 
 from workspace_store import WorkspaceStore, list_workspaces
 
@@ -23,7 +25,7 @@ RED = "\033[31m"
 CYAN = "\033[36m"
 RESET = "\033[0m"
 
-CONFIG_PATH = HERMES_HOME / "config.yaml"
+CONFIG_PATH = LAIA_HOME / "config.yaml"
 PREVIEW_CHARS = 300
 
 
@@ -145,7 +147,7 @@ def main() -> None:
         print(f"{RED}No hay workspace activo en config.yaml{RESET}")
         sys.exit(1)
 
-    active_store = WorkspaceStore(HERMES_HOME / "workspaces" / workspace)
+    active_store = WorkspaceStore(WORKSPACES_DIR / workspace)
     if not active_store.exists():
         print(f"{RED}ERROR: falta {active_store.db_path}{RESET}")
         print("La fuente de verdad es workspace.db. Usa create-workspace.py para crear el workspace")
@@ -161,7 +163,7 @@ def main() -> None:
     print(f"  Max chars        : {BOLD}{max_chars:,}{RESET}".replace(",", "."))
 
     print(section("1. AUTO-INYECTADO AL INICIO DE CADA SESIÓN"))
-    stores_tmp = list_workspaces(HERMES_HOME)
+    stores_tmp = sorted(path for path in WORKSPACES_DIR.iterdir() if path.is_dir() and not path.name.startswith("."))
     configured_names = ws_cfg.get("workspaces") or []
     if isinstance(configured_names, str):
         configured_names = [name.strip() for name in configured_names.split(",") if name.strip()]
@@ -177,7 +179,7 @@ def main() -> None:
     total_chars = instruction_chars
     stores = []
     for name in all_names:
-        store = WorkspaceStore(HERMES_HOME / "workspaces" / name)
+        store = WorkspaceStore(WORKSPACES_DIR / name)
         if not store.exists():
             print(f"\n  {RED}✗{RESET} {name}: falta {store.db_path}")
             continue

@@ -10,12 +10,13 @@ import tarfile
 from datetime import datetime, timedelta
 from pathlib import Path
 
-import os
-HERMES_HOME = Path(os.environ.get("HERMES_HOME") or (Path.home() / ".hermes"))
-PRIMARY_SESSIONS_DIR = HERMES_HOME / "sessions"
+from _laia_runtime_paths import laia_home
+
+LAIA_HOME = laia_home()
+PRIMARY_SESSIONS_DIR = LAIA_HOME / "sessions"
 PRIMARY_ARCHIVE_DIR = PRIMARY_SESSIONS_DIR / "archive"
-LEGACY_SESSIONS_DIR = HERMES_HOME / "logs" / "sessions"
-LEGACY_ARCHIVE_DIR = HERMES_HOME / "logs" / "archive"
+LEGACY_SESSIONS_DIR = LAIA_HOME / "logs" / "sessions"
+LEGACY_ARCHIVE_DIR = LAIA_HOME / "logs" / "archive"
 
 
 def resolve_session_dirs(use_legacy: bool = False) -> tuple[Path, Path]:

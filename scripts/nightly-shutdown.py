@@ -20,7 +20,9 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-LAIA_ROOT   = Path(os.environ.get("HERMES_HOME") or (Path.home() / "LAIA"))
+from _laia_runtime_paths import laia_root
+
+LAIA_ROOT   = laia_root()
 SCRIPTS_DIR = LAIA_ROOT / "scripts"
 CANCEL_FILE = Path("/tmp/laia-cancel-shutdown")
 LOG_FILE    = LAIA_ROOT / "logs" / "nightly.log"

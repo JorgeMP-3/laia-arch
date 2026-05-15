@@ -16,9 +16,11 @@ try:
 except ImportError:  # pragma: no cover - Hermes suele tener PyYAML.
     yaml = None
 
-HERMES_HOME = Path(os.environ.get("HERMES_HOME") or (Path.home() / ".hermes"))
-CONFIG_PATH = HERMES_HOME / "config.yaml"
-WORKSPACES_DIR = HERMES_HOME / "workspaces"
+from _laia_runtime_paths import laia_home, workspaces_dir
+
+LAIA_HOME = laia_home()
+CONFIG_PATH = LAIA_HOME / "config.yaml"
+WORKSPACES_DIR = workspaces_dir()
 
 GREEN = "\033[32m"
 YELLOW = "\033[33m"

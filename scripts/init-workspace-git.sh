@@ -4,8 +4,12 @@
 
 set -euo pipefail
 
-LAIA_HOME="${HERMES_HOME:-$HOME/LAIA}"
-WORKSPACES_DIR="$LAIA_HOME/workspaces"
+LAIA_HOME="${LAIA_HOME:-$HOME/.laia}"
+if [[ -f "$LAIA_HOME/.env.paths" ]]; then
+    # shellcheck disable=SC1091
+    source "$LAIA_HOME/.env.paths"
+fi
+WORKSPACES_DIR="${LAIA_WORKSPACES:-$LAIA_HOME/workspaces}"
 
 # Workspace específico (opcional): init-workspace-git.sh [nombre]
 TARGET_WS="${1:-}"

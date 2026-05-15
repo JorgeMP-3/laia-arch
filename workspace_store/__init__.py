@@ -2383,8 +2383,8 @@ Convenciones:
 
     def _archive_legacy_paths(self, paths: list[Path], *, backup_root: Path | str | None = None) -> Path:
         if backup_root is None:
-            hermes_root = self.root.parent.parent if self.root.parent.name == "workspaces" else self.root.parent
-            backup_dir = hermes_root / "backups" / "legacy-workspaces"
+            laia_root = self.root.parent.parent if self.root.parent.name == "workspaces" else self.root.parent
+            backup_dir = laia_root / "backups" / "legacy-workspaces"
         else:
             backup_dir = Path(backup_root)
         backup_dir.mkdir(parents=True, exist_ok=True)
@@ -2598,8 +2598,8 @@ Convenciones:
             return "\n".join(lines)
 
 
-def list_workspaces(hermes_home: Path | str) -> list[Path]:
-    ws_root = Path(hermes_home) / "workspaces"
+def list_workspaces(laia_home: Path | str) -> list[Path]:
+    ws_root = Path(laia_home) / "workspaces"
     if not ws_root.exists():
         return []
     return sorted(path for path in ws_root.iterdir() if path.is_dir() and not path.name.startswith("."))

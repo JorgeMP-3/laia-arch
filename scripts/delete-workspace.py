@@ -18,10 +18,12 @@ except ImportError:
     yaml = None
 
 import os
-HERMES_HOME = Path(os.environ.get("HERMES_HOME") or (Path.home() / ".hermes"))
-WORKSPACES_DIR = HERMES_HOME / "workspaces"
-CONFIG_PATH = HERMES_HOME / "config.yaml"
-BACKUP_ROOT = HERMES_HOME / "backups" / "deleted-workspaces"
+from _laia_runtime_paths import laia_home, workspaces_dir
+
+LAIA_HOME = laia_home()
+WORKSPACES_DIR = workspaces_dir()
+CONFIG_PATH = LAIA_HOME / "config.yaml"
+BACKUP_ROOT = LAIA_HOME / "backups" / "deleted-workspaces"
 
 
 def valid_workspace_name(name: str) -> bool:
@@ -83,7 +85,7 @@ def print_plan(workspace: str, workspace_path: Path, *, active: str) -> None:
     print("Si realmente quieres eliminarlo, ejecuta manualmente en una terminal:")
     print()
     print(
-        f"python3 {HERMES_HOME / 'scripts' / 'delete-workspace.py'} --workspace {workspace} "
+        f"python3 {LAIA_HOME / 'scripts' / 'delete-workspace.py'} --workspace {workspace} "
         f"--execute --confirm-code {code}"
     )
     print()

@@ -37,8 +37,26 @@ LAIA_AGENT_PYTHON = LAIA_AGENT_ROOT / "venv" / "bin" / "python"
 FRONTEND_DIST = Path(__file__).parent.parent / "frontend" / "dist"
 AREA_SESSION_INDEX_PATH = LAIA_HOME / "laia-ui-server-session-areas.json"
 
-if str(LAIA_HOME) not in sys.path:
-    sys.path.insert(0, str(LAIA_HOME))
+
+def _add_workspace_store_to_path() -> None:
+    """Resolve workspace_store via env vars or fallbacks and add its parent to sys.path.
+
+    workspace_store lives at ~/LAIA/workspace_store/ (a shared library, NOT under
+    LAIA_HOME). The systemd unit provides LAIA_STORE / LAIA_ROOT via EnvironmentFile.
+    """
+    candidates: list[Path] = []
+    if os.environ.get("LAIA_STORE"):
+        candidates.append(Path(os.environ["LAIA_STORE"]).parent)
+    if os.environ.get("LAIA_ROOT"):
+        candidates.append(Path(os.environ["LAIA_ROOT"]))
+    candidates.append(Path.home() / "LAIA")
+    for root in candidates:
+        if (root / "workspace_store").is_dir() and str(root) not in sys.path:
+            sys.path.insert(0, str(root))
+            return
+
+
+_add_workspace_store_to_path()
 
 from workspace_store import WorkspaceStore, _slugify, list_workspaces
 

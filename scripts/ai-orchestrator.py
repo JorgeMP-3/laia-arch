@@ -17,15 +17,16 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-HERMES_HOME = Path(os.environ.get("HERMES_HOME") or (Path.home() / ".hermes"))
-if str(HERMES_HOME) not in sys.path:
-    sys.path.insert(0, str(HERMES_HOME))
+from _laia_runtime_paths import add_workspace_store_to_path, laia_home, workspaces_dir
+
+LAIA_HOME = laia_home()
+add_workspace_store_to_path()
 
 from workspace_store import WorkspaceStore
 
-WORKSPACES_DIR = HERMES_HOME / "workspaces"
-CONFIG_PATH = HERMES_HOME / "ai-agents.json"
-RUNS_DIR = HERMES_HOME / "orchestrator-runs"
+WORKSPACES_DIR = workspaces_dir()
+CONFIG_PATH = LAIA_HOME / "ai-agents.json"
+RUNS_DIR = LAIA_HOME / "orchestrator-runs"
 
 
 DEFAULT_CONFIG = {
@@ -597,7 +598,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Orquestador multi-IA DB-first para Hermes.")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    sub.add_parser("init-config", help="Crear $HERMES_HOME/ai-agents.json de ejemplo").set_defaults(func=init_config)
+    sub.add_parser("init-config", help="Crear $LAIA_HOME/ai-agents.json de ejemplo").set_defaults(func=init_config)
     sub.add_parser("list-agents", help="Mostrar registry de agentes").set_defaults(func=list_agents)
 
     brief = sub.add_parser("brief", help="Crear un request/brief DB-first para Hermes")

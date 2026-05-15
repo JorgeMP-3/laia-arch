@@ -14,7 +14,9 @@ import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 
-LAIA_ROOT        = Path(os.environ.get("HERMES_HOME") or (Path.home() / "LAIA"))
+from _laia_runtime_paths import laia_root
+
+LAIA_ROOT        = laia_root()
 LOG_FILE         = LAIA_ROOT / "logs" / "startup.log"
 LAST_STARTUP     = LAIA_ROOT / "logs" / "last-startup.json"
 LAST_SHUTDOWN    = LAIA_ROOT / "logs" / "last-shutdown.json"

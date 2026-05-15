@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Crea backups rotativos de ~/.hermes en un SSD externo.
+# Crea backups rotativos de ~/.laia en un SSD externo.
 """hermes-backup.py — backup periódico con retención configurable."""
 
 from __future__ import annotations
@@ -16,11 +16,13 @@ import tarfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-HERMES_HOME = Path(os.environ.get("HERMES_HOME") or (Path.home() / ".hermes"))
+from _laia_runtime_paths import laia_home
+
+LAIA_HOME = laia_home()
 DEFAULT_DEST = Path("/Volumes/PortableSSD/HermesBackups")
 DEFAULT_RETENTION_DAYS = 6
 DEFAULT_MIN_FREE_GB = 3.0
-LOCK_PATH = HERMES_HOME / "locks" / "periodic-backup.lock"
+LOCK_PATH = LAIA_HOME / "locks" / "periodic-backup.lock"
 
 EXCLUDE_PARTS = {
     "node_modules",
@@ -56,7 +58,7 @@ def should_exclude(path: Path) -> bool:
     if path.name in EXCLUDE_NAMES or path.suffix in EXCLUDE_SUFFIXES:
         return True
     try:
-        rel_parts = path.relative_to(HERMES_HOME.parent).parts
+        rel_parts = path.relative_to(LAIA_HOME.parent).parts
     except ValueError:
         rel_parts = path.parts
     return any(part in EXCLUDE_PARTS for part in rel_parts)
@@ -105,7 +107,7 @@ def verify_checksum(path: Path, checksum_path: Path) -> bool:
 
 
 def sqlite_dbs() -> list[Path]:
-    return sorted(path for path in HERMES_HOME.rglob("*.db") if path.is_file() and not should_exclude(path))
+    return sorted(path for path in LAIA_HOME.rglob("*.db") if path.is_file() and not should_exclude(path))
 
 
 def snapshot_sqlite_dbs(target_dir: Path) -> int:
@@ -113,7 +115,7 @@ def snapshot_sqlite_dbs(target_dir: Path) -> int:
     count = 0
     checksums: list[str] = []
     for db_path in sqlite_dbs():
-        rel = db_path.relative_to(HERMES_HOME)
+        rel = db_path.relative_to(LAIA_HOME)
         out = target_dir / str(rel).replace("/", "__")
         try:
             src = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
@@ -131,8 +133,8 @@ def snapshot_sqlite_dbs(target_dir: Path) -> int:
 
 
 def create_backup(dest_root: Path, *, dry_run: bool = False, min_free_gb: float = DEFAULT_MIN_FREE_GB) -> Path | None:
-    if not HERMES_HOME.exists():
-        raise SystemExit(f"ERROR: no existe {HERMES_HOME}")
+    if not LAIA_HOME.exists():
+        raise SystemExit(f"ERROR: no existe {LAIA_HOME}")
     ensure_external_destination(dest_root)
     dest_root.mkdir(parents=True, exist_ok=True)
     if free_bytes(dest_root) < int(min_free_gb * 1024**3):
@@ -152,7 +154,7 @@ def create_backup(dest_root: Path, *, dry_run: bool = False, min_free_gb: float 
             [
                 "Hermes backup",
                 f"Created: {utc_now().isoformat()}",
-                f"Source: {HERMES_HOME}",
+                f"Source: {LAIA_HOME}",
                 "Strategy: full Hermes state excluding regenerable dependencies/caches.",
                 "Excluded: node_modules, venv/.venv, __pycache__, test caches, .DS_Store, bytecode.",
                 "",
@@ -162,7 +164,7 @@ def create_backup(dest_root: Path, *, dry_run: bool = False, min_free_gb: float 
     )
 
     with tarfile.open(archive, "w:gz") as tar:
-        tar.add(HERMES_HOME, arcname=".hermes", filter=backup_filter)
+        tar.add(LAIA_HOME, arcname=".laia", filter=backup_filter)
 
     checksum_path = write_checksum(archive)
     if not verify_checksum(archive, checksum_path):
@@ -215,7 +217,7 @@ def prune_backups(dest_root: Path, retention_days: int, *, dry_run: bool = False
 def install_launch_agent(dest_root: Path, retention_days: int, interval_seconds: int) -> Path:
     label = "local.hermes.periodic-backup"
     plist_path = Path.home() / "Library" / "LaunchAgents" / f"{label}.plist"
-    log_dir = HERMES_HOME / "logs"
+    log_dir = LAIA_HOME / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
     script_path = Path(__file__).resolve()
     python_path = sys.executable

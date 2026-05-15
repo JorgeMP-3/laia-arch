@@ -8,7 +8,7 @@ from pathlib import Path
 class Settings:
     def __init__(self) -> None:
         self.env = os.environ.get("AGORA_ENV", "dev")
-        self.laia_root = Path(os.environ.get("LAIA_ROOT", "/home/laia-hermes/LAIA"))
+        self.laia_root = Path(os.environ.get("LAIA_ROOT", str(Path.home() / "LAIA")))
 
         # ── AGORA data dir ────────────────────────────────────────────────────
         self.prod_data_dir = Path(os.environ.get("AGORA_DATA_DIR", "/srv/laia/agora"))

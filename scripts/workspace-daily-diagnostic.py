@@ -8,9 +8,11 @@ import sys
 from pathlib import Path
 
 import os
-HERMES_HOME = Path(os.environ.get("HERMES_HOME") or (Path.home() / ".hermes"))
-if str(HERMES_HOME) not in sys.path:
-    sys.path.insert(0, str(HERMES_HOME))
+from _laia_runtime_paths import add_workspace_store_to_path, laia_home, workspaces_dir
+
+LAIA_HOME = laia_home()
+WORKSPACES_DIR = workspaces_dir()
+add_workspace_store_to_path()
 
 from workspace_store import WorkspaceStore, list_workspaces
 
@@ -55,7 +57,7 @@ CASES = [
 
 
 def load_store(name: str) -> WorkspaceStore:
-    store = WorkspaceStore(HERMES_HOME / "workspaces" / name)
+    store = WorkspaceStore(WORKSPACES_DIR / name)
     if not store.exists():
         store.migrate_from_markdown(force=False)
     else:
@@ -129,7 +131,7 @@ def main() -> None:
                 return
         return
 
-    available = ", ".join(path.name for path in list_workspaces(HERMES_HOME))
+    available = ", ".join(path.name for path in WORKSPACES_DIR.iterdir() if path.is_dir() and not path.name.startswith("."))
     print("Diagnóstico DB-first")
     print(f"Workspaces detectados: {available}")
     for case in CASES:

@@ -1,16 +1,20 @@
 [Unit]
-Description=LAIA UI Server (Admin)
+Description=LAIA UI Server (ARCH Admin)
 After=laia-gateway.service
 Wants=laia-gateway.service
+X-LaiaPathDeps=ui_server,ui_backend,laia_venv
 
 [Service]
 Type=simple
 User=laia-hermes
 Group=laia-hermes
-WorkingDirectory=/home/laia-hermes/LAIA/.laia-core/laia-ui-server
+# Path registry — defines LAIA_UI_SERVER, LAIA_UI_BACKEND, LAIA_VENV, etc.
+# Variables are usable inside the process (via env vars), but systemd does
+# not expand them in ExecStart/WorkingDirectory — paths must stay literal.
+EnvironmentFile=-/home/laia-hermes/.laia/.env.paths
+WorkingDirectory=/home/laia-hermes/LAIA/.laia-core/laia-ui-server/backend
 Environment=HOME=/home/laia-hermes
-Environment=LAIA_HOME=/home/laia-hermes/.laia
-ExecStart=/home/laia-hermes/LAIA/.laia-core/laia-ui-server/.venv/bin/uvicorn backend.main:app --host 0.0.0.0 --port 8077
+ExecStart=/home/laia-hermes/LAIA/.laia-core/venv/bin/uvicorn main:app --host 0.0.0.0 --port 8077
 Restart=on-failure
 RestartSec=3
 

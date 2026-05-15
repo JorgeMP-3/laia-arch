@@ -1,12 +1,12 @@
 #!/bin/bash
-# Script para que Hermes inicie los servidores MLX (visión + TTS)
-# Uso: bash "$HERMES_HOME/scripts/start_mlx_servers.sh"
+# Script para que LAIA inicie los servidores MLX (visión + TTS)
+# Uso: bash "$LAIA_HOME/scripts/start_mlx_servers.sh"
 
 set -e
 
-HERMES_HOME="${HERMES_HOME:-$HOME/.hermes}"
-DIR="$HERMES_HOME/mlx-servers"
-LOG="$HERMES_HOME/logs/mlx_servers.log"
+LAIA_HOME="${LAIA_HOME:-$HOME/.laia}"
+DIR="$LAIA_HOME/mlx-servers"
+LOG="$LAIA_HOME/logs/mlx_servers.log"
 
 if [ ! -d "$DIR/.venv" ]; then
   echo "ERROR: El entorno MLX no existe. Ejecuta primero: cd $DIR && ./setup.sh"

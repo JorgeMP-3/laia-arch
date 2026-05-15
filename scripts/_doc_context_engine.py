@@ -6,12 +6,14 @@ import sys
 from pathlib import Path
 
 import os
-HERMES_HOME = Path(os.environ.get("HERMES_HOME") or (Path.home() / ".hermes"))
-sys.path.insert(0, str(HERMES_HOME))
+from _laia_runtime_paths import add_workspace_store_to_path, laia_home
+
+LAIA_HOME = laia_home()
+add_workspace_store_to_path()
 
 from workspace_store import WorkspaceStore
 
-store = WorkspaceStore(Path(HERMES_HOME) / "workspaces" / "laia-arch")
+store = WorkspaceStore(Path(LAIA_HOME) / "workspaces" / "laia-arch")
 
 body_00 = """# Context Engine — Índice General
 
@@ -77,16 +79,16 @@ plugins:
 ### Scripts Útiles
 
 ```bash
-python3 ~/.hermes/scripts/health-check.py
-python3 ~/.hermes/scripts/show-injected.py --query "mi pregunta"
-python3 ~/.hermes/scripts/sync-workspace-markdown.py --workspace laia-arch --watch
-python3 ~/.hermes/scripts/workspace-daily-diagnostic.py
+python3 ~/.laia/scripts/health-check.py
+python3 ~/.laia/scripts/show-injected.py --query "mi pregunta"
+python3 ~/.laia/scripts/sync-workspace-markdown.py --workspace laia-arch --watch
+python3 ~/.laia/scripts/workspace-daily-diagnostic.py
 ```
 
 ### Web UI
 
 - URL: http://localhost:8077
-- Backend: FastAPI en `~/.hermes/workspace-ui/backend/main.py`
+- Backend: FastAPI en `~/.laia/workspace-ui/backend/main.py`
 
 ### FUENTE DE VERDAD
 
@@ -96,7 +98,7 @@ python3 ~/.hermes/scripts/workspace-daily-diagnostic.py
 
 body_01 = """# WorkspaceStore — Capa de Datos del Context Engine
 
-**Archivo fuente:** `~/.hermes/workspace_store/__init__.py`
+**Archivo fuente:** `~/.laia/workspace_store/__init__.py`
 **Versión schema:** 1
 **Total líneas:** ~2059
 
@@ -413,7 +415,7 @@ Verificación estructural completa: db existe, schema_version correcto, exactly 
 
 body_02 = """# Plugin workspace-context — MemoryProvider para Hermes
 
-**Archivo fuente:** `~/.hermes/plugins/workspace-context/__init__.py`
+**Archivo fuente:** `~/.laia/plugins/workspace-context/__init__.py`
 **Clase:** `WorkspaceContextProvider`
 **Extiende:** `MemoryProvider`
 
@@ -675,8 +677,8 @@ Rebuild automático cuando:
 
 body_03 = """# Workspace UI — Hermes Context Engine
 
-**Backend:** `~/.hermes/workspace-ui/backend/main.py` (FastAPI)
-**Frontend:** `~/.hermes/workspace-ui/frontend/` (React + Vite + TypeScript)
+**Backend:** `~/.laia/workspace-ui/backend/main.py` (FastAPI)
+**Frontend:** `~/.laia/workspace-ui/frontend/` (React + Vite + TypeScript)
 **Puerto por defecto:** 8077
 
 Interfaz web para controlar sesiones Hermes y visualizar el estado del Context Engine.
@@ -784,7 +786,7 @@ class HermesWebSession:
 ### Resolución de Rutas
 
 ```python
-HERMES_AGENT_ROOT = HERMES_HOME / "hermes-agent"
+HERMES_AGENT_ROOT = LAIA_HOME / "hermes-agent"
 HERMES_AGENT_PYTHON = HERMES_AGENT_ROOT / "venv" / "bin" / "python"
 FRONTEND_DIST = Path(__file__).parent.parent / "frontend" / "dist"
 ```
@@ -842,7 +844,7 @@ FRONTEND_DIST = Path(__file__).parent.parent / "frontend" / "dist"
 ## 5. Iniciar la UI
 
 ```bash
-cd ~/.hermes/workspace-ui/backend
+cd ~/.laia/workspace-ui/backend
 python3 main.py
 # http://localhost:8077
 ```
@@ -889,7 +891,7 @@ legacy_paths = [
 ### Paso 1: Backup
 
 ```python
-backup_dir = "$HERMES_HOME/backups/legacy-workspaces/"
+backup_dir = "$LAIA_HOME/backups/legacy-workspaces/"
 archive = f"{workspace}-{timestamp}.tar.gz"
 ```
 
@@ -1007,13 +1009,13 @@ def seed_workspace(self, description: str, areas: Iterable[str]) -> dict
 
 ```bash
 # Crear workspace nuevo
-python3 ~/.hermes/scripts/create-workspace.py --name mi-workspace --bootstrap "Descripción"
+python3 ~/.laia/scripts/create-workspace.py --name mi-workspace --bootstrap "Descripción"
 
 # Migrar estructura legacy
-python3 ~/.hermes/scripts/create-workspace.py --name mi-workspace --migrate-legacy
+python3 ~/.laia/scripts/create-workspace.py --name mi-workspace --migrate-legacy
 
 # Reparar workspace
-python3 ~/.hermes/scripts/create-workspace.py --name mi-workspace --repair
+python3 ~/.laia/scripts/create-workspace.py --name mi-workspace --repair
 ```
 
 ### health-check.py
@@ -1040,7 +1042,7 @@ workspace/
 
 ## 8. Notas sobre Backups
 
-- Ubicación: `~/.hermes/backups/legacy-workspaces/`
+- Ubicación: `~/.laia/backups/legacy-workspaces/`
 - Formato: `workspace-YYYYMMDDTHHMMSSZ.tar.gz`
 - Se crean ANTES de cualquier modificación
 - Nunca se borran automáticamente
@@ -1059,27 +1061,27 @@ workspace/
 
 body_05 = r"""# Scripts del Context Engine
 
-**Directorio:** `~/.hermes/scripts/`
-**Workspaces:** `~/.hermes/workspaces/{name}/code/scripts/`
+**Directorio:** `~/.laia/scripts/`
+**Workspaces:** `~/.laia/workspaces/{name}/code/scripts/`
 
 ---
 
 ## 1. create-workspace.py
 
-**Ruta:** `~/.hermes/scripts/create-workspace.py`
+**Ruta:** `~/.laia/scripts/create-workspace.py`
 **Propósito:** Crear, reparar y migrar workspaces DB-only.
 
 ### Uso
 
 ```bash
 # Crear workspace nuevo
-python3 ~/.hermes/scripts/create-workspace.py --name mi-workspace --bootstrap "Descripción"
+python3 ~/.laia/scripts/create-workspace.py --name mi-workspace --bootstrap "Descripción"
 
 # Migrar estructura legacy
-python3 ~/.hermes/scripts/create-workspace.py --name mi-workspace --migrate-legacy
+python3 ~/.laia/scripts/create-workspace.py --name mi-workspace --migrate-legacy
 
 # Reparar workspace
-python3 ~/.hermes/scripts/create-workspace.py --name mi-workspace --repair
+python3 ~/.laia/scripts/create-workspace.py --name mi-workspace --repair
 ```
 
 ### Flags
@@ -1097,15 +1099,15 @@ python3 ~/.hermes/scripts/create-workspace.py --name mi-workspace --repair
 
 ## 2. health-check.py
 
-**Ruta:** `~/.hermes/scripts/health-check.py`
+**Ruta:** `~/.laia/scripts/health-check.py`
 **Propósito:** Verificar estado estructural y DB-only de todos los workspaces.
 
 ### Uso
 
 ```bash
-python3 ~/.hermes/scripts/health-check.py
-python3 ~/.hermes/scripts/health-check.py --workspace laia-arch
-python3 ~/.hermes/scripts/health-check.py --fix
+python3 ~/.laia/scripts/health-check.py
+python3 ~/.laia/scripts/health-check.py --workspace laia-arch
+python3 ~/.laia/scripts/health-check.py --fix
 ```
 
 ### Lo que Verifica
@@ -1122,16 +1124,16 @@ python3 ~/.hermes/scripts/health-check.py --fix
 
 ## 3. show-injected.py
 
-**Ruta:** `~/.hermes/scripts/show-injected.py`
+**Ruta:** `~/.laia/scripts/show-injected.py`
 **Propósito:** Debug de qué nodos se inyectan al agente en cada sesión.
 
 ### Uso
 
 ```bash
-python3 ~/.hermes/scripts/show-injected.py
-python3 ~/.hermes/scripts/show-injected.py --query "infraestructura"
-python3 ~/.hermes/scripts/show-injected.py --full
-python3 ~/.hermes/scripts/show-injected.py --workspace pixelcore
+python3 ~/.laia/scripts/show-injected.py
+python3 ~/.laia/scripts/show-injected.py --query "infraestructura"
+python3 ~/.laia/scripts/show-injected.py --full
+python3 ~/.laia/scripts/show-injected.py --workspace pixelcore
 ```
 
 ### Secciones de Salida
@@ -1150,23 +1152,23 @@ python3 ~/.hermes/scripts/show-injected.py --workspace pixelcore
 
 ## 4. sync-workspace-markdown.py
 
-**Ruta:** `~/.hermes/scripts/sync-workspace-markdown.py`
+**Ruta:** `~/.laia/scripts/sync-workspace-markdown.py`
 **Propósito:** Exportar `workspace.db` a Markdown bajo demanda.
 
 ### Uso
 
 ```bash
 # Sincronizar un workspace
-python3 ~/.hermes/scripts/sync-workspace-markdown.py --workspace laia-arch
+python3 ~/.laia/scripts/sync-workspace-markdown.py --workspace laia-arch
 
 # Sincronizar todos
-python3 ~/.hermes/scripts/sync-workspace-markdown.py --all
+python3 ~/.laia/scripts/sync-workspace-markdown.py --all
 
 # Modo watch
-python3 ~/.hermes/scripts/sync-workspace-markdown.py --workspace laia-arch --watch
+python3 ~/.laia/scripts/sync-workspace-markdown.py --workspace laia-arch --watch
 
 # Output dir personalizado
-python3 ~/.hermes/scripts/sync-workspace-markdown.py --workspace laia-arch --output-dir /tmp/snapshot
+python3 ~/.laia/scripts/sync-workspace-markdown.py --workspace laia-arch --output-dir /tmp/snapshot
 ```
 
 ### Dos Vistas Exportadas
@@ -1185,14 +1187,14 @@ python3 ~/.hermes/scripts/sync-workspace-markdown.py --workspace laia-arch --out
 
 ## 5. workspace-daily-diagnostic.py
 
-**Ruta:** `~/.hermes/scripts/workspace-daily-diagnostic.py`
+**Ruta:** `~/.laia/scripts/workspace-daily-diagnostic.py`
 **Propósito:** Validar que el flujo DB-first funciona para queries reales.
 
 ### Uso
 
 ```bash
-python3 ~/.hermes/scripts/workspace-daily-diagnostic.py
-python3 ~/.hermes/scripts/workspace-daily-diagnostic.py --case metodo-doyouwin
+python3 ~/.laia/scripts/workspace-daily-diagnostic.py
+python3 ~/.laia/scripts/workspace-daily-diagnostic.py --case metodo-doyouwin
 ```
 
 ### Casos de Prueba Predefinidos
@@ -1208,26 +1210,26 @@ python3 ~/.hermes/scripts/workspace-daily-diagnostic.py --case metodo-doyouwin
 
 ## 6. index-scripts.py
 
-**Ruta:** `~/.hermes/scripts/index-scripts.py`
+**Ruta:** `~/.laia/scripts/index-scripts.py`
 **Propósito:** Generar índice de todos los scripts disponibles.
 
 ```bash
-python3 ~/.hermes/scripts/index-scripts.py
-python3 ~/.hermes/scripts/index-scripts.py --dry-run
-python3 ~/.hermes/scripts/index-scripts.py --workspace pixelcore
+python3 ~/.laia/scripts/index-scripts.py
+python3 ~/.laia/scripts/index-scripts.py --dry-run
+python3 ~/.laia/scripts/index-scripts.py --workspace pixelcore
 ```
 
 ---
 
 ## 7. cleanup-sessions.py
 
-**Ruta:** `~/.hermes/scripts/cleanup-sessions.py`
+**Ruta:** `~/.laia/scripts/cleanup-sessions.py`
 **Propósito:** Archivar y eliminar sesiones antiguas.
 
 ```bash
-python3 ~/.hermes/scripts/cleanup-sessions.py
-python3 ~/.hermes/scripts/cleanup-sessions.py --execute
-python3 ~/.hermes/scripts/cleanup-sessions.py --keep-days 7 --archive-days 30 --execute
+python3 ~/.laia/scripts/cleanup-sessions.py
+python3 ~/.laia/scripts/cleanup-sessions.py --execute
+python3 ~/.laia/scripts/cleanup-sessions.py --keep-days 7 --archive-days 30 --execute
 ```
 
 ### Clasificación
@@ -1247,7 +1249,7 @@ python3 ~/.hermes/scripts/cleanup-sessions.py --keep-days 7 --archive-days 30 --
 Lanza Datasette para consultar workspaces como bases SQLite.
 
 ```bash
-bash ~/.hermes/scripts/datasette-start.sh
+bash ~/.laia/scripts/datasette-start.sh
 # http://localhost:8076
 ```
 
@@ -1256,7 +1258,7 @@ bash ~/.hermes/scripts/datasette-start.sh
 Inicia servidores MLX para visión y TTS.
 
 ```bash
-bash ~/.hermes/scripts/start_mlx_servers.sh
+bash ~/.laia/scripts/start_mlx_servers.sh
 ```
 
 ---

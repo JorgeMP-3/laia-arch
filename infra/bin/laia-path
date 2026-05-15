@@ -1,0 +1,20 @@
+#!/usr/bin/env python3
+"""laia-path — client CLI for the path registry.
+
+Subcommands: resolve, list, env, status, doctor, reload.
+Talks to laia-pathd over Unix socket when available; falls back to direct
+config.yaml resolution otherwise.
+"""
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+_INFRA = Path(__file__).resolve().parents[1]
+if str(_INFRA) not in sys.path:
+    sys.path.insert(0, str(_INFRA))
+
+from pathd.cli import client_main  # noqa: E402
+
+if __name__ == "__main__":
+    raise SystemExit(client_main())

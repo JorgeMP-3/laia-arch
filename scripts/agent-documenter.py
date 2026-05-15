@@ -10,14 +10,15 @@ import time
 from pathlib import Path
 
 import os
-HERMES_HOME = Path(os.environ.get("HERMES_HOME") or (Path.home() / ".hermes"))
-if str(HERMES_HOME) not in sys.path:
-    sys.path.insert(0, str(HERMES_HOME))
+from _laia_runtime_paths import add_workspace_store_to_path, laia_home, workspaces_dir
+
+LAIA_HOME = laia_home()
+add_workspace_store_to_path()
 
 from workspace_store import WorkspaceStore, list_workspaces
 
-WORKSPACES_DIR = HERMES_HOME / "workspaces"
-CONFIG_PATH = HERMES_HOME / "config.yaml"
+WORKSPACES_DIR = workspaces_dir()
+CONFIG_PATH = LAIA_HOME / "config.yaml"
 
 
 def get_active_workspace() -> str:
@@ -38,7 +39,7 @@ def workspace_names(requested: str | None, all_workspaces: bool) -> list[str]:
     if requested:
         return [requested]
     if all_workspaces:
-        return [path.name for path in list_workspaces(HERMES_HOME)]
+        return [path.name for path in WORKSPACES_DIR.iterdir() if path.is_dir() and not path.name.startswith(".")]
     active = get_active_workspace()
     return [active] if active else []
 

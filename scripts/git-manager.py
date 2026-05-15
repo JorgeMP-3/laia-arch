@@ -30,8 +30,10 @@ from rich.text import Text
 
 # ─── Constantes ───────────────────────────────────────────────────────────────
 
-LAIA_ROOT = Path(os.environ.get("HERMES_HOME") or Path(__file__).resolve().parent.parent)
-WORKSPACES_DIR = LAIA_ROOT / "workspaces"
+from _laia_runtime_paths import laia_root, workspaces_dir
+
+LAIA_ROOT = laia_root()
+WORKSPACES_DIR = workspaces_dir()
 INIT_SCRIPT = LAIA_ROOT / "scripts" / "init-workspace-git.sh"
 
 # Workspaces cuyo código vive fuera de su propia carpeta workspaces/X/code/

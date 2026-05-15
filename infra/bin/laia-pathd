@@ -1,0 +1,18 @@
+#!/usr/bin/env python3
+"""laia-pathd — Atlas: live path resolver daemon for LAIA.
+
+This is the entrypoint script. The real logic lives in infra/pathd/.
+"""
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+_INFRA = Path(__file__).resolve().parents[1]
+if str(_INFRA) not in sys.path:
+    sys.path.insert(0, str(_INFRA))
+
+from pathd.cli import daemon_main  # noqa: E402
+
+if __name__ == "__main__":
+    raise SystemExit(daemon_main())

@@ -2,14 +2,18 @@
 Description=LAIA Core Gateway
 After=network-online.target
 Wants=network-online.target
+X-LaiaPathDeps=laia_core,laia_venv
 
 [Service]
 Type=simple
 User=laia-hermes
 Group=laia-hermes
+# Path registry — defines LAIA_ROOT, LAIA_CORE, LAIA_VENV, etc.
+EnvironmentFile=-/home/laia-hermes/.laia/.env.paths
 WorkingDirectory=/home/laia-hermes/LAIA/.laia-core
 Environment=HOME=/home/laia-hermes
-Environment=LAIA_HOME=/home/laia-hermes/.laia
+# NOTE: ExecStart must use literal absolute paths — systemd does not expand
+# variables for the executable. Atlas tracks renames and queues restarts.
 ExecStart=/home/laia-hermes/LAIA/.laia-core/venv/bin/python /home/laia-hermes/LAIA/.laia-core/laia gateway run
 Restart=on-failure
 RestartSec=3

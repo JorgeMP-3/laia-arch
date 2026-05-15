@@ -8,9 +8,11 @@ import re
 from pathlib import Path
 
 import os
-HERMES_HOME = Path(os.environ.get("HERMES_HOME") or (Path.home() / ".hermes"))
-WORKSPACES_DIR = HERMES_HOME / "workspaces"
-SCRIPTS_DIR = HERMES_HOME / "scripts"
+from _laia_runtime_paths import laia_home, workspaces_dir
+
+LAIA_HOME = laia_home()
+WORKSPACES_DIR = workspaces_dir()
+SCRIPTS_DIR = LAIA_HOME / "scripts"
 INDEX_PATH = SCRIPTS_DIR / "INDEX.md"
 
 SCRIPT_EXTENSIONS = {".py", ".sh", ".js", ".ts"}
@@ -109,7 +111,7 @@ def build_index(workspaces: list[str]) -> str:
         "# Scripts Index",
         "",
         "Índice global de los scripts de Hermes. Se regenera automáticamente desde los",
-        "scripts globales de `$HERMES_HOME/scripts/` y `workspaces/{ws}/code/scripts/`.",
+        "scripts globales de `$LAIA_HOME/scripts/` y `workspaces/{ws}/code/scripts/`.",
         "",
     ]
 
@@ -118,7 +120,7 @@ def build_index(workspaces: list[str]) -> str:
     for workspace in workspaces:
         lines.extend(render_section(workspace, scan_workspace_scripts(workspace), "_(vacío — añadir scripts en code/scripts/)_"))
 
-    lines.extend(["---", "*Regenerado con `python3 $HERMES_HOME/scripts/index-scripts.py`.*", ""])
+    lines.extend(["---", "*Regenerado con `python3 $LAIA_HOME/scripts/index-scripts.py`.*", ""])
     return "\n".join(lines)
 
 
