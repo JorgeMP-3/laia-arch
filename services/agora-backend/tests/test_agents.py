@@ -156,3 +156,49 @@ def test_create_agent_ok():
 def test_create_agent_invalid_slug():
     r = client.post("/api/agents", headers=HEADERS, json={"slug": "UPPER_CASE!"})
     assert r.status_code == 422
+
+
+# ── /api/agents/register ─────────────────────────────────────────────────────
+
+
+def _create_employee(username: str) -> str:
+    """Create an employee via the API and return its user_id."""
+    r = client.post(
+        "/api/users",
+        json={"username": username, "display_name": username.title(), "role": "employee", "password": "test1234"},
+        headers=HEADERS,
+    )
+    assert r.status_code in (200, 201), r.text
+    return r.json()["user"]["id"]
+
+
+def test_register_provisioned_agent_creates_record():
+    uid = _create_employee("alicereg")
+    body = {"slug": "alicereg", "user_id": uid, "container_ip": "10.0.0.42", "api_token": "test-token-xyz"}
+    r = client.post("/api/agents/register", json=body, headers=HEADERS)
+    assert r.status_code == 201, r.text
+    agent = r.json()["agent"]
+    assert agent["container_ip"] == "10.0.0.42"
+    assert agent["api_token"] == "test-token-xyz"
+    assert agent["status"] == "running"
+    assert agent["container_name"] == "laia-alicereg"
+
+
+def test_register_rejects_duplicate():
+    uid = _create_employee("bobreg")
+    body = {"slug": "bobreg", "user_id": uid, "container_ip": "10.0.0.43", "api_token": "tk1"}
+    r = client.post("/api/agents/register", json=body, headers=HEADERS)
+    assert r.status_code == 201
+    r2 = client.post("/api/agents/register", json={**body, "api_token": "tk2"}, headers=HEADERS)
+    assert r2.status_code == 409
+
+
+def test_register_404_when_user_missing():
+    body = {
+        "slug": "ghost",
+        "user_id": "user_doesnotexist",
+        "container_ip": "10.0.0.99",
+        "api_token": "tk",
+    }
+    r = client.post("/api/agents/register", json=body, headers=HEADERS)
+    assert r.status_code == 404

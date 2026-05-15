@@ -1644,6 +1644,19 @@ def terminal_tool(
                 "status": "error",
             }, ensure_ascii=False)
 
+        # ── Agora-agent sandbox ──────────────────────────────────────
+        # Under LAIA_PROFILE=agora-agent, block host-management binaries
+        # (lxc, systemctl, apt, docker, sudo, ...).  No-op for LAIA ARCH.
+        from tools.agora_sandbox import enforce_command_sandbox
+        sandbox_err = enforce_command_sandbox(command)
+        if sandbox_err:
+            return json.dumps({
+                "output": "",
+                "exit_code": -1,
+                "error": sandbox_err,
+                "status": "rejected",
+            }, ensure_ascii=False)
+
         # Get configuration
         config = _get_env_config()
         env_type = config["env_type"]

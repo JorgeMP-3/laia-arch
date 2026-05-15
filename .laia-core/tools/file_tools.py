@@ -9,6 +9,7 @@ import threading
 from pathlib import Path
 
 from agent.file_safety import get_read_block_error
+from tools.agora_sandbox import enforce_path_sandbox
 from tools.binary_extensions import has_binary_extension
 from tools.file_operations import (
     ShellFileOperations,
@@ -449,6 +450,13 @@ def read_file_tool(path: str, offset: int = 1, limit: int = 500, task_id: str = 
     try:
         offset, limit = normalize_read_pagination(offset, limit)
 
+        # ── Agora-agent sandbox ───────────────────────────────────────
+        # Under LAIA_PROFILE=agora-agent, restrict reads to whitelisted
+        # roots and block any path inside .laia-core / /opt/laia/agent.
+        sandbox_err = enforce_path_sandbox(path)
+        if sandbox_err:
+            return json.dumps({"error": sandbox_err})
+
         # ── Device path guard ─────────────────────────────────────────
         # Block paths that would hang the process (infinite output,
         # blocking on input).  Pure path check — no I/O.
@@ -789,6 +797,10 @@ def _check_file_staleness(filepath: str, task_id: str) -> str | None:
 
 def write_file_tool(path: str, content: str, task_id: str = "default") -> str:
     """Write content to a file."""
+    # Agora-agent sandbox: block writes outside whitelisted roots.
+    sandbox_err = enforce_path_sandbox(path)
+    if sandbox_err:
+        return tool_error(sandbox_err)
     sensitive_err = _check_sensitive_path(path, task_id)
     if sensitive_err:
         return tool_error(sensitive_err)
@@ -856,6 +868,11 @@ def patch_tool(mode: str = "replace", path: str = None, old_string: str = None,
         import re as _re
         for _m in _re.finditer(r'^\*\*\*\s+(?:Update|Add|Delete)\s+File:\s*(.+)$', patch, _re.MULTILINE):
             _paths_to_check.append(_m.group(1).strip())
+    # Agora-agent sandbox: reject if any target path is outside the whitelist.
+    for _p in _paths_to_check:
+        sandbox_err = enforce_path_sandbox(_p)
+        if sandbox_err:
+            return tool_error(sandbox_err)
     for _p in _paths_to_check:
         sensitive_err = _check_sensitive_path(_p, task_id)
         if sensitive_err:

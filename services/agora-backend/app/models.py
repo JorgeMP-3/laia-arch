@@ -121,6 +121,8 @@ class Agent(BaseModel):
     container_name: str
     status: Literal["planned", "provisioning", "running", "stopped", "error"] = "planned"
     workspace_path: str
+    container_ip: str | None = None
+    api_token: str | None = None
     created_at: str = Field(default_factory=now_iso)
 
 
@@ -155,6 +157,35 @@ class CreateAgentRequest(BaseModel):
     install_runtime: bool = True
     init_workspace: bool = True
     initial_snapshot: bool = True
+
+
+class RegisterAgentRequest(BaseModel):
+    """Register an already-provisioned container in the AGORA DB.
+
+    Use when the admin runs `bash infra/lxd/scripts/create-agent.sh <slug>` on
+    the host (which has LXD perms) and pastes its JSON output here.
+    """
+    slug: str = Field(min_length=2, max_length=32, pattern=r"^[a-z0-9][a-z0-9-]{1,30}$")
+    user_id: str
+    container_ip: str
+    api_token: str
+    api_port: int = 9090
+
+
+class SecretsFetchRequest(BaseModel):
+    """An Agora Agent fetches its LLM API key on startup.
+
+    Auth: provide the agent's bootstrap_token (same value that lives in agent.json
+    and that is also used as the Bearer token for the agent's HTTP API). AGORA
+    verifies the token matches the registered agent and returns the LLM API key
+    that lives in env (never persisted to the agent's disk).
+    """
+    bootstrap_token: str = Field(min_length=8, max_length=128)
+
+
+class SecretsFetchResponse(BaseModel):
+    llm_api_key: str
+    llm_provider: str  # e.g. "openrouter", "anthropic", "openai"
 
 
 class SnapshotRequest(BaseModel):

@@ -250,10 +250,12 @@ class AgoraStore:
     def save_agent(self, agent: Agent) -> None:
         d = agent.model_dump()
         self.db.conn.execute(
-            "INSERT OR REPLACE INTO agents (id, user_id, container_name, status, workspace_path, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            "INSERT OR REPLACE INTO agents "
+            "(id, user_id, container_name, status, workspace_path, container_ip, api_token, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (d["id"], d["user_id"], d["container_name"], d.get("status", "planned"),
-             d.get("workspace_path", ""), d.get("created_at", now_iso()), d.get("updated_at", now_iso())),
+             d.get("workspace_path", ""), d.get("container_ip"), d.get("api_token"),
+             d.get("created_at", now_iso()), d.get("updated_at", now_iso())),
         )
         self.db.conn.commit()
 

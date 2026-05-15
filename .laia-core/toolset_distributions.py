@@ -216,6 +216,27 @@ DISTRIBUTIONS = {
             "vision": 15,     # 15% - vision analysis occasionally
             "image_gen": 15   # 15% - image generation occasionally
         }
+    },
+
+    # Agora Agents: personal agents living in each user's LXD container.
+    # Inherits most LAIA capabilities EXCEPT host management (lxc/systemctl/apt/docker).
+    # Tool sandboxing (path whitelist, command blacklist) is enforced separately
+    # in tools/file_tools.py and tools/terminal_tool.py when LAIA_PROFILE=agora-agent.
+    "agora-agent": {
+        "description": "Personal agent for AGORA users — full LAIA capabilities, no host management, path-sandboxed",
+        "toolsets": {
+            "web": 100,        # Web search / fetch
+            "vision": 100,     # Image analysis
+            "image_gen": 100,  # Image generation
+            "browser": 100,    # Headless browser
+            "file": 80,        # File ops (path-whitelisted to /opt/laia/data,plugins)
+            "terminal": 50,    # Bash (command-blacklisted: no lxc/systemctl/apt/...)
+            "moa": 40,         # Mixture-of-agents reasoning
+            # OMIT intentionally:
+            #   - delegate_task: child agents don't spawn subagents
+            #   - cronjob: no systemd inside container
+            #   - mixture_of_agents (as standalone): too heavy for personal agent
+        }
     }
 }
 

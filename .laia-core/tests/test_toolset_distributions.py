@@ -28,9 +28,44 @@ class TestGetDistribution:
             "safe", "balanced", "minimal", "terminal_only", "terminal_web",
             "creative", "reasoning", "browser_use", "browser_only",
             "browser_tasks", "terminal_tasks", "mixed_tasks",
+            "agora-agent",
         ]
         for name in expected:
             assert get_distribution(name) is not None, f"{name} missing"
+
+
+class TestAgoraAgentDistribution:
+    """Sprint 2: agora-agent profile must include LAIA capabilities but
+    exclude host-management toolsets that don't apply in a child container."""
+
+    def test_includes_core_user_toolsets(self):
+        dist = get_distribution("agora-agent")
+        assert dist is not None
+        toolsets = dist["toolsets"]
+        for required in ("web", "vision", "image_gen", "browser", "file", "terminal", "moa"):
+            assert required in toolsets, f"agora-agent missing essential toolset: {required}"
+
+    def test_does_not_carry_host_management_toolsets(self):
+        dist = get_distribution("agora-agent")
+        toolsets = dist["toolsets"]
+        for forbidden in ("delegate_task", "cronjob", "mixture_of_agents", "lxc", "systemctl"):
+            assert forbidden not in toolsets, (
+                f"agora-agent must NOT include host-management toolset: {forbidden}"
+            )
+
+    def test_file_and_terminal_have_reduced_probability(self):
+        """Path/command sandboxing is layered on top in tools/file_tools.py and
+        tools/terminal_tool.py. The distribution itself reduces probability so
+        the agent doesn't reach for them first."""
+        dist = get_distribution("agora-agent")
+        ts = dist["toolsets"]
+        assert ts["file"] <= 80
+        assert ts["terminal"] <= 50
+
+    def test_description_mentions_personal_agent(self):
+        dist = get_distribution("agora-agent")
+        desc = dist["description"].lower()
+        assert "agora" in desc or "personal" in desc
 
 
 class TestListDistributions:

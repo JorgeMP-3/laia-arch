@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 import csv
 import io
 import json
+import logging
 import os
 import re
 import subprocess
@@ -11,7 +13,15 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+from .agent_client import (
+    AgentClient,
+    AgentClientError,
+    AgentNotFoundError,
+    AgentUnreachableError,
+)
 from .config import settings
+
+logger = logging.getLogger(__name__)
 
 SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{1,30}$")
 SNAPSHOT_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,40}$")
@@ -156,6 +166,55 @@ class AgentOrchestrator:
         rc, out, err = self._run("delete-agent", slug, "--yes", "--force", timeout=60)
         return _result(rc, out, err)
 
+    # ── HTTP client to child (preferred channel for sprint 1+) ─────────────────
+
+    def _agent_record(self, slug: str) -> dict | None:
+        """Lookup the Agent record from storage (for container_ip + api_token).
+
+        Imported lazily to break the storage→orchestrator circular dependency.
+        Returns None if no record exists yet.
+        """
+        try:
+            from .storage import store
+        except ImportError:
+            return None
+        slug_norm = slug.removeprefix("laia-")
+        for agent in store.agents():
+            if agent.container_name == f"laia-{slug_norm}" or agent.container_name == slug_norm:
+                return agent.model_dump()
+        return None
+
+    def _make_client(self, slug: str) -> AgentClient | None:
+        """Build an AgentClient from the DB record. Returns None if not provisioned."""
+        record = self._agent_record(slug)
+        if not record:
+            return None
+        ip = record.get("container_ip")
+        token = record.get("api_token")
+        if not ip or not token:
+            return None
+        return AgentClient(slug=slug, host=ip, token=token)
+
+    async def _http_get_profile(self, slug: str) -> dict:
+        async with self._make_client(slug) as c:
+            return await c.get_profile()
+
+    async def _http_update_profile(self, slug: str, patch: dict) -> dict:
+        async with self._make_client(slug) as c:
+            return await c.update_profile(patch)
+
+    async def _http_submit_task(self, slug: str, task_type: str, payload: dict) -> dict:
+        async with self._make_client(slug) as c:
+            return await c.submit_task(task_type, payload)
+
+    async def _http_get_task(self, slug: str, task_id: str) -> dict | None:
+        async with self._make_client(slug) as c:
+            return await c.get_task(task_id)
+
+    async def _http_status(self, slug: str) -> dict:
+        async with self._make_client(slug) as c:
+            return await c.status()
+
     def _exec_python(self, slug: str, script: str, timeout: int = 15) -> dict:
         """Run a Python script inside the agent container as laia-agent user."""
         self._validate_slug(slug)
@@ -182,8 +241,19 @@ class AgentOrchestrator:
         }
 
     def get_agent_profile(self, slug: str) -> dict:
-        """Read the full agent profile (persona, instructions, skills, preferences)."""
+        """Read the full agent profile (persona, instructions, skills, preferences).
+
+        Prefers HTTP via AgentClient. Falls back to lxc-exec for unmigrated agents.
+        """
         self._validate_slug(slug)
+        client = self._make_client(slug)
+        if client is not None:
+            try:
+                data = asyncio.run(self._http_get_profile(slug))
+                return {"ok": True, "returncode": 0, "data": data, "stderr": ""}
+            except AgentClientError as exc:
+                logger.warning("HTTP get_profile %s failed (%s); falling back to lxc-exec", slug, exc)
+        # Legacy fallback (lxc exec)
         script = (
             "from laia_agent.config import load_config\n"
             "from laia_agent.profile import get_profile\n"
@@ -196,6 +266,14 @@ class AgentOrchestrator:
     def update_agent_profile(self, slug: str, payload: dict) -> dict:
         """Update agent profile fields (persona, instructions, skills, preferences)."""
         self._validate_slug(slug)
+        client = self._make_client(slug)
+        if client is not None:
+            try:
+                data = asyncio.run(self._http_update_profile(slug, payload))
+                return {"ok": True, "returncode": 0, "data": data, "stderr": ""}
+            except AgentClientError as exc:
+                logger.warning("HTTP update_profile %s failed (%s); falling back to lxc-exec", slug, exc)
+        # Legacy fallback (lxc exec)
         encoded = json.dumps(payload, ensure_ascii=False)
         script = (
             "from laia_agent.config import load_config\n"
@@ -244,10 +322,20 @@ class AgentOrchestrator:
         }
 
     def send_task(self, slug: str, task_type: str, payload: dict) -> dict:
-        """Write a task JSON to /opt/laia/data/tasks/inbox/ inside the container."""
+        """Submit a task. Prefers HTTP POST /tasks; falls back to filesystem inject."""
         self._validate_slug(slug)
         if not TASK_TYPE_RE.match(task_type):
             raise OrchestratorError(f"invalid task_type: {task_type!r}")
+
+        client = self._make_client(slug)
+        if client is not None:
+            try:
+                result = asyncio.run(self._http_submit_task(slug, task_type, payload))
+                return {"ok": True, "task_id": result.get("id"), "error": ""}
+            except AgentClientError as exc:
+                logger.warning("HTTP send_task %s failed (%s); falling back to lxc-exec", slug, exc)
+
+        # Legacy fallback (lxc exec — file inject)
         task_id = f"task_{uuid.uuid4().hex[:12]}"
         task_data = json.dumps({
             "id": task_id,
@@ -273,8 +361,16 @@ class AgentOrchestrator:
         }
 
     def read_task_result(self, slug: str, task_id: str) -> dict | None:
-        """Try to read a finished task from done/ or failed/ directories."""
+        """Read a finished task. Prefers HTTP GET /tasks/{id}; falls back to filesystem."""
         self._validate_slug(slug)
+        client = self._make_client(slug)
+        if client is not None:
+            try:
+                return asyncio.run(self._http_get_task(slug, task_id))
+            except AgentClientError as exc:
+                logger.warning("HTTP read_task %s failed (%s); falling back to lxc-exec", slug, exc)
+
+        # Legacy fallback (lxc exec — direct file read)
         if not re.match(r"^task_[a-f0-9]{12}$", task_id):
             raise OrchestratorError(f"invalid task_id: {task_id!r}")
         container = f"laia-{slug}"

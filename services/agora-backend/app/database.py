@@ -35,6 +35,8 @@ CREATE TABLE IF NOT EXISTS agents (
     container_name TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'planned',
     workspace_path TEXT NOT NULL,
+    container_ip TEXT,
+    api_token TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     FOREIGN KEY (user_id) REFERENCES users(id)
@@ -74,6 +76,12 @@ class Database:
 
     def ensure_schema(self) -> None:
         self.conn.executescript(SCHEMA)
+        # Migrations for older DBs: add columns if missing (idempotent).
+        existing = {row[1] for row in self.conn.execute("PRAGMA table_info(agents)").fetchall()}
+        for col, ddl in (("container_ip", "ALTER TABLE agents ADD COLUMN container_ip TEXT"),
+                         ("api_token",    "ALTER TABLE agents ADD COLUMN api_token TEXT")):
+            if col not in existing:
+                self.conn.execute(ddl)
         self.conn.commit()
 
     def backup(self) -> Path:

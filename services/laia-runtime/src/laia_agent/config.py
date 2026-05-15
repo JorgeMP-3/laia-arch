@@ -18,6 +18,8 @@ class AgentConfig:
     workspace_dir: Path
     workspace_db: Path
     heartbeat_interval: int
+    api_token: str = ""
+    api_port: int = 9090
 
 
 def load_config(path: Path = Path("/opt/laia/agent.json")) -> AgentConfig:
@@ -37,4 +39,6 @@ def load_config(path: Path = Path("/opt/laia/agent.json")) -> AgentConfig:
         workspace_dir=workspace.parent,
         workspace_db=workspace,
         heartbeat_interval=int(data.get("heartbeat_interval", 5)),
+        api_token=str(data.get("api_token", "")),
+        api_port=int(data.get("api_port", 9090)),
     )

@@ -1,14 +1,18 @@
 from __future__ import annotations
 
+import os
+import re
 import uuid
 
 from fastapi import Depends, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
+from pydantic import BaseModel, Field as PydField
 
 from .config import settings
 from .auth import authenticate, can_access_user_scope, current_user, issue_tokens, public_user, require_roles
 from .models import (
+    Agent,
     AgentProfile,
     AgentProfileUpdate,
     AgentStatus,
@@ -16,6 +20,9 @@ from .models import (
     AgentUpdate,
     CoordinatorAssignRequest,
     CreateAgentRequest,
+    RegisterAgentRequest,
+    SecretsFetchRequest,
+    SecretsFetchResponse,
     Event,
     EventCreate,
     LoginRequest,
@@ -580,6 +587,85 @@ def get_agent(slug: str, _: User = Depends(require_roles("agora_admin"))):
     return agent
 
 
+@app.post("/api/agents/register", status_code=201)
+def register_provisioned_agent(payload: RegisterAgentRequest, user: User = Depends(require_roles("agora_admin"))):
+    """Register an already-provisioned LXD container in the AGORA DB.
+
+    The admin first runs `bash infra/lxd/scripts/create-agent.sh <slug>` on the host
+    (which produces a JSON line with container_ip + api_token), then posts that JSON
+    here. AGORA from that point onward talks to the child over HTTP using the token.
+    """
+    target_user = next((u for u in store.users() if u.id == payload.user_id), None)
+    if target_user is None:
+        raise HTTPException(status_code=404, detail=f"user not found: {payload.user_id}")
+    if target_user.agent_id:
+        raise HTTPException(status_code=409, detail="user already has an agent")
+    agent = Agent(
+        id=new_id("agent"),
+        user_id=payload.user_id,
+        container_name=f"laia-{payload.slug}",
+        status="running",
+        workspace_path="/opt/laia/workspaces/personal/workspace.db",
+        container_ip=payload.container_ip,
+        api_token=payload.api_token,
+    )
+    store.save_agent(agent)
+    target_user.agent_id = agent.id
+    store.save_user(target_user)
+    store.record_event(Event(
+        event_type="agent_registered",
+        actor_id=user.id,
+        summary=payload.slug,
+        payload={"agent_id": agent.id, "user_id": payload.user_id, "ip": payload.container_ip},
+    ))
+    return {"ok": True, "agent": agent}
+
+
+@app.post("/api/agents/{slug}/secrets", response_model=SecretsFetchResponse)
+def fetch_agent_secrets(slug: str, payload: SecretsFetchRequest):
+    """Agora Agent calls this on startup to fetch its LLM API key.
+
+    Auth: payload.bootstrap_token must match the api_token registered for the
+    agent in the DB. NOT a JWT-protected endpoint because the child container
+    has no JWT — it only has its bootstrap token from agent.json.
+    """
+    if not re.fullmatch(r"[a-z0-9][a-z0-9-]{1,30}", slug):
+        raise HTTPException(status_code=400, detail="invalid slug")
+
+    container_name = f"laia-{slug}"
+    target = next(
+        (a for a in store.agents() if a.container_name == container_name),
+        None,
+    )
+    if target is None:
+        # Don't reveal whether the agent exists — same response as bad token.
+        raise HTTPException(status_code=401, detail="invalid bootstrap token")
+    if not target.api_token or target.api_token != payload.bootstrap_token:
+        raise HTTPException(status_code=401, detail="invalid bootstrap token")
+
+    # Pick the first LLM key available on this host. Sprint 2 shares one key
+    # across all Agora Agents; sprint 3+ can introduce per-agent keys.
+    for provider, env_var in (
+        ("openrouter", "OPENROUTER_API_KEY"),
+        ("anthropic", "ANTHROPIC_API_KEY"),
+        ("openai", "OPENAI_API_KEY"),
+    ):
+        key = os.environ.get(env_var, "").strip()
+        if key:
+            store.record_event(Event(
+                event_type="agent_secret_fetched",
+                actor_id=None,
+                summary=slug,
+                payload={"provider": provider, "agent_id": target.id},
+            ))
+            return SecretsFetchResponse(llm_api_key=key, llm_provider=provider)
+
+    raise HTTPException(
+        status_code=503,
+        detail="no LLM API key configured on AGORA host (set OPENROUTER_API_KEY)",
+    )
+
+
 @app.post("/api/agents", status_code=201)
 def create_agent(payload: CreateAgentRequest, user: User = Depends(require_roles("agora_admin"))):
     try:
@@ -631,6 +717,62 @@ def restart_agent(slug: str, _: User = Depends(require_roles("agora_admin"))):
         return orchestrator.restart_agent(slug)
     except OrchestratorError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+
+
+class ChatProxyRequest(BaseModel):
+    message: str = PydField(min_length=1, max_length=20_000)
+    session_id: str | None = None
+
+
+def _agent_client_for_slug(slug: str):
+    """Locate the Agent record for slug and build an AgentClient (HTTPS to child)."""
+    from .agent_client import AgentClient
+    container = f"laia-{slug}"
+    target = next((a for a in store.agents() if a.container_name == container), None)
+    if target is None:
+        raise HTTPException(status_code=404, detail=f"agent {slug!r} not registered")
+    if not target.container_ip or not target.api_token:
+        raise HTTPException(
+            status_code=503,
+            detail=f"agent {slug!r} not provisioned yet (no container_ip / api_token)",
+        )
+    return AgentClient(slug=slug, host=target.container_ip, token=target.api_token)
+
+
+# Note: /api/agents/me/chat must be declared BEFORE /api/agents/{slug}/chat
+# so FastAPI doesn't match "me" as a slug.
+@app.post("/api/agents/me/chat")
+async def chat_with_my_agent(payload: ChatProxyRequest, user: User = Depends(current_user)):
+    """Employee path: chat with the agent linked to the current user."""
+    if not user.agent_id:
+        raise HTTPException(status_code=404, detail="no agent linked to your user")
+    agent = next((a for a in store.agents() if a.id == user.agent_id), None)
+    if agent is None:
+        raise HTTPException(status_code=404, detail="agent record missing")
+    slug = agent.container_name.removeprefix("laia-")
+    client = _agent_client_for_slug(slug)
+
+    async def relay():
+        async for chunk in client.chat_stream(payload.message, session_id=payload.session_id):
+            yield chunk
+
+    return StreamingResponse(relay(), media_type="text/event-stream")
+
+
+@app.post("/api/agents/{slug}/chat")
+async def chat_with_agent_admin(
+    slug: str,
+    payload: ChatProxyRequest,
+    user: User = Depends(require_roles("agora_admin")),
+):
+    """Admin path: chat with any registered agent. SSE stream is proxied as-is."""
+    client = _agent_client_for_slug(slug)
+
+    async def relay():
+        async for chunk in client.chat_stream(payload.message, session_id=payload.session_id):
+            yield chunk
+
+    return StreamingResponse(relay(), media_type="text/event-stream")
 
 
 @app.post("/api/agents/{slug}/snapshot")
