@@ -4,8 +4,12 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 
-def test_blank_memory_provider_does_not_auto_enable_honcho():
-    """Blank memory.provider should remain opt-out even if Honcho fallback looks configured."""
+def test_blank_memory_provider_defaults_to_workspace_context():
+    """Blank memory.provider must default to workspace-context (bundled core memory).
+
+    Honcho (or any other provider with stale credentials) must still NOT auto-enable —
+    only the bundled workspace-context is the canonical default.
+    """
     cfg = {"memory": {"provider": ""}, "agent": {}}
     honcho_cfg = SimpleNamespace(enabled=True, api_key="stale-key", base_url=None)
 
@@ -32,8 +36,11 @@ def test_blank_memory_provider_does_not_auto_enable_honcho():
             skip_memory=False,
         )
 
-    assert agent._memory_manager is None
+    # workspace-context (bundled) must be selected and loaded.
+    load_memory_provider.assert_called_with("workspace-context")
+    assert agent._memory_manager is not None
+
+    # Honcho must not have been auto-enabled by virtue of stale config.
     from_global_config.assert_not_called()
-    load_memory_provider.assert_not_called()
     save_config.assert_not_called()
 

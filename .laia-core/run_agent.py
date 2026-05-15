@@ -1673,13 +1673,21 @@ class AIAgent:
         self._memory_manager = None
         if not skip_memory:
             try:
-                _mem_provider_name = mem_config.get("provider", "") if mem_config else ""
+                _configured_provider = (mem_config.get("provider", "") if mem_config else "") or ""
+                _mem_provider_name = _configured_provider or "workspace-context"
 
                 if _mem_provider_name:
                     from agent.memory_manager import MemoryManager as _MemoryManager
                     from plugins.memory import load_memory_provider as _load_mem
                     self._memory_manager = _MemoryManager()
                     _mp = _load_mem(_mem_provider_name)
+                    if (_mp is None or not _mp.is_available()) and _mem_provider_name != "workspace-context":
+                        logger.warning(
+                            "Memory provider '%s' unavailable, falling back to workspace-context",
+                            _mem_provider_name,
+                        )
+                        _mem_provider_name = "workspace-context"
+                        _mp = _load_mem(_mem_provider_name)
                     if _mp and _mp.is_available():
                         self._memory_manager.add_provider(_mp)
                     if self._memory_manager.providers:
