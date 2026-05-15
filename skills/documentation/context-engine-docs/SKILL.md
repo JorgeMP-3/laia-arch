@@ -23,7 +23,7 @@ del Context Engine y hay que reflejarlo en la documentacion de la BD.
 
 El Context Engine tiene su documentacion en `workspace laia-arch`.
 La fuente de verdad para el codigo es:
-- Plugin: `/home/laia-arch/LAIA/plugins/workspace-context/__init__.py`
+- Plugin: `LAIA/.laia-core/plugins/memory/workspace-context/__init__.py`
 - Backend: `/home/laia-arch/LAIA/.laia-arch/workspace-ui/backend/main.py`
 - Config: `/home/laia-arch/LAIA/config.yaml`
 

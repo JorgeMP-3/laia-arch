@@ -24,6 +24,7 @@ DEFAULT_INCLUDE_DIRS = (
     Path("scripts"),
     Path("plugins"),
     Path("workspace_store"),
+    Path(".laia-core/plugins/memory/workspace-context"),
     Path(".laia-arch/workspace-ui/backend"),
 )
 EXCLUDE_DIR_NAMES = {
@@ -49,7 +50,7 @@ WORKSPACE_NAME_RE = re.compile(
     r"['\"](" + "|".join(re.escape(name) for name in DEFAULT_WORKSPACE_NAMES) + r")['\"]"
 )
 WORKSPACE_NAME_ALLOWED_FILES = {
-    Path("plugins/workspace-context/__init__.py"),
+    Path(".laia-core/plugins/memory/workspace-context/__init__.py"),
     Path("plugins/doyouwin/__init__.py"),
     Path("scripts/workspace-daily-diagnostic.py"),
     Path("scripts/_doc_context_engine.py"),
