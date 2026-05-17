@@ -40,8 +40,8 @@ API_PORT="${API_PORT:-9091}"
 HOST_USER_ROOT="${HOST_USER_ROOT:-/srv/laia/users}"
 LXD_UID_OFFSET="${LXD_UID_OFFSET:-100000}"
 
-if ! [[ "$SLUG" =~ ^[a-z0-9][a-z0-9-]{1,30}$ ]]; then
-  echo "Invalid slug: $SLUG (must match ^[a-z0-9][a-z0-9-]{1,30}$)" >&2
+if ! [[ "$SLUG" =~ ^[a-z0-9][a-z0-9_-]{1,30}$ ]]; then
+  echo "Invalid slug: $SLUG (must match ^[a-z0-9][a-z0-9_-]{1,30}$ — letters, digits, '_' or '-')" >&2
   exit 1
 fi
 

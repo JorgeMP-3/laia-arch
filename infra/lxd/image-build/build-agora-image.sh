@@ -163,8 +163,13 @@ lxc exec "$BASE_CONTAINER" -- bash -lc '
   elif [[ -f /opt/agora/app/services/agora-backend/requirements.txt ]]; then
     /opt/agora/venv/bin/pip install -r /opt/agora/app/services/agora-backend/requirements.txt
   fi
-  # Install .laia-core deps if present (motor AIAgent)
-  if [[ -f /opt/agora/app/.laia-core/requirements.txt ]]; then
+  # Install .laia-core (motor AIAgent) and its deps. ARCH migrated from
+  # requirements.txt to pyproject.toml so we try both — first the
+  # package install (pulls deps from pyproject), then fallback to the
+  # legacy requirements.txt for backward compat.
+  if [[ -f /opt/agora/app/.laia-core/pyproject.toml ]]; then
+    /opt/agora/venv/bin/pip install /opt/agora/app/.laia-core
+  elif [[ -f /opt/agora/app/.laia-core/requirements.txt ]]; then
     /opt/agora/venv/bin/pip install -r /opt/agora/app/.laia-core/requirements.txt
   fi
 '
