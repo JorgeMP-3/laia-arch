@@ -107,6 +107,15 @@ lxc exec "$BASE_CONTAINER" -- bash -lc '
     git
   apt-get clean
   rm -rf /var/lib/apt/lists/*
+
+  # Non-privileged service account — the systemd unit runs as this user
+  # instead of root so a prompt-injected LLM cannot pivot to container
+  # admin (write /etc, chown, modprobe, ...). The container is already
+  # LXD-unprivileged so even root inside maps to uid 100000 on the host;
+  # this adds a second layer (UID separation inside the container).
+  if ! id agora >/dev/null 2>&1; then
+    useradd --system --no-create-home --shell /usr/sbin/nologin --home /opt/agora agora
+  fi
 '
 
 # ── upload + extract source ─────────────────────────────────────────────────
@@ -162,7 +171,18 @@ lxc exec "$BASE_CONTAINER" -- bash -lc '
 
 # ── install systemd unit ────────────────────────────────────────────────────
 
-info "installing systemd unit for agora-backend"
+info "fixing ownership for agora user (data dir + venv + app)"
+lxc exec "$BASE_CONTAINER" -- bash -lc '
+  set -euo pipefail
+  # The agora user needs RW on /opt/agora/data (bind mount source from
+  # /srv/laia/agora — gets chowned again by create-agora.sh post-mount)
+  # and R on /opt/agora/{app,venv}.
+  chown -R agora:agora /opt/agora/data
+  chown -R root:agora /opt/agora/app /opt/agora/venv
+  chmod -R g+rX /opt/agora/app /opt/agora/venv
+'
+
+info "installing hardened systemd unit for agora-backend"
 lxc exec "$BASE_CONTAINER" -- bash -lc '
   cat > /etc/systemd/system/agora-backend.service <<"EOF"
 [Unit]
@@ -173,8 +193,8 @@ Wants=network.target
 
 [Service]
 Type=simple
-User=root
-Group=root
+User=agora
+Group=agora
 WorkingDirectory=/opt/agora/app/services/agora-backend
 Environment="AGORA_DATA_DIR=/opt/agora/data"
 Environment="LAIA_HOME=/opt/agora/data"
@@ -186,6 +206,37 @@ Restart=on-failure
 RestartSec=3
 StandardOutput=journal
 StandardError=journal
+
+# ─── Hardening (A3) ─────────────────────────────────────────────────────
+# Goal: even if the LLM is prompt-injected to ask for destructive
+# operations, the systemd unit denies the underlying primitives. The
+# container itself is LXD-unprivileged (root inside maps to uid 100000
+# on host); these flags add a second wall.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+# The backend only writes to /opt/agora/data (bind mount) plus
+# transient /tmp and /run (PrivateTmp creates a private namespace).
+ReadWritePaths=/opt/agora/data
+# Drop all capabilities — the service neither needs to bind privileged
+# ports (it listens on :8000, proxy-forwarded by LXD) nor change uids.
+CapabilityBoundingSet=
+AmbientCapabilities=
+# Note: we deliberately keep MemoryDenyWriteExecute=no because uvloop
+# and some Pydantic backends use ctypes / dlopen which break under that
+# flag. Re-evaluate per environment.
 
 LimitNOFILE=65536
 TimeoutStopSec=15

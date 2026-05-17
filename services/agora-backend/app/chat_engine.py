@@ -268,10 +268,75 @@ async def chat_stream(
             # AIAgent into our asyncio queue. Each is assigned to the
             # instance (the AIAgent reads them as plain attributes).
             ai = session.aiagent
+
+            # Audit log of tool invocations (A5). Emitted at INFO level so it
+            # lands in the standard journal/log stream alongside HTTP requests.
+            # Operators can `grep tool_call /tmp/agora-backend-chat.log` to see
+            # every action triggered by a user. The pair started+complete lets
+            # us track latency too. ``decision`` is filled in by the forwarder
+            # in its own audit log line; here we record the agent-side intent.
+            audit_log = logging.getLogger("agora.tool_call")
+            _tool_started_at: dict[str, float] = {}
+
+            def _audit_started(call_id: str, name: str, args: dict) -> None:
+                import time as _t
+                _tool_started_at[call_id] = _t.monotonic()
+                audit_log.info(
+                    "tool_call started",
+                    extra={
+                        "event": "tool_call",
+                        "phase": "started",
+                        "user_id": user.id,
+                        "agent_slug": slug,
+                        "task_id": turn_task_id,
+                        "call_id": call_id,
+                        "tool": name,
+                        "arg_keys": sorted(list((args or {}).keys())),
+                    },
+                )
+
+            def _audit_complete(call_id: str, name: str, args: dict, result: Any) -> None:
+                import time as _t
+                duration_ms = None
+                started = _tool_started_at.pop(call_id, None)
+                if started is not None:
+                    duration_ms = int((_t.monotonic() - started) * 1000)
+                # Don't log the raw result — it can be large or contain
+                # sensitive content. Just length + success heuristic.
+                result_len = len(result) if isinstance(result, str) else None
+                ok_hint = None
+                if isinstance(result, str) and result.startswith("[exit="):
+                    ok_hint = False  # bash non-zero
+                audit_log.info(
+                    "tool_call complete",
+                    extra={
+                        "event": "tool_call",
+                        "phase": "complete",
+                        "user_id": user.id,
+                        "agent_slug": slug,
+                        "task_id": turn_task_id,
+                        "call_id": call_id,
+                        "tool": name,
+                        "duration_ms": duration_ms,
+                        "result_len": result_len,
+                        "ok_hint": ok_hint,
+                    },
+                )
+
             try:
                 ai.stream_delta_callback = lambda delta: _push({"type": "token", "value": str(delta)}) if delta else None
-                ai.tool_start_callback = lambda call_id, name, args: _push({"type": "tool", "name": name, "status": "started"})
-                ai.tool_complete_callback = lambda call_id, name, args, result: _push({"type": "tool", "name": name, "status": "complete"})
+                ai.tool_start_callback = (
+                    lambda call_id, name, args: (
+                        _audit_started(call_id, name, args),
+                        _push({"type": "tool", "name": name, "status": "started"}),
+                    )
+                )
+                ai.tool_complete_callback = (
+                    lambda call_id, name, args, result: (
+                        _audit_complete(call_id, name, args, result),
+                        _push({"type": "tool", "name": name, "status": "complete"}),
+                    )
+                )
             except Exception:
                 pass  # placeholder agents may not have these slots
 

@@ -47,7 +47,9 @@ if [[ ! -d "$HOST_DATA_DIR" ]]; then
     exit 2
   fi
   mkdir -p "$HOST_DATA_DIR"
-  # uid 100000 is the LXD unprivileged container root mapping
+  # uid 100000 = LXD unprivileged container root. The post-mount chown
+  # below tightens it to the `agora` service account once the container
+  # is running and we can resolve the per-container uid mapping.
   chown -R 100000:100000 "$HOST_DATA_DIR"
 fi
 
@@ -61,6 +63,13 @@ echo "Attaching bind mount: $HOST_DATA_DIR → /opt/agora/data"
 lxc config device add "$CONTAINER" agora-data disk \
     source="$HOST_DATA_DIR" \
     path=/opt/agora/data
+
+# Ensure /opt/agora/data is writable by the hardened agora service user
+# inside the container. The unit runs as User=agora (A3 hardening), not
+# root, so the bind-mounted dir needs the right ownership.
+echo "Fixing ownership of /opt/agora/data inside container ..."
+lxc exec "$CONTAINER" -- chown -R agora:agora /opt/agora/data 2>&1 || \
+  echo "  (warn) chown failed — bind mount may need manual ownership fix" >&2
 
 # Proxy device: host:HOST_PORT → container:CONTAINER_PORT
 echo "Adding proxy device: host :$HOST_PORT → container :$CONTAINER_PORT"

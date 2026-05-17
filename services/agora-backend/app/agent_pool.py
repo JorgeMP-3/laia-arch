@@ -320,6 +320,49 @@ class _PlaceholderAgent:
         )
 
 
+# Toolsets that the AIAgent in laia-agora is allowed to load. Derived from
+# the ``agora-orchestrator`` profile in
+# ``.laia-core/toolset_distributions.py`` but applied here as an explicit
+# enabled_toolsets list — the AIAgent default loads every toolset, so
+# without this guard tools like ``execute_code``, ``cronjob``,
+# ``skill_manage`` and ``delegate_task`` would run locally in laia-agora
+# and a prompt-injected user could pivot from the chat to arbitrary code
+# execution in the orchestrator container.
+#
+# What gets loaded:
+#   - file       → read_file, write_file, patch, search_files  (forwarded by plugin)
+#   - terminal   → terminal, process                            (terminal forwarded; process blocked by A2 deny-list)
+#   - web        → web_search, web_extract                      (network only, AGORA-local)
+#   - vision     → image analysis                               (network only, AGORA-local)
+#   - image_gen  → image generation                             (network only, AGORA-local)
+#   - browser    → headless browser tools                       (network only, AGORA-local)
+#   - fetch_url  → HTTP fetch                                   (network only, AGORA-local)
+#   - workspace  → collective workspace_* tools                 (AGORA-local DB)
+#   - clarify    → ask-the-user prompt                          (no side effects)
+#   - todo       → in-memory todo list                          (no side effects)
+#
+# What is NOT loaded (would otherwise execute locally in laia-agora):
+#   - code_execution (execute_code) → Python eval
+#   - cronjob → scheduling persistent jobs in AGORA
+#   - skills (skill_manage, skills_list, skill_view) → dynamic Python load
+#   - memory → workspace nodes via memory provider
+#   - delegation (delegate_task) → spawn subagents
+#   - moa (mixture_of_agents) → recursive agent invocation
+#   - discord, discord_admin, homeassistant, feishu_*, spotify, …
+AGORA_ENABLED_TOOLSETS: list[str] = [
+    "file",
+    "terminal",
+    "web",
+    "vision",
+    "image_gen",
+    "browser",
+    "fetch_url",
+    "workspace",
+    "clarify",
+    "todo",
+]
+
+
 def _build_aiagent(cfg: LLMSessionConfig, *, session_metadata: dict[str, Any]) -> Any:
     """Build a real AIAgent if available; otherwise a placeholder.
 
@@ -345,6 +388,10 @@ def _build_aiagent(cfg: LLMSessionConfig, *, session_metadata: dict[str, Any]) -
         user_id=session_metadata.get("user_id"),
         platform="agora",
         skip_context_files=True,
+        # Restrict the tool surface — see AGORA_ENABLED_TOOLSETS above.
+        # The plugin agora-executor-forwarder routes filesystem/bash to the
+        # user's executor; what remains here MUST be safe to run locally.
+        enabled_toolsets=AGORA_ENABLED_TOOLSETS,
     )
 
 

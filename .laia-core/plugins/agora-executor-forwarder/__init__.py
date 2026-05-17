@@ -64,6 +64,33 @@ EXECUTOR_TOOLS: frozenset[str] = frozenset({
 })
 
 
+# Tools that MUST NOT execute locally in laia-agora regardless of the
+# toolset profile. If one of these reaches the hook with an active session
+# context (i.e. a real AGORA chat turn) the hook returns a ``block``
+# directive carrying a clear error so the LLM doesn't keep retrying.
+#
+# Without an active session context (unit tests, ad-hoc callers that don't
+# call ``register_context``) the hook still returns ``None`` and lets the
+# AIAgent decide — those callers aren't the AGORA attack surface and a
+# blanket block here would break ARCH and any non-AGORA consumer of the
+# same plugin.
+#
+# Defense in depth: ``agent_pool.AGORA_ENABLED_TOOLSETS`` already strips
+# these from the loaded toolset, so this set is a backstop in case:
+#   1. The enabled_toolsets list drifts (someone adds back a toolset
+#      that pulls in one of these).
+#   2. A future plugin registers one of these names directly.
+#   3. A toolset_distributions edit accidentally re-enables them.
+AGORA_LOCAL_DENY: frozenset[str] = frozenset({
+    "execute_code",        # Python eval — RCE in laia-agora
+    "process",             # background subprocess spawning
+    "cronjob",             # persistent jobs inside the orchestrator
+    "skill_manage",        # dynamic Python loading from disk
+    "delegate_task",       # spawn subagents in laia-agora
+    "mixture_of_agents",   # recursive agent invocation
+})
+
+
 # When the LLM's tool name differs from the executor's, translate the
 # {name, args} pair before posting. The forwarder is the only place we do
 # this — keeps the executor lean and the .laia-core registry unchanged.
@@ -298,10 +325,33 @@ def _on_pre_tool_call(
     is configured. Returns ``None`` otherwise, letting the AIAgent execute
     the tool locally inside laia-agora.
     """
+    # Resolve session context first — we need it both for the deny-list
+    # decision (only enforce in AGORA chat turns, not in ARCH/tests) and
+    # for the regular forward path below.
+    ctx = _lookup_context(task_id)
+
+    # Deny-list (security backstop): even if AGORA_ENABLED_TOOLSETS drifts
+    # or a future plugin registers a dangerous tool, an active AGORA session
+    # cannot run it locally. Block with a structured error so the LLM sees
+    # the policy and stops retrying.
+    if tool_name in AGORA_LOCAL_DENY and ctx is not None:
+        logger.warning(
+            "FWD-HOOK denied tool=%s task=%s slug=%s (AGORA_LOCAL_DENY)",
+            tool_name, task_id, ctx.get("agent_slug"),
+        )
+        return {"action": "replace", "message": json.dumps({
+            "ok": False,
+            "error": (
+                f"tool {tool_name!r} is disabled in AGORA per security policy. "
+                "Use `terminal` or `write_file` (which forward to the user's "
+                "executor container) instead of executing code in the orchestrator."
+            ),
+            "policy": "agora_local_deny",
+        })}
+
     if tool_name not in EXECUTOR_TOOLS:
         return None
 
-    ctx = _lookup_context(task_id)
     logger.debug(
         "FWD-HOOK tool=%s has_ctx=%s ip=%s task=%s",
         tool_name,
@@ -343,6 +393,10 @@ def _on_pre_tool_call(
     # Per-tool timeout override, otherwise the ctx default.
     tool_timeout = EXECUTOR_TOOL_TIMEOUTS.get(exec_tool, timeout_default)
 
+    # Structured audit log (A5) — every forward gets a single INFO line so
+    # the operator can grep `decision=forwarded` over `/tmp/agora-backend-chat.log`.
+    _audit = logging.getLogger("agora.forwarder.audit")
+
     try:
         response = httpx.post(
             url,
@@ -351,10 +405,18 @@ def _on_pre_tool_call(
             timeout=tool_timeout,
         )
     except httpx.TimeoutException:
+        _audit.warning(
+            "tool_forward decision=timeout tool=%s exec_tool=%s slug=%s task=%s timeout=%ss",
+            tool_name, exec_tool, ctx.get("agent_slug"), task_id, tool_timeout,
+        )
         result_str = json.dumps({"ok": False, "error": "executor timeout"})
         return {"action": "replace", "message": result_str}
     except Exception as exc:  # network failure, executor down, etc.
         logger.warning("forwarder %s → %s failed: %s", tool_name, container_ip, exc)
+        _audit.warning(
+            "tool_forward decision=network_error tool=%s exec_tool=%s slug=%s task=%s err=%s",
+            tool_name, exec_tool, ctx.get("agent_slug"), task_id, exc,
+        )
         result_str = json.dumps({"ok": False, "error": f"executor request failed: {exc}"})
         return {"action": "replace", "message": result_str}
 
@@ -377,8 +439,16 @@ def _on_pre_tool_call(
         msg = body.get("result")
         if not isinstance(msg, str):
             msg = json.dumps(body)
+        _audit.info(
+            "tool_forward decision=forwarded tool=%s exec_tool=%s slug=%s task=%s status=ok",
+            tool_name, exec_tool, ctx.get("agent_slug"), task_id,
+        )
     else:
         msg = json.dumps({"ok": False, "error": body.get("error", "unknown")})
+        _audit.info(
+            "tool_forward decision=forwarded tool=%s exec_tool=%s slug=%s task=%s status=executor_error err=%s",
+            tool_name, exec_tool, ctx.get("agent_slug"), task_id, body.get("error"),
+        )
 
     return {"action": "replace", "message": msg}
 

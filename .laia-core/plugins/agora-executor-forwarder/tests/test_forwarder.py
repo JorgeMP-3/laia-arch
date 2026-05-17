@@ -512,3 +512,89 @@ def test_register_empty_task_id_ignored():
     plug.register_context("", agent_slug="x", container_ip="10.0.0.1", api_token="t")
     with plug._context_registry_lock:
         assert "" not in plug._context_registry
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Security backstop: AGORA_LOCAL_DENY (A2)
+# ──────────────────────────────────────────────────────────────────────────
+
+
+def test_agora_local_deny_blocks_execute_code():
+    """``execute_code`` reaching the hook with an active session context
+    must be rejected with a structured error — the LLM should see the
+    policy and stop retrying."""
+    plug = _load_plugin()
+    plug.clear_session()
+    plug.register_context(
+        "task-deny-1", agent_slug="x",
+        container_ip="10.0.0.5", api_token="t",
+    )
+    try:
+        result = plug._on_pre_tool_call(
+            "execute_code",
+            {"code": "import os; os.system('rm -rf /opt/agora')"},
+            task_id="task-deny-1",
+        )
+    finally:
+        plug.unregister_context("task-deny-1")
+
+    assert result is not None
+    assert result["action"] == "replace"
+    body = json.loads(result["message"])
+    assert body["ok"] is False
+    assert "security policy" in body["error"]
+    assert body["policy"] == "agora_local_deny"
+
+
+def test_agora_local_deny_covers_all_dangerous_tools():
+    """Every name in AGORA_LOCAL_DENY blocks when context is configured."""
+    plug = _load_plugin()
+    plug.clear_session()
+    plug.register_context(
+        "task-deny-2", agent_slug="x",
+        container_ip="10.0.0.5", api_token="t",
+    )
+    try:
+        for tool_name in plug.AGORA_LOCAL_DENY:
+            result = plug._on_pre_tool_call(
+                tool_name, {}, task_id="task-deny-2",
+            )
+            assert result is not None, f"{tool_name!r} should have been denied"
+            body = json.loads(result["message"])
+            assert body["policy"] == "agora_local_deny", \
+                f"{tool_name!r} returned wrong policy: {body}"
+    finally:
+        plug.unregister_context("task-deny-2")
+
+
+def test_agora_local_deny_passthrough_without_context():
+    """Without an active session context the deny-list does NOT fire — the
+    plugin must stay neutral for ARCH and standalone callers. The AIAgent
+    then decides whether the tool runs (which is gated by its own
+    enabled_toolsets, set to a safe list in agent_pool.py)."""
+    plug = _load_plugin()
+    plug.clear_session()
+    result = plug._on_pre_tool_call(
+        "execute_code", {"code": "print(1)"}, task_id="no-such-task",
+    )
+    assert result is None, \
+        "without session context the hook must passthrough (not block)"
+
+
+def test_agora_local_deny_does_not_affect_safe_tools():
+    """Safe tools that aren't in DENY and aren't in EXECUTOR_TOOLS still
+    pass through to local execution as before."""
+    plug = _load_plugin()
+    plug.clear_session()
+    plug.register_context(
+        "task-safe", agent_slug="x",
+        container_ip="10.0.0.5", api_token="t",
+    )
+    try:
+        result = plug._on_pre_tool_call(
+            "web_search", {"query": "anything"}, task_id="task-safe",
+        )
+    finally:
+        plug.unregister_context("task-safe")
+
+    assert result is None, "web_search must run locally in AGORA, not be intercepted"
