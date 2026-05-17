@@ -159,6 +159,30 @@ Frontend / clientes nuevos deben asumir el primer formato salvo que el endpoint 
 - Si tu default provider es OAuth (`openai-codex`, `qwen-oauth`, `google-gemini-cli`, `copilot-acp`, `nous`) y `~/.laia/auth.json` no existe, `/api/health` reportará `"auth_json_ready": false`. Soluciona corriendo `laia auth` antes del primer chat.
 - AGORA NO refresca tokens. Esa decisión evita carreras con ARCH; si hay que cambiarla, hay que añadir `flock` en el wrapper.
 
+### task_id como identificador de turno
+
+`chat_engine._worker` genera un UUID por cada turno de conversación y lo usa para dos cosas a la vez:
+
+1. **Lo registra en el forwarder** con `register_context(task_id, agent_slug=..., container_ip=..., api_token=...)`, lo que añade una entrada a un `dict` global con `RLock` dentro de `.laia-core/plugins/agora-executor-forwarder/__init__.py`.
+2. **Lo pasa a `AIAgent.run_conversation(message, task_id=task_id)`**, que lo guarda como `effective_task_id` (ver `.laia-core/run_agent.py:10147`).
+
+Después, cuando el LLM emite una tool call, el `AIAgent` la despacha a través de su `ThreadPoolExecutor` interno (`run_agent.py:9355`). Ese worker corre en un thread distinto al de `chat_engine._worker`, así que `threading.local()` no sirve para llevar el contexto. Pero `effective_task_id` se pasa **por valor** al hook (`run_agent.py:9071` y `:9541` → `get_pre_tool_call_directive(task_id=...)`), así que el plugin puede recuperar la entrada del registry desde cualquier thread.
+
+`chat_engine` desregistra el `task_id` en el `finally` del worker, así que cada turno tiene su propia entrada y la registry queda limpia tras la conversación. Hay un cap blando (`MAX_REGISTRY_SIZE=1024`) que evicta la entrada más antigua por insertion order si algo deja entradas colgadas (SIGKILL al worker, bug en el caller).
+
+**Contrato para cualquier consumidor futuro**: si invocas el AIAgent fuera de `chat_engine` y quieres que las tools del usuario se forwardeen al executor, sigue el mismo patrón:
+
+```python
+turn_task_id = uuid.uuid4().hex
+forwarder.register_context(turn_task_id, agent_slug=..., container_ip=..., api_token=...)
+try:
+    aiagent.run_conversation(message, task_id=turn_task_id)
+finally:
+    forwarder.unregister_context(turn_task_id)
+```
+
+La API legacy `configure_session()` / `clear_session()` (threading.local) sigue funcionando para callers same-thread y tests, pero no es suficiente cuando el AIAgent paraleliza tool calls.
+
 ### Notas operativas
 
 - **PM2 / supervisors externos**: si tienes PM2 corriendo `agora-backend`, sus restarts seguirán al código viejo aunque tú actualices el repo. Para iterar en dev usa `pm2 stop agora-backend` (o `pm2 delete agora-backend` permanente) antes de lanzar `infra/dev/chat-with-agent.sh`. El script ya elige un puerto aleatorio (18000-18999) para no chocar con un backend huérfano en :8088, pero los datos los lee/escribe en el mismo `/srv/laia/agora/agora.db` así que dos backends activos sí pueden interferir.

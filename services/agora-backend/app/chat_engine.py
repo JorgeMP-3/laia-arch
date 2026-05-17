@@ -113,6 +113,38 @@ def _load_forwarder() -> Any | None:
         except Exception as exc:
             logger.warning("chat_engine: failed to load forwarder plugin: %s", exc)
             return None
+
+        # Defensive plan B: if the official plugin manager didn't enable the
+        # plugin (e.g. config.yaml stale, plugin discovery cached an old
+        # state, ...), the ``register(ctx)`` callback never wired
+        # ``_on_pre_tool_call`` into the ``pre_tool_call`` hook chain — and
+        # then no tool call ever reaches the executor regardless of how
+        # well the context registry works. Force-register our hook here so
+        # the forwarder works even when the plugin manager misses it.
+        try:
+            from laia_cli.plugins import get_plugin_manager  # type: ignore[import-not-found]
+            mgr = get_plugin_manager()
+            already_registered = False
+            for hook_name, hooks in getattr(mgr, "_hooks", {}).items():
+                if hook_name != "pre_tool_call":
+                    continue
+                for cb in hooks:
+                    # Compare by underlying function (different module
+                    # copies have different bound functions, but if either
+                    # was registered we still skip — the registry is shared
+                    # via sys.modules, so behaviour is identical).
+                    if getattr(cb, "__name__", "") == "_on_pre_tool_call":
+                        already_registered = True
+                        break
+            if not already_registered:
+                mgr._hooks.setdefault("pre_tool_call", []).append(module._on_pre_tool_call)
+                logger.info(
+                    "chat_engine: forwarder pre_tool_call hook registered defensively "
+                    "(plugin manager hadn't enabled the plugin)"
+                )
+        except Exception as exc:
+            logger.warning("chat_engine: defensive hook registration failed: %s", exc)
+
         _forwarder_module = module
         return module
 
@@ -196,8 +228,34 @@ async def chat_stream(
         """Thread-safe enqueue from the worker thread."""
         loop.call_soon_threadsafe(queue.put_nowait, item)
 
+    # Unique per turn. We register the (slug, ip, token) tuple under this
+    # task_id in the forwarder and pass the same id to ``run_conversation``
+    # so the AIAgent propagates it to the pre_tool_call hook (running in
+    # the AIAgent's internal ThreadPoolExecutor — a different thread). The
+    # hook resolves the context from the registry by task_id and forwards.
+    import uuid as _uuid
+    turn_task_id = _uuid.uuid4().hex
+
     def _worker() -> None:
+        logger.debug(
+            "chat_engine worker start: forwarder_loaded=%s slug=%s ip=%s token_len=%s task=%s",
+            forwarder is not None,
+            slug,
+            agent.container_ip,
+            len(agent.api_token or ""),
+            turn_task_id,
+        )
         if forwarder is not None:
+            # Cross-thread registry (the canonical path post-fix). The
+            # AIAgent's internal threads will look up by task_id.
+            forwarder.register_context(
+                turn_task_id,
+                agent_slug=slug,
+                container_ip=agent.container_ip,
+                api_token=agent.api_token,
+            )
+            # threading.local fallback for any caller running in this same
+            # worker thread that uses the legacy API (tests, ad-hoc scripts).
             forwarder.configure_session(
                 agent_slug=slug,
                 container_ip=agent.container_ip,
@@ -218,7 +276,11 @@ async def chat_stream(
                 pass  # placeholder agents may not have these slots
 
             try:
-                result = ai.run_conversation(message)
+                # Pass turn_task_id so the AIAgent uses ours (not a uuid it
+                # would generate internally at run_agent.py:10147). Without
+                # this, the hook sees a different task_id and the registry
+                # lookup misses.
+                result = ai.run_conversation(message, task_id=turn_task_id)
             except Exception as exc:
                 _push({"type": "error", "message": f"run_conversation failed: {exc}"})
                 return
@@ -233,6 +295,12 @@ async def chat_stream(
             _push(payload)
         finally:
             if forwarder is not None:
+                # Always unregister to keep the registry bounded — even on
+                # error paths or worker crashes.
+                try:
+                    forwarder.unregister_context(turn_task_id)
+                except Exception:
+                    logger.exception("forwarder.unregister_context failed")
                 forwarder.clear_session()
             _push(_STREAM_SENTINEL)
 

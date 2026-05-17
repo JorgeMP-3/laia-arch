@@ -102,12 +102,42 @@ async def lifespan(app: FastAPI):
     except Exception:
         logging.getLogger(__name__).exception("failed to build AgentPool")
 
-    # Load .laia-core plugins (including agora-executor-forwarder) so the
-    # AIAgents constructed by the pool see the pre_tool_call hook that
-    # forwards filesystem/bash tool calls to per-user executors.
+    # CRITICAL ORDER: (1) point LAIA_HOME at AGORA's data dir, (2) seed
+    # config.yaml with plugins.enabled=[agora-executor-forwarder], (3) THEN
+    # call discover_plugins. If we do them in any other order the plugin
+    # manager scans an empty/stale config and the forwarder hook never
+    # registers — every filesystem/bash tool call from the LLM runs on the
+    # host instead of being forwarded to the user's executor container.
+    try:
+        from .config import settings as _agora_settings
+        import os as _os
+        # Force the env var even if something already set ~/.laia as default
+        # during an earlier import. ``setdefault`` would leave a stale value
+        # alone — assign unconditionally so the plugin manager scans AGORA's
+        # config.yaml, not ARCH's.
+        _os.environ["LAIA_HOME"] = str(_agora_settings.data_dir)
+        # Some import paths (memory_provider lazy load, etc.) may have
+        # already invoked ``load_config`` before this point, which cached the
+        # ``~/.laia/config.yaml`` contents under that path. Invalidate the
+        # cache so the next ``load_config`` call sees AGORA's config.
+        try:
+            from laia_cli.config import _LOAD_CONFIG_CACHE  # type: ignore[import-not-found]
+            _LOAD_CONFIG_CACHE.clear()
+        except Exception:
+            pass
+    except Exception:
+        pass
+    try:
+        from .agent_pool import seed_agora_config_yaml
+        seed_agora_config_yaml()
+    except Exception:
+        logging.getLogger(__name__).warning("config.yaml seed skipped at startup")
+
     try:
         from laia_cli.plugins import discover_plugins  # type: ignore[import-not-found]
-        discover_plugins(force=False)
+        # Force=True so we re-scan if discover_plugins already ran during
+        # an earlier import path (e.g. via memory_provider lazy loading).
+        discover_plugins(force=True)
     except Exception as _e:
         logging.getLogger(__name__).warning("plugin discovery skipped: %s", _e)
 

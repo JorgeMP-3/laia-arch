@@ -35,17 +35,23 @@ logger = logging.getLogger(__name__)
 
 # Tools whose execution requires the user's filesystem / shell. These get
 # forwarded to laia-executor in the user's container.
+# The LLM emits the tool names from .laia-core/tools/registry.py (terminal,
+# patch, search_files, …). The executor exposes a smaller native vocabulary
+# (bash, apply_patch, grep, …) plus its own ``private_workspace_*`` tools.
+# We forward by the LLM-side name and translate inside ``_translate_tool``.
 EXECUTOR_TOOLS: frozenset[str] = frozenset({
+    # .laia-core-side names that the LLM uses:
+    "terminal",       # → executor.bash
+    "patch",          # → executor.apply_patch
+    "search_files",   # → executor.grep
+    # Plus tools whose name already matches on both sides:
     "read_file",
     "write_file",
-    "apply_patch",
     "list_dir",
     "glob",
     "grep",
     "bash",
-    # NOTE: "terminal" was previously in this set as a legacy alias but
-    # neither .laia-core/tools/registry.py nor the executor registry
-    # registers that name — the actual tool is "bash". Removed 2026-05.
+    "apply_patch",
     "delete_file",
     "move_file",
     "make_dir",
@@ -56,6 +62,48 @@ EXECUTOR_TOOLS: frozenset[str] = frozenset({
     "private_workspace_find_related",
     "private_workspace_read_node",
 })
+
+
+# When the LLM's tool name differs from the executor's, translate the
+# {name, args} pair before posting. The forwarder is the only place we do
+# this — keeps the executor lean and the .laia-core registry unchanged.
+_TOOL_NAME_ALIAS: Dict[str, str] = {
+    "terminal": "bash",
+    "patch": "apply_patch",
+    "search_files": "grep",
+}
+
+
+# Args accepted by each executor handler (signature inspection happens at
+# call time in the executor, but pre-filtering here gives a clearer error
+# and avoids round-trips when the LLM emits richer kwargs from the
+# .laia-core schema). Keys missing → forward all args untouched.
+_EXECUTOR_ALLOWED_ARGS: Dict[str, frozenset[str]] = {
+    "bash": frozenset({"command", "cwd", "timeout", "env"}),
+    "apply_patch": frozenset({"path", "old_string", "new_string", "replace_all"}),
+    "grep": frozenset({"pattern", "path", "include"}),
+    "glob": frozenset({"pattern", "path"}),
+    "read_file": frozenset({"path", "offset", "limit"}),
+    "write_file": frozenset({"path", "content"}),
+    "list_dir": frozenset({"path"}),
+    "delete_file": frozenset({"path"}),
+    "move_file": frozenset({"src", "dst"}),
+    "make_dir": frozenset({"path", "parents"}),
+}
+
+
+def _translate_tool(name: str, args: Dict[str, Any]) -> tuple[str, Dict[str, Any]]:
+    """Rename + filter args before sending to the executor.
+
+    Idempotent: if the LLM already used the executor-side name (e.g.
+    ``bash``), pass through unchanged.
+    """
+    target = _TOOL_NAME_ALIAS.get(name, name)
+    allowed = _EXECUTOR_ALLOWED_ARGS.get(target)
+    if allowed is None:
+        return target, args
+    filtered = {k: v for k, v in (args or {}).items() if k in allowed}
+    return target, filtered
 
 
 # Thread-local session context (per-AIAgent thread).
@@ -118,6 +166,124 @@ def clear_session() -> None:
     _session_ctx.api_token = None
 
 
+# ─── Cross-thread context: registry indexed by task_id ────────────────────
+#
+# The AIAgent ships tools through an internal ``ThreadPoolExecutor`` (see
+# ``.laia-core/run_agent.py:9355``), so the ``pre_tool_call`` hook runs in
+# a worker thread that did NOT call ``configure_session``. ``threading.local``
+# therefore looks empty and the hook falls through to local execution.
+#
+# Solution: index the (slug, ip, token) tuple by ``task_id`` — that value
+# does travel by value through the whole stack into the hook (run_agent.py
+# passes ``task_id=effective_task_id`` to ``get_pre_tool_call_directive``
+# at lines 9071 and 9541). Any thread with the same ``task_id`` can look
+# it up here without depending on ``copy_context``.
+#
+# IMPORTANT: this module can be loaded TWICE — once by ``chat_engine`` via
+# ``importlib.util.spec_from_file_location`` (registered as
+# ``sys.modules["agora_executor_forwarder"]``) and once by the
+# ``laia_cli.plugins`` plugin manager (under its own namespace, e.g.
+# ``laia_plugins.agora_executor_forwarder``). The two copies have
+# independent module globals, so a ``register_context`` on one is invisible
+# to ``_on_pre_tool_call`` on the other.
+#
+# Trick: stash the registry dict + lock in a synthetic module under a
+# well-known key in ``sys.modules``. Subsequent loads of THIS file (whatever
+# the package namespace) find that stash and reuse the same objects. The
+# result is a single process-wide registry shared by every copy.
+import sys as _sys
+import types as _types
+
+_REGISTRY_MODULE_KEY = "_agora_executor_forwarder_shared_state"
+_shared_state = _sys.modules.get(_REGISTRY_MODULE_KEY)
+if _shared_state is None:
+    _shared_state = _types.ModuleType(_REGISTRY_MODULE_KEY)
+    _shared_state.registry = {}                  # type: ignore[attr-defined]
+    _shared_state.lock = threading.RLock()       # type: ignore[attr-defined]
+    _sys.modules[_REGISTRY_MODULE_KEY] = _shared_state
+
+_context_registry: Dict[str, Dict[str, Any]] = _shared_state.registry  # type: ignore[attr-defined]
+_context_registry_lock = _shared_state.lock      # type: ignore[attr-defined]
+
+# Soft cap. The registry is normally drained turn-by-turn via
+# ``unregister_context``, but a worker SIGKILL or a bug in the caller can
+# leak entries. Past this size we evict the oldest insertion order entry
+# and log a warning, so the leak stays bounded.
+MAX_REGISTRY_SIZE = 1024
+
+
+def register_context(
+    task_id: str,
+    *,
+    agent_slug: str,
+    container_ip: str,
+    api_token: str,
+    port: int = 9091,
+    timeout_seconds: float = 30.0,
+) -> None:
+    """Bind a session context to ``task_id`` so ``_on_pre_tool_call`` can
+    resolve it from any thread.
+
+    ``chat_engine._worker`` must call this once per turn and pair it with
+    ``unregister_context(task_id)`` in a ``finally`` block. The same
+    ``task_id`` must then be passed as ``run_conversation(task_id=...)``
+    so the AIAgent propagates it to the hook.
+    """
+    if not task_id:
+        logger.warning("register_context: empty task_id ignored")
+        return
+    with _context_registry_lock:
+        if len(_context_registry) >= MAX_REGISTRY_SIZE and task_id not in _context_registry:
+            # Oldest by insertion order (dicts preserve it in py 3.7+).
+            stale = next(iter(_context_registry))
+            _context_registry.pop(stale, None)
+            logger.warning(
+                "register_context: registry hit cap (%d) — evicted stale task_id=%s",
+                MAX_REGISTRY_SIZE, stale,
+            )
+        _context_registry[task_id] = {
+            "agent_slug": agent_slug,
+            "container_ip": container_ip,
+            "api_token": api_token,
+            "port": port,
+            "timeout_seconds": timeout_seconds,
+        }
+
+
+def unregister_context(task_id: str) -> None:
+    """Drop the entry registered with ``register_context``. Idempotent."""
+    if not task_id:
+        return
+    with _context_registry_lock:
+        _context_registry.pop(task_id, None)
+
+
+def _lookup_context(task_id: str) -> Optional[Dict[str, Any]]:
+    """Resolve the active context for a task_id, falling back to threading.local.
+
+    Lookup order:
+      1. ``_context_registry[task_id]`` — propagates across threads.
+      2. ``_session_ctx`` (threading.local) — backward-compat for tests
+         and same-thread callers that still use ``configure_session``.
+
+    Returns ``None`` if neither has a usable (ip, token) pair.
+    """
+    if task_id:
+        with _context_registry_lock:
+            ctx = _context_registry.get(task_id)
+        if ctx and ctx.get("container_ip") and ctx.get("api_token"):
+            return ctx
+    if _session_ctx.container_ip and _session_ctx.api_token:
+        return {
+            "agent_slug": _session_ctx.agent_slug,
+            "container_ip": _session_ctx.container_ip,
+            "api_token": _session_ctx.api_token,
+            "port": _session_ctx.port,
+            "timeout_seconds": _session_ctx.timeout_seconds,
+        }
+    return None
+
+
 def _on_pre_tool_call(
     tool_name: str,
     args: Dict[str, Any],
@@ -135,12 +301,24 @@ def _on_pre_tool_call(
     if tool_name not in EXECUTOR_TOOLS:
         return None
 
-    container_ip = _session_ctx.container_ip
-    api_token = _session_ctx.api_token
-    if not container_ip or not api_token:
-        # No session context — fall through to local execution. This is the
-        # safe default for tests and for any caller that isn't AGORA.
+    ctx = _lookup_context(task_id)
+    logger.debug(
+        "FWD-HOOK tool=%s has_ctx=%s ip=%s task=%s",
+        tool_name,
+        ctx is not None,
+        ctx.get("container_ip") if ctx else None,
+        task_id,
+    )
+    if ctx is None:
+        # No session context for this task_id and threading.local is empty —
+        # let the AIAgent run the tool locally. Safe default for tests and
+        # any non-AGORA caller.
         return None
+
+    container_ip = ctx["container_ip"]
+    api_token = ctx["api_token"]
+    port = ctx.get("port", 9091)
+    timeout_default = ctx.get("timeout_seconds", 30.0)
 
     if httpx is None:
         logger.error("agora-executor-forwarder: httpx not installed")
@@ -148,20 +326,29 @@ def _on_pre_tool_call(
             {"ok": False, "error": "executor forwarder unavailable: httpx missing"}
         )}
 
-    url = f"http://{container_ip}:{_session_ctx.port}/exec"
+    # Translate LLM-side tool name + args to what the executor's registry
+    # actually accepts. Keeps the LLM seeing the .laia-core registry vocab
+    # (``terminal``, ``patch``, ``search_files``) while the executor stays
+    # lean with its native handlers (``bash``, ``apply_patch``, ``grep``).
+    exec_tool, exec_args = _translate_tool(tool_name, args or {})
+
+    url = f"http://{container_ip}:{port}/exec"
     payload = {
-        "tool": tool_name,
-        "args": args or {},
+        "tool": exec_tool,
+        "args": exec_args,
         "request_id": tool_call_id or task_id or "unknown",
     }
     headers = {"Authorization": f"Bearer {api_token}"}
+
+    # Per-tool timeout override, otherwise the ctx default.
+    tool_timeout = EXECUTOR_TOOL_TIMEOUTS.get(exec_tool, timeout_default)
 
     try:
         response = httpx.post(
             url,
             json=payload,
             headers=headers,
-            timeout=_timeout_for(tool_name),
+            timeout=tool_timeout,
         )
     except httpx.TimeoutException:
         result_str = json.dumps({"ok": False, "error": "executor timeout"})

@@ -56,6 +56,93 @@ auth_json_status: str = "unknown"
 auth_json_path: str | None = None
 
 
+def seed_agora_config_yaml() -> None:
+    """Materialise ``$LAIA_HOME/config.yaml`` with AGORA's plugin defaults.
+
+    Idempotent. Safe to call multiple times. **Must run before
+    ``laia_cli.plugins.discover_plugins()`` at lifespan startup** — the
+    plugin manager reads ``plugins.enabled`` from this file once, and if
+    the file doesn't yet list ``agora-executor-forwarder`` then the
+    forwarder hook is never registered, and every filesystem/bash tool
+    call from the LLM runs on the host instead of being forwarded to the
+    user's executor container. That defeats the whole rediseño.
+
+    Two paths:
+      1. File missing → write a fresh seed including ``enabled`` + the
+         workspace-context section.
+      2. File present → merge: if ``agora-executor-forwarder`` is not
+         already in ``plugins.enabled``, append it.
+
+    Pulled out of ``_ensure_collective_workspace_env`` so the lifespan
+    can call this *before* ``discover_plugins`` (the workspace bootstrap
+    waits for the first chat, which is too late for plugin discovery).
+    """
+    try:
+        from .config import settings  # local import — avoid cycle on module import
+    except Exception:
+        logger.debug("seed_agora_config_yaml: settings unavailable; skipping")
+        return
+
+    required_plugins = ["agora-executor-forwarder"]
+    cfg_path = settings.data_dir / "config.yaml"
+    collective = settings.collective_workspace_name
+
+    try:
+        settings.data_dir.mkdir(parents=True, exist_ok=True)
+        if not cfg_path.exists():
+            cfg_path.write_text(
+                "# Auto-seeded by agora-backend on first boot.\n"
+                "plugins:\n"
+                "  enabled:\n"
+                + "".join(f"    - {p}\n" for p in required_plugins) +
+                "  workspace-context:\n"
+                f"    workspace: {collective}\n"
+                "    inject_mode: index\n"
+                "    active_workspaces:\n"
+                f"      - {collective}\n"
+                "memory:\n"
+                "  provider: workspace-context\n",
+                encoding="utf-8",
+            )
+            logger.info("seed_agora_config_yaml: created %s with forwarder enabled", cfg_path)
+            return
+
+        # Merge: parse, ensure plugins.enabled contains the required entries.
+        try:
+            import yaml as _yaml
+            data = _yaml.safe_load(cfg_path.read_text()) or {}
+        except Exception as exc:
+            logger.warning("seed_agora_config_yaml: could not parse %s: %s", cfg_path, exc)
+            return
+        if not isinstance(data, dict):
+            return
+        plugins_cfg = data.get("plugins")
+        if not isinstance(plugins_cfg, dict):
+            plugins_cfg = {}
+            data["plugins"] = plugins_cfg
+        enabled = plugins_cfg.get("enabled")
+        if not isinstance(enabled, list):
+            enabled = []
+        changed = False
+        for p in required_plugins:
+            if p not in enabled:
+                enabled.append(p)
+                changed = True
+        if changed:
+            plugins_cfg["enabled"] = enabled
+            try:
+                import yaml as _yaml
+                cfg_path.write_text(
+                    _yaml.safe_dump(data, sort_keys=False, allow_unicode=True),
+                    encoding="utf-8",
+                )
+                logger.info("seed_agora_config_yaml: added %s to plugins.enabled in %s", required_plugins, cfg_path)
+            except Exception as exc:
+                logger.warning("seed_agora_config_yaml: could not rewrite %s: %s", cfg_path, exc)
+    except Exception as exc:  # pragma: no cover — never block boot
+        logger.warning("seed_agora_config_yaml: failed: %s", exc)
+
+
 def _ensure_collective_workspace_env() -> None:
     """Wire env vars so the workspace-context plugin finds the collective DB.
 
@@ -88,32 +175,10 @@ def _ensure_collective_workspace_env() -> None:
         os.environ["LAIA_HOME"] = str(settings.data_dir)
         os.environ["LAIA_ROOT"] = str(settings.laia_root)
 
-        # Seed AGORA's own config.yaml when missing. In prod this file gets
-        # baked into the laia-agora image (see build-agora-image.sh), but in
-        # dev we run the backend on the host and $LAIA_HOME/config.yaml is
-        # absent — without it the workspace-context plugin falls back to
-        # ~/.laia/config.yaml (ARCH's config) and the AIAgent ends up using
-        # the operator's active workspace ("doyouwin", "laia-ecosystem", …)
-        # instead of AGORA's "collective". Same content as build-agora-image.sh.
-        try:
-            cfg_path = settings.data_dir / "config.yaml"
-            if not cfg_path.exists():
-                collective = settings.collective_workspace_name
-                cfg_path.write_text(
-                    "# Auto-seeded by agora-backend on first boot.\n"
-                    "plugins:\n"
-                    "  workspace-context:\n"
-                    f"    workspace: {collective}\n"
-                    "    inject_mode: index\n"
-                    "    active_workspaces:\n"
-                    f"      - {collective}\n"
-                    "memory:\n"
-                    "  provider: workspace-context\n",
-                    encoding="utf-8",
-                )
-                logger.info("agent_pool: seeded %s with collective workspace defaults", cfg_path)
-        except Exception as exc:  # pragma: no cover — never block boot
-            logger.warning("agent_pool: failed to seed config.yaml: %s", exc)
+        # Seed config.yaml is the lifespan's job now (must run BEFORE
+        # discover_plugins). We still call it here as a safety net for
+        # tests/callers that bypass the lifespan path.
+        seed_agora_config_yaml()
 
         # OAuth providers (openai-codex, qwen-oauth, …) read credentials
         # from ``$LAIA_HOME/auth.json``. The admin already configured these

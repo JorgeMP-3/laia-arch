@@ -156,6 +156,14 @@ def test_forwarder_configure_session_called_when_plugin_loaded(monkeypatch, _iso
 
     class _FakeForwarder:
         @staticmethod
+        def register_context(task_id, **kw):
+            captured.setdefault("register", []).append((task_id, kw))
+
+        @staticmethod
+        def unregister_context(task_id):
+            captured.setdefault("unregister", []).append(task_id)
+
+        @staticmethod
         def configure_session(*, agent_slug, container_ip, api_token, **_):
             captured["configure"] = (agent_slug, container_ip, api_token)
 
@@ -171,6 +179,100 @@ def test_forwarder_configure_session_called_when_plugin_loaded(monkeypatch, _iso
     )))
     assert captured["configure"] == ("jorge", "10.0.0.5", "tk")
     assert captured.get("clear") is True
+
+
+def test_forwarder_register_context_called_per_turn(monkeypatch, _isolated_pool_with_stub_agent):
+    """The cross-thread fix: each chat turn registers a fresh task_id with the
+    forwarder so the pre_tool_call hook (which runs in the AIAgent's internal
+    ThreadPoolExecutor) can resolve (slug, ip, token) regardless of thread.
+    The same task_id must be passed to run_conversation so the AIAgent
+    propagates it down to the hook."""
+    captured: dict[str, Any] = {"register": [], "unregister": [], "run_calls": []}
+
+    class _FakeForwarder:
+        @staticmethod
+        def register_context(task_id, **kw):
+            captured["register"].append((task_id, kw))
+
+        @staticmethod
+        def unregister_context(task_id):
+            captured["unregister"].append(task_id)
+
+        @staticmethod
+        def configure_session(**_):
+            pass
+
+        @staticmethod
+        def clear_session():
+            pass
+
+    monkeypatch.setattr(chat_engine, "_forwarder_module", _FakeForwarder)
+
+    stub = _isolated_pool_with_stub_agent
+    # Capture the task_id that the AIAgent receives.
+    def run_with_capture(message, **kw):
+        captured["run_calls"].append(kw.get("task_id"))
+        return {"final_response": "ok", "iterations": 1}
+
+    stub.run_conversation = run_with_capture
+
+    user = _build_user()
+    agent = _build_agent()
+    asyncio.run(_collect(chat_engine.chat_stream(
+        user=user, agent=agent, message="hola", session_id="sess-y",
+    )))
+
+    assert len(captured["register"]) == 1, "expected exactly one register_context per turn"
+    tid, ctx = captured["register"][0]
+    assert tid, "task_id must be a non-empty string"
+    assert ctx["agent_slug"] == "jorge"
+    assert ctx["container_ip"] == "10.0.0.5"
+    assert ctx["api_token"] == "tk"
+    # The task_id passed to run_conversation must match the one registered.
+    assert captured["run_calls"] == [tid]
+    # Cleanup must drop the same task_id.
+    assert captured["unregister"] == [tid]
+
+
+def test_forwarder_unregister_runs_even_when_run_conversation_raises(monkeypatch, _isolated_pool_with_stub_agent):
+    """If the AIAgent raises, the registry entry must still be released —
+    otherwise a runaway loop of failed conversations would leak the cap."""
+    captured: dict[str, Any] = {"register": [], "unregister": []}
+
+    class _FakeForwarder:
+        @staticmethod
+        def register_context(task_id, **kw):
+            captured["register"].append(task_id)
+
+        @staticmethod
+        def unregister_context(task_id):
+            captured["unregister"].append(task_id)
+
+        @staticmethod
+        def configure_session(**_):
+            pass
+
+        @staticmethod
+        def clear_session():
+            pass
+
+    monkeypatch.setattr(chat_engine, "_forwarder_module", _FakeForwarder)
+
+    stub = _isolated_pool_with_stub_agent
+    def boom(*a, **kw):
+        raise RuntimeError("simulated LLM crash")
+
+    stub.run_conversation = boom
+
+    user = _build_user()
+    agent = _build_agent()
+    events = asyncio.run(_collect(chat_engine.chat_stream(
+        user=user, agent=agent, message="hola", session_id="sess-z",
+    )))
+    # The error event is surfaced AND the registry was cleaned.
+    assert any(e["type"] == "error" for e in events)
+    assert captured["register"] == captured["unregister"]
+    assert len(captured["register"]) == 1
 
 
 def test_run_conversation_exception_surfaces_as_error_event(monkeypatch, _isolated_pool_with_stub_agent):
