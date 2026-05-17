@@ -220,6 +220,14 @@ def _ensure_collective_workspace_env() -> None:
                     agora_auth.symlink_to(admin_auth)
                     logger.info("agent_pool: linked auth.json → %s", admin_auth)
                 auth_json_status = "linked"
+            elif agora_auth.is_file():
+                auth_json_status = "linked"
+                logger.info(
+                    "agent_pool: using existing AGORA auth.json at %s "
+                    "(admin auth.json %s not readable from this process)",
+                    agora_auth,
+                    admin_auth,
+                )
             else:
                 auth_json_status = "missing"
                 # If the default provider needs OAuth, this is loud. Otherwise

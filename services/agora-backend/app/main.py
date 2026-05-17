@@ -182,6 +182,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+from .admin import router as admin_router
+
+app.include_router(admin_router)
+
 
 @app.middleware("http")
 async def request_middleware(request: Request, call_next):
@@ -211,8 +215,10 @@ def health():
     try:
         from . import agent_pool as _ap
         auth_status = _ap.auth_json_status
+        auth_path = _ap.auth_json_path or str(settings.data_dir / "auth.json")
+        if auth_status in {"unknown", "missing"} and (settings.data_dir / "auth.json").is_file():
+            auth_status = "linked"
         auth_ready = auth_status == "linked"
-        auth_path = _ap.auth_json_path
     except Exception:
         auth_status = "unknown"
         auth_ready = False

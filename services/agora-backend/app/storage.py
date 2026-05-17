@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import sys
+import threading
+import uuid
 from pathlib import Path
 
 from .config import settings
@@ -38,8 +40,24 @@ def _event_from_row(row) -> Event:
     return Event.model_validate(d)
 
 
+def _admin_job_from_row(row) -> dict:
+    d = _row_to_dict(row)
+    params_raw = d.pop("params_json", "{}")
+    result_raw = d.pop("result_json", None)
+    try:
+        d["params"] = json.loads(params_raw) if params_raw else {}
+    except (json.JSONDecodeError, TypeError):
+        d["params"] = {}
+    try:
+        d["result"] = json.loads(result_raw) if result_raw else None
+    except (json.JSONDecodeError, TypeError):
+        d["result"] = None
+    return d
+
+
 class AgoraStore:
     def __init__(self) -> None:
+        self._admin_jobs_lock = threading.RLock()
         settings.ensure_dirs()
         self.db = Database(settings.db_path)
         self.db.ensure_schema()
@@ -359,6 +377,114 @@ class AgoraStore:
             (agora_user_id,),
         ).fetchall()
         return [r["telegram_user_id"] for r in rows]
+
+    # ── admin jobs ─────────────────────────────────────────────────────────
+
+    def create_admin_job(
+        self,
+        *,
+        kind: str,
+        actor_id: str,
+        params: dict,
+        log_path: str | None = None,
+    ) -> dict:
+        job_id = str(uuid.uuid4())
+        ts = now_iso()
+        with self._admin_jobs_lock:
+            self.db.conn.execute(
+                "INSERT INTO admin_jobs "
+                "(id, kind, status, actor_id, params_json, log_path, progress, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    job_id,
+                    kind,
+                    "pending",
+                    actor_id,
+                    json.dumps(params, ensure_ascii=False, sort_keys=True),
+                    log_path,
+                    0,
+                    ts,
+                ),
+            )
+            self.db.conn.commit()
+        return self.admin_job(job_id) or {
+            "id": job_id,
+            "kind": kind,
+            "status": "pending",
+            "actor_id": actor_id,
+            "params": params,
+            "result": None,
+            "error": None,
+            "log_path": log_path,
+            "progress": 0,
+            "created_at": ts,
+            "started_at": None,
+            "finished_at": None,
+        }
+
+    def admin_job(self, job_id: str) -> dict | None:
+        row = self.db.conn.execute("SELECT * FROM admin_jobs WHERE id = ?", (job_id,)).fetchone()
+        return _admin_job_from_row(row) if row else None
+
+    def admin_jobs(self, *, status: str | None = None, limit: int = 100) -> list[dict]:
+        limit = max(1, min(limit, 500))
+        if status:
+            rows = self.db.conn.execute(
+                "SELECT * FROM admin_jobs WHERE status = ? ORDER BY created_at DESC LIMIT ?",
+                (status, limit),
+            ).fetchall()
+        else:
+            rows = self.db.conn.execute(
+                "SELECT * FROM admin_jobs ORDER BY created_at DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        return [_admin_job_from_row(r) for r in rows]
+
+    def update_admin_job(
+        self,
+        job_id: str,
+        *,
+        status: str | None = None,
+        result: dict | None = None,
+        error: str | None = None,
+        log_path: str | None = None,
+        progress: int | None = None,
+        mark_started: bool = False,
+        mark_finished: bool = False,
+    ) -> dict | None:
+        assignments: list[str] = []
+        values: list[object] = []
+        if status is not None:
+            assignments.append("status = ?")
+            values.append(status)
+        if result is not None:
+            assignments.append("result_json = ?")
+            values.append(json.dumps(result, ensure_ascii=False, sort_keys=True))
+        if error is not None:
+            assignments.append("error = ?")
+            values.append(error)
+        if log_path is not None:
+            assignments.append("log_path = ?")
+            values.append(log_path)
+        if progress is not None:
+            assignments.append("progress = ?")
+            values.append(max(0, min(100, int(progress))))
+        if mark_started:
+            assignments.append("started_at = ?")
+            values.append(now_iso())
+        if mark_finished:
+            assignments.append("finished_at = ?")
+            values.append(now_iso())
+        if not assignments:
+            return self.admin_job(job_id)
+        values.append(job_id)
+        with self._admin_jobs_lock:
+            self.db.conn.execute(
+                f"UPDATE admin_jobs SET {', '.join(assignments)} WHERE id = ?",
+                values,
+            )
+            self.db.conn.commit()
+        return self.admin_job(job_id)
 
 
 store = AgoraStore()

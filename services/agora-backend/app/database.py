@@ -83,6 +83,25 @@ CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
 CREATE INDEX IF NOT EXISTS idx_events_type ON events(event_type);
 CREATE INDEX IF NOT EXISTS idx_events_created ON events(created_at);
 CREATE INDEX IF NOT EXISTS idx_agents_user ON agents(user_id);
+
+CREATE TABLE IF NOT EXISTS admin_jobs (
+    id TEXT PRIMARY KEY,
+    kind TEXT NOT NULL,
+    status TEXT NOT NULL,
+    actor_id TEXT NOT NULL,
+    params_json TEXT NOT NULL,
+    result_json TEXT,
+    error TEXT,
+    log_path TEXT,
+    progress INTEGER DEFAULT 0,
+    created_at TEXT NOT NULL,
+    started_at TEXT,
+    finished_at TEXT,
+    FOREIGN KEY (actor_id) REFERENCES users(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_admin_jobs_status ON admin_jobs(status);
+CREATE INDEX IF NOT EXISTS idx_admin_jobs_actor ON admin_jobs(actor_id);
 """
 
 

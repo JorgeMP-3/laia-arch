@@ -12,6 +12,8 @@ from typing import Any
 request_id_var: ContextVar[str] = ContextVar("request_id", default="")
 request_user_var: ContextVar[str] = ContextVar("request_user", default="")
 
+_STANDARD_LOG_RECORD_KEYS = set(logging.makeLogRecord({}).__dict__)
+
 
 def _now_utc() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -33,6 +35,14 @@ class JSONFormatter(logging.Formatter):
             log_entry["user"] = user
         if record.exc_info and record.exc_info[1]:
             log_entry["error"] = str(record.exc_info[1])
+        for key, value in record.__dict__.items():
+            if key in _STANDARD_LOG_RECORD_KEYS or key.startswith("_"):
+                continue
+            try:
+                json.dumps(value)
+                log_entry[key] = value
+            except (TypeError, ValueError):
+                log_entry[key] = str(value)
         return json.dumps(log_entry, ensure_ascii=False)
 
 
