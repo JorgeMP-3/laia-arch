@@ -1644,11 +1644,16 @@ def terminal_tool(
                 "status": "error",
             }, ensure_ascii=False)
 
-        # ── Agora-agent sandbox ──────────────────────────────────────
-        # Under LAIA_PROFILE=agora-agent, block host-management binaries
-        # (lxc, systemctl, apt, docker, sudo, ...).  No-op for LAIA ARCH.
-        from tools.agora_sandbox import enforce_command_sandbox
-        sandbox_err = enforce_command_sandbox(command)
+        # ── Agora-agent sandbox (archived as part of redesign) ───────
+        # Under LAIA_PROFILE=agora-agent, blocked host-management binaries
+        # (lxc, systemctl, apt, docker, sudo, ...). The new architecture
+        # forwards bash to the user's executor (root container, no blacklist).
+        # Import remains guarded so a restored sprint-2 sandbox keeps working.
+        try:
+            from tools.agora_sandbox import enforce_command_sandbox  # type: ignore[import-not-found]
+            sandbox_err = enforce_command_sandbox(command)
+        except Exception:
+            sandbox_err = None
         if sandbox_err:
             return json.dumps({
                 "output": "",

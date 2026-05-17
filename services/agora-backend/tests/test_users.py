@@ -72,6 +72,26 @@ def test_create_user_invalid_username():
     assert r.status_code == 422
 
 
+def test_create_user_hyphen_username_accepted():
+    """john-doe / chat-redesign-test / user_with-mix are all valid Linux-style usernames."""
+    for name in ("john-doe", "chat-redesign-test", "user_with-mix"):
+        r = client.post("/api/users", headers=HEADERS, json={
+            "username": name,
+            "display_name": name.title(),
+        })
+        assert r.status_code == 201, f"{name}: {r.text}"
+
+
+def test_create_user_username_edge_cases_rejected():
+    """Hyphens at the boundaries or stand-alone are not accepted."""
+    for name in ("-bad", "bad-", "-", "a-"):
+        r = client.post("/api/users", headers=HEADERS, json={
+            "username": name,
+            "display_name": "x",
+        })
+        assert r.status_code == 422, f"{name} should have failed but got {r.status_code}"
+
+
 def test_create_user_with_agent():
     r = client.post("/api/users", headers=HEADERS, json={
         "username": "ana",

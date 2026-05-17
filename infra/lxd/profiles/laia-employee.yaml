@@ -1,9 +1,20 @@
 config:
   limits.cpu: "2"
-  limits.memory: 4GB
-  security.nesting: "false"
+  limits.memory: 2GB
+  # Unprivileged container: uid 0 inside maps to uid 100000 on the host. The
+  # user is root within the container, but cannot escalate to host root.
   security.privileged: "false"
-description: LAIA employee agent profile
+  security.nesting: "false"
+description: |
+  Per-user LAIA employee container profile.
+  Hosts only `laia-executor` (FastAPI :9091). The AIAgent/LLM lives in the
+  separate `laia-agora` orchestrator container and forwards filesystem/bash
+  tool calls here over the LXD bridge.
+
+  No sandbox, no command blacklist — the user is root inside the container,
+  with full freedom to install packages, run commands, and develop. Data
+  persistence comes from bind mounts attached by create-agent.sh
+  (/srv/laia/users/<slug>/{home,plugins,workspace} → in-container paths).
 devices:
   root:
     path: /
@@ -14,4 +25,3 @@ devices:
     network: lxdbr0
     type: nic
 name: laia-employee
-

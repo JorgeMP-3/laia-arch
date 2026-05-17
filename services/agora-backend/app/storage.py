@@ -181,14 +181,48 @@ class AgoraStore:
     def save_user(self, user: User) -> None:
         d = user.model_dump()
         self.db.conn.execute(
-            "INSERT OR REPLACE INTO users (id, username, display_name, role, agent_id, token, password, active, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT OR REPLACE INTO users (id, username, display_name, role, agent_id, token, password, active, created_at, updated_at, "
+            "llm_provider, llm_api_key, llm_base_url, llm_model, llm_api_mode, llm_extras_json) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (d["id"], d["username"], d["display_name"], d.get("role", "employee"),
              d.get("agent_id"), d.get("token"), d.get("password"),
              1 if d.get("active", True) else 0,
-             d.get("created_at", now_iso()), d.get("updated_at", now_iso())),
+             d.get("created_at", now_iso()), d.get("updated_at", now_iso()),
+             d.get("llm_provider"), d.get("llm_api_key"), d.get("llm_base_url"),
+             d.get("llm_model"), d.get("llm_api_mode"), d.get("llm_extras_json")),
         )
         self.db.conn.commit()
+
+    def update_user_llm_config(self, user_id: str, *,
+                               provider: str | None = None,
+                               api_key: str | None = None,
+                               base_url: str | None = None,
+                               model: str | None = None,
+                               api_mode: str | None = None,
+                               extras_json: str | None = None) -> User | None:
+        """Patch LLM config fields for a user. Pass None to leave a field unchanged.
+
+        To clear a field, pass an empty string (we treat "" as explicit-clear).
+        """
+        user = self.user_by_id(user_id)
+        if user is None:
+            return None
+
+        def _resolve(new_val: str | None, current: str | None) -> str | None:
+            if new_val is None:
+                return current
+            if new_val == "":
+                return None
+            return new_val
+
+        user.llm_provider = _resolve(provider, user.llm_provider)
+        user.llm_api_key = _resolve(api_key, user.llm_api_key)
+        user.llm_base_url = _resolve(base_url, user.llm_base_url)
+        user.llm_model = _resolve(model, user.llm_model)
+        user.llm_api_mode = _resolve(api_mode, user.llm_api_mode)
+        user.llm_extras_json = _resolve(extras_json, user.llm_extras_json)
+        self.save_user(user)
+        return user
 
     def save_users(self, users: list[User]) -> None:
         for u in users:
@@ -275,6 +309,56 @@ class AgoraStore:
         )
         self.db.conn.commit()
         return event
+
+    # ── telegram links ─────────────────────────────────────────────────────
+
+    def link_telegram_user(self, telegram_user_id: str, agora_user_id: str) -> None:
+        """Bind a Telegram chat identity to an AGORA user. Upserts on conflict."""
+        self.db.conn.execute(
+            "INSERT INTO telegram_links (telegram_user_id, agora_user_id, linked_at) "
+            "VALUES (?, ?, ?) "
+            "ON CONFLICT(telegram_user_id) DO UPDATE SET "
+            "agora_user_id=excluded.agora_user_id, linked_at=excluded.linked_at",
+            (str(telegram_user_id), agora_user_id, now_iso()),
+        )
+        self.db.conn.commit()
+
+    def unlink_telegram_user(self, *, telegram_user_id: str | None = None,
+                              agora_user_id: str | None = None) -> int:
+        """Drop any link matching either identifier. Returns rows affected.
+
+        Passing both narrows the match; passing one drops every row for it.
+        """
+        if telegram_user_id is None and agora_user_id is None:
+            raise ValueError("provide telegram_user_id or agora_user_id")
+        clauses: list[str] = []
+        params: list[str] = []
+        if telegram_user_id is not None:
+            clauses.append("telegram_user_id = ?")
+            params.append(str(telegram_user_id))
+        if agora_user_id is not None:
+            clauses.append("agora_user_id = ?")
+            params.append(agora_user_id)
+        sql = "DELETE FROM telegram_links WHERE " + " AND ".join(clauses)
+        cur = self.db.conn.execute(sql, params)
+        self.db.conn.commit()
+        return cur.rowcount or 0
+
+    def agora_user_for_telegram(self, telegram_user_id: str) -> str | None:
+        """Return the AGORA user id linked to a Telegram user, or None."""
+        row = self.db.conn.execute(
+            "SELECT agora_user_id FROM telegram_links WHERE telegram_user_id = ?",
+            (str(telegram_user_id),),
+        ).fetchone()
+        return row["agora_user_id"] if row else None
+
+    def telegram_ids_for_user(self, agora_user_id: str) -> list[str]:
+        rows = self.db.conn.execute(
+            "SELECT telegram_user_id FROM telegram_links WHERE agora_user_id = ? "
+            "ORDER BY linked_at",
+            (agora_user_id,),
+        ).fetchall()
+        return [r["telegram_user_id"] for r in rows]
 
 
 store = AgoraStore()

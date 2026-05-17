@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -20,6 +21,7 @@ class AgentConfig:
     heartbeat_interval: int
     api_token: str = ""
     api_port: int = 9090
+    agora_backend_url: str = "http://10.0.0.1:8088"
 
 
 def load_config(path: Path = Path("/opt/laia/agent.json")) -> AgentConfig:
@@ -41,4 +43,5 @@ def load_config(path: Path = Path("/opt/laia/agent.json")) -> AgentConfig:
         heartbeat_interval=int(data.get("heartbeat_interval", 5)),
         api_token=str(data.get("api_token", "")),
         api_port=int(data.get("api_port", 9090)),
+        agora_backend_url=str(data.get("agora_backend_url", os.environ.get("AGORA_BACKEND_URL", "http://10.0.0.1:8088"))),
     )

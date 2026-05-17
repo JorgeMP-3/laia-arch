@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 import re
 import uuid
@@ -25,6 +26,11 @@ from .models import (
     SecretsFetchResponse,
     Event,
     EventCreate,
+    LLMConfigUpdate,
+    LLMConfigView,
+    LLMProviderInfo,
+    TelegramLinkStatus,
+    TelegramLinkTokenResponse,
     LoginRequest,
     LoginResponse,
     PasswordChangeRequest,
@@ -41,6 +47,12 @@ from .models import (
     WorkspaceNodeCreate,
     new_id,
     now_iso,
+)
+from .llm_config import (
+    determine_api_mode as llm_determine_api_mode,
+    get_provider as llm_get_provider,
+    list_providers as llm_list_providers,
+    mask_api_key as llm_mask_api_key,
 )
 from .orchestrator import OrchestratorError, orchestrator
 from .coordinator import coordinator, drain_broadcasts
@@ -64,10 +76,72 @@ def _resolve_agent_slug(user: User) -> str:
             return a.container_name.removeprefix("laia-")
     raise HTTPException(status_code=404, detail="no agent assigned to this user")
 
+from contextlib import asynccontextmanager
+from .telegram_gateway import TelegramGateway, build_gateway_from_env
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """FastAPI startup/shutdown — replaces the deprecated @app.on_event hooks."""
+    setup_logging()
+    coordinator.start()
+    monitor.start()
+
+    # Share one AgentPool across web chat + Telegram dispatch so a user that
+    # chats from both surfaces sees the same cached AIAgent / context.
+    try:
+        from .agent_pool import AgentPool
+        from .chat_engine import set_pool as _set_chat_pool
+        from .telegram_gateway import _shared_pool_instance as _tg_pool_holder
+        pool = AgentPool()
+        _set_chat_pool(pool)
+        # Wire the same pool into telegram_gateway's lazy default so both
+        # dispatch surfaces share session state.
+        import app.telegram_gateway as _tg_mod
+        _tg_mod._shared_pool_instance = pool
+    except Exception:
+        logging.getLogger(__name__).exception("failed to build AgentPool")
+
+    # Load .laia-core plugins (including agora-executor-forwarder) so the
+    # AIAgents constructed by the pool see the pre_tool_call hook that
+    # forwards filesystem/bash tool calls to per-user executors.
+    try:
+        from laia_cli.plugins import discover_plugins  # type: ignore[import-not-found]
+        discover_plugins(force=False)
+    except Exception as _e:
+        logging.getLogger(__name__).warning("plugin discovery skipped: %s", _e)
+
+    # Optional Telegram bot: starts only when AGORA_TELEGRAM_TOKEN is set.
+    gw: TelegramGateway | None = build_gateway_from_env()
+    if gw is not None:
+        try:
+            await gw.start()
+            app.state.telegram_gateway = gw
+        except Exception:
+            logging.getLogger(__name__).exception("telegram gateway failed to start")
+            app.state.telegram_gateway = None
+    else:
+        app.state.telegram_gateway = None
+
+    try:
+        yield
+    finally:
+        gw = getattr(app.state, "telegram_gateway", None)
+        if gw is not None:
+            try:
+                await gw.stop()
+            except Exception:
+                logging.getLogger(__name__).exception("telegram gateway failed to stop cleanly")
+        coordinator.stop()
+        monitor.stop()
+        store.db.close()
+
+
 app = FastAPI(
     title="LAIA AGORA Backend",
     description="Backend oficial de AGORA: empleados, tareas, eventos, coordinacion y workspace colectivo.",
     version="0.1.0",
+    lifespan=lifespan,
 )
 
 app.add_middleware(
@@ -77,20 +151,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-
-@app.on_event("startup")
-def startup_coordinator():
-    setup_logging()
-    coordinator.start()
-    monitor.start()
-
-
-@app.on_event("shutdown")
-def shutdown_coordinator():
-    coordinator.stop()
-    monitor.stop()
-    store.db.close()
 
 
 @app.middleware("http")
@@ -115,6 +175,18 @@ def health():
     except Exception:
         pass
     laiactl_ok = settings.laiactl_path.exists()
+    # Report whether OAuth credentials are reachable. If the operator selected
+    # an OAuth default provider but ~/.laia/auth.json isn't linked yet, this
+    # surfaces in /api/health so the operator notices before the first chat.
+    try:
+        from . import agent_pool as _ap
+        auth_status = _ap.auth_json_status
+        auth_ready = auth_status == "linked"
+        auth_path = _ap.auth_json_path
+    except Exception:
+        auth_status = "unknown"
+        auth_ready = False
+        auth_path = None
     return {
         "ok": True,
         "service": "agora-backend",
@@ -125,6 +197,10 @@ def health():
         "coordinator": coordinator.is_running,
         "lxd_available": lxd_ok,
         "laiactl_available": laiactl_ok,
+        "auth_json_ready": auth_ready,
+        "auth_json_status": auth_status,
+        "auth_json_path": auth_path,
+        "default_llm_provider": os.environ.get("AGORA_DEFAULT_PROVIDER", "openai-codex"),
         "time": now_iso(),
     }
 
@@ -169,6 +245,115 @@ def me(user: User = Depends(current_user)):
     return public_user(user)
 
 
+# ── LLM provider catalog + per-user LLM config ───────────────────────────────
+
+
+@app.get("/api/llm/providers", response_model=list[LLMProviderInfo])
+def list_llm_providers():
+    """List all LLM providers AGORA supports (parity with LAIA ARCH)."""
+    return llm_list_providers()
+
+
+@app.get("/api/llm/providers/{provider_id}/models")
+def list_llm_provider_models(provider_id: str):
+    p = llm_get_provider(provider_id)
+    if p is None:
+        raise HTTPException(status_code=404, detail=f"unknown provider: {provider_id}")
+    return {"provider": provider_id, "models": p.default_models}
+
+
+@app.get("/api/user/llm-config", response_model=LLMConfigView)
+def get_llm_config(user: User = Depends(current_user)):
+    return LLMConfigView(
+        provider=user.llm_provider,
+        base_url=user.llm_base_url,
+        model=user.llm_model,
+        api_mode=user.llm_api_mode,
+        api_key_masked=llm_mask_api_key(user.llm_api_key),
+        has_key=bool(user.llm_api_key),
+    )
+
+
+@app.patch("/api/user/llm-config", response_model=LLMConfigView)
+def patch_llm_config(payload: LLMConfigUpdate, user: User = Depends(current_user)):
+    if payload.provider and llm_get_provider(payload.provider) is None:
+        raise HTTPException(status_code=400, detail=f"unknown provider: {payload.provider}")
+    import json as _json
+    extras_json = _json.dumps(payload.extras) if payload.extras is not None else None
+    updated = store.update_user_llm_config(
+        user.id,
+        provider=payload.provider,
+        api_key=payload.api_key,
+        base_url=payload.base_url,
+        model=payload.model,
+        api_mode=payload.api_mode,
+        extras_json=extras_json,
+    )
+    if updated is None:
+        raise HTTPException(status_code=404, detail="user not found")
+    store.record_event(Event(
+        event_type="user_llm_config_updated",
+        actor_id=user.id,
+        summary=f"{user.username} updated LLM config",
+    ))
+    return LLMConfigView(
+        provider=updated.llm_provider,
+        base_url=updated.llm_base_url,
+        model=updated.llm_model,
+        api_mode=updated.llm_api_mode,
+        api_key_masked=llm_mask_api_key(updated.llm_api_key),
+        has_key=bool(updated.llm_api_key),
+    )
+
+
+@app.post("/api/user/telegram/link-token", response_model=TelegramLinkTokenResponse)
+def post_telegram_link_token(user: User = Depends(current_user)) -> TelegramLinkTokenResponse:
+    """Mint an ephemeral token the user pastes into Telegram as ``/link <token>``.
+
+    Each new call supersedes any previous outstanding token for the same user,
+    so a user that lost the previous code just needs to ask for another one.
+    """
+    from .telegram_links import link_token_store
+    import time as _time
+
+    issued = link_token_store.issue(user.id)
+    bot_username = os.environ.get("AGORA_TELEGRAM_BOT_USERNAME", "").lstrip("@")
+    deep_link = (
+        f"https://t.me/{bot_username}?start=link_{issued.token}" if bot_username else None
+    )
+    store.record_event(Event(
+        event_type="telegram_link_token_issued",
+        actor_id=user.id,
+        summary=f"{user.username} requested a Telegram link token",
+    ))
+    return TelegramLinkTokenResponse(
+        token=issued.token,
+        expires_at=issued.expires_at,
+        expires_in_seconds=max(0, int(issued.expires_at - _time.time())),
+        deep_link=deep_link,
+    )
+
+
+@app.get("/api/user/telegram/link", response_model=TelegramLinkStatus)
+def get_telegram_link(user: User = Depends(current_user)) -> TelegramLinkStatus:
+    ids = store.telegram_ids_for_user(user.id)
+    return TelegramLinkStatus(linked=bool(ids), telegram_user_ids=ids)
+
+
+@app.delete("/api/user/telegram/link")
+def delete_telegram_link(user: User = Depends(current_user)) -> dict:
+    from .telegram_links import link_token_store
+    link_token_store.revoke_for_user(user.id)
+    dropped = store.unlink_telegram_user(agora_user_id=user.id)
+    if dropped:
+        store.record_event(Event(
+            event_type="telegram_link_removed",
+            actor_id=user.id,
+            summary=f"{user.username} unlinked Telegram ({dropped} binding(s))",
+        ))
+    return {"ok": True, "dropped": dropped}
+
+
 @app.post("/api/me/password")
 def change_password(payload: PasswordChangeRequest, user: User = Depends(current_user)):
     if not user.password or not user.password.startswith("$pbkdf2$"):
@@ -189,10 +374,58 @@ def list_users(_: User = Depends(require_roles("agora_admin"))):
 
 @app.post("/api/users", status_code=201, response_model=UserCreateResponse)
 def create_user(payload: UserCreateRequest, actor: User = Depends(require_roles("agora_admin"))):
-    if store.user_by_username(payload.username):
-        raise HTTPException(status_code=409, detail="username already exists")
+    # Default LLM config — operators can override via AGORA_DEFAULT_PROVIDER /
+    # _MODEL / _API_MODE. Defaulting to ``openai-codex`` means new users
+    # inherit the admin's ChatGPT Teams subscription (OAuth token from
+    # ~/.laia/auth.json) and the operator does not have to paste an API key
+    # for each new hire. Switch back to a paid-API provider by setting
+    # AGORA_DEFAULT_PROVIDER=anthropic (or any other ARCH provider id).
+    # Default model for openai-codex: must be one ChatGPT-account OAuth
+    # accepts (validated by ARCH's _codex_curated_models in
+    # .laia-core/laia_cli/codex_models.py). "gpt-5-codex" is API-only and
+    # fails with HTTP 400 for OAuth callers.
+    default_provider = os.environ.get("AGORA_DEFAULT_PROVIDER", "openai-codex")
+    default_model = os.environ.get("AGORA_DEFAULT_MODEL", "gpt-5.5")
+    default_api_mode = os.environ.get("AGORA_DEFAULT_API_MODE") or None
+
     password = payload.password or f"laia-{now_iso()[:19]}"
     hashed = hash_password(password)
+
+    # Reactivation path: ``DELETE /api/users/<id>`` is a soft-delete that
+    # leaves the row with ``active=0``. If the operator re-creates the same
+    # username afterwards, treat it as "revive" rather than 409 — far
+    # friendlier UX for dev/test loops where you redeploy the same slug.
+    existing = store.user_by_username(payload.username)
+    if existing:
+        if existing.active:
+            raise HTTPException(status_code=409, detail="username already exists")
+        existing.active = True
+        existing.display_name = payload.display_name
+        existing.role = payload.role
+        existing.password = hashed
+        existing.llm_provider = default_provider or None
+        existing.llm_model = default_model or None
+        existing.llm_api_mode = default_api_mode
+        # Wipe credentials from the prior owner — a re-created username must
+        # NOT inherit a paid API key, a custom base_url, or a still-valid JWT.
+        # The new operator reconfigures explicitly via PATCH /api/user/llm-config.
+        existing.llm_api_key = None
+        existing.llm_base_url = None
+        existing.llm_extras_json = None
+        existing.token = None
+        # Re-creating with a different operator: drop any prior agent binding.
+        existing.agent_id = None
+        store.save_user(existing)
+        store.record_event(Event(
+            event_type="user_reactivated", actor_id=actor.id,
+            summary=f"{payload.username} ({payload.role})",
+            payload={"user_id": existing.id},
+        ))
+        return UserCreateResponse(
+            ok=True, user=public_user(existing),
+            password=password if not payload.password else None,
+        )
+
     user = User(
         id=f"user_{payload.username}",
         username=payload.username,
@@ -201,6 +434,9 @@ def create_user(payload: UserCreateRequest, actor: User = Depends(require_roles(
         token=None,
         password=hashed,
         active=True,
+        llm_provider=default_provider or None,
+        llm_model=default_model or None,
+        llm_api_mode=default_api_mode,
     )
     store.save_user(user)
     agent = None
@@ -599,7 +835,15 @@ def register_provisioned_agent(payload: RegisterAgentRequest, user: User = Depen
     if target_user is None:
         raise HTTPException(status_code=404, detail=f"user not found: {payload.user_id}")
     if target_user.agent_id:
-        raise HTTPException(status_code=409, detail="user already has an agent")
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"user {target_user.username!r} already has agent "
+                f"{target_user.agent_id!r}. Unlink first with "
+                f"PATCH /api/users/{target_user.id} (set agent_id=null) "
+                f"or DELETE /api/agents/{target_user.agent_id} before re-registering."
+            ),
+        )
     agent = Agent(
         id=new_id("agent"),
         user_id=payload.user_id,
@@ -646,6 +890,7 @@ def fetch_agent_secrets(slug: str, payload: SecretsFetchRequest):
     # Pick the first LLM key available on this host. Sprint 2 shares one key
     # across all Agora Agents; sprint 3+ can introduce per-agent keys.
     for provider, env_var in (
+        ("deepseek", "DEEPSEEK_API_KEY"),
         ("openrouter", "OPENROUTER_API_KEY"),
         ("anthropic", "ANTHROPIC_API_KEY"),
         ("openai", "OPENAI_API_KEY"),
@@ -743,20 +988,24 @@ def _agent_client_for_slug(slug: str):
 # so FastAPI doesn't match "me" as a slug.
 @app.post("/api/agents/me/chat")
 async def chat_with_my_agent(payload: ChatProxyRequest, user: User = Depends(current_user)):
-    """Employee path: chat with the agent linked to the current user."""
+    """Employee path: chat with the agent linked to the current user.
+
+    Replaces the sprint-2 relay (proxy SSE to ``/chat`` on the user's
+    container, which no longer exists). The handler now drives an in-process
+    AIAgent from :class:`AgentPool`; tool calls are routed back to the
+    user's executor through the forwarder plugin.
+    """
     if not user.agent_id:
         raise HTTPException(status_code=404, detail="no agent linked to your user")
     agent = next((a for a in store.agents() if a.id == user.agent_id), None)
     if agent is None:
         raise HTTPException(status_code=404, detail="agent record missing")
-    slug = agent.container_name.removeprefix("laia-")
-    client = _agent_client_for_slug(slug)
 
-    async def relay():
-        async for chunk in client.chat_stream(payload.message, session_id=payload.session_id):
-            yield chunk
-
-    return StreamingResponse(relay(), media_type="text/event-stream")
+    from .chat_engine import chat_stream
+    return StreamingResponse(
+        chat_stream(user=user, agent=agent, message=payload.message, session_id=payload.session_id),
+        media_type="text/event-stream",
+    )
 
 
 @app.post("/api/agents/{slug}/chat")
@@ -765,14 +1014,25 @@ async def chat_with_agent_admin(
     payload: ChatProxyRequest,
     user: User = Depends(require_roles("agora_admin")),
 ):
-    """Admin path: chat with any registered agent. SSE stream is proxied as-is."""
-    client = _agent_client_for_slug(slug)
+    """Admin path: chat with any registered agent.
 
-    async def relay():
-        async for chunk in client.chat_stream(payload.message, session_id=payload.session_id):
-            yield chunk
+    The admin acts as the LLM identity but the tool calls still hit the
+    target user's executor, so the admin can debug a user's agent without
+    touching the user's password.
+    """
+    container = f"laia-{slug}"
+    agent = next((a for a in store.agents() if a.container_name == container), None)
+    if agent is None:
+        raise HTTPException(status_code=404, detail=f"agent {slug!r} not registered")
+    target_user = store.user_by_id(agent.user_id) if agent.user_id else user
+    if target_user is None:
+        target_user = user
 
-    return StreamingResponse(relay(), media_type="text/event-stream")
+    from .chat_engine import chat_stream
+    return StreamingResponse(
+        chat_stream(user=target_user, agent=agent, message=payload.message, session_id=payload.session_id),
+        media_type="text/event-stream",
+    )
 
 
 @app.post("/api/agents/{slug}/snapshot")

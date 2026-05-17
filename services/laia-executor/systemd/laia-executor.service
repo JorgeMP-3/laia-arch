@@ -1,0 +1,25 @@
+[Unit]
+Description=LAIA Executor — tool runner for AGORA Agents
+Documentation=file:///opt/laia-executor/README.md
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/opt/laia-executor
+Environment="LAIA_EXECUTOR_HOST=0.0.0.0"
+Environment="LAIA_EXECUTOR_PORT=9091"
+ExecStart=/opt/laia-executor/venv/bin/laia-executor
+Restart=on-failure
+RestartSec=3
+StandardOutput=journal
+StandardError=journal
+
+# Resource limits — generous; the user owns this container.
+LimitNOFILE=65536
+TimeoutStopSec=10
+
+[Install]
+WantedBy=multi-user.target

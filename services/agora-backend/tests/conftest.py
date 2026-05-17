@@ -10,3 +10,21 @@ os.environ["AGORA_DEV_DATA_DIR"] = _test_dir
 
 import atexit
 atexit.register(lambda: shutil.rmtree(_test_dir, ignore_errors=True))
+
+
+# The in-memory login rate limiter trips after 10 attempts/minute per IP.
+# Tests share a single TestClient → all login attempts come from "testserver",
+# which means a suite with many login-using tests blows the budget and later
+# tests get HTTP 429 spuriously. Wipe the store between tests so each starts
+# fresh.
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _reset_login_rate_limit():
+    try:
+        from app import security  # noqa: WPS433 — late import (env vars first)
+        security._rate_store.clear()
+    except Exception:
+        pass
+    yield

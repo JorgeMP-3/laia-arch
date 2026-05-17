@@ -102,13 +102,14 @@ class AgentWrapper:
         *,
         slug: str,
         api_key: str,
+        provider: str = "",
         enabled_toolsets: list[str] | None = None,
         workspace_dir: Path | None = None,
         agent_class: type | None = None,  # for tests: inject a fake AIAgent class
     ) -> None:
         self.slug = slug
         self._api_key = api_key
-        self._llm_provider: str = ""
+        self._llm_provider: str = provider
         self._workspace_dir = workspace_dir
         self._lock = asyncio.Lock()
 
@@ -128,6 +129,7 @@ class AgentWrapper:
         # Bind callbacks: each one schedules an event push on the loop.
         self._agent = agent_class(
             api_key=self._api_key,
+            provider=self._llm_provider if self._llm_provider else None,
             enabled_toolsets=toolsets,
             stream_delta_callback=self._on_token,
             tool_start_callback=self._on_tool_start,

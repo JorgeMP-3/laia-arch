@@ -1,0 +1,215 @@
+#!/usr/bin/env bash
+# build-agora-image.sh — build the `laia-agora` LXD image: the orchestrator
+# container that hosts the agora-backend FastAPI service, the AIAgent pool,
+# and the shared `.laia-core` runtime.
+#
+# This image does NOT include any user-facing tool sandbox — tools that run
+# on user filesystems are forwarded to per-user `laia-executor` containers
+# via HTTP. Tools that run locally (web, vision, image_gen, etc.) execute
+# inside this container.
+#
+# Requirements:
+#   - lxc CLI with admin permissions
+#   - LXD profile `laia-agora` must exist (see ../profiles/laia-agora.yaml)
+#   - Repository LAIA checked out (env LAIA_ROOT, default ~/LAIA)
+#
+# Usage:
+#   bash build-agora-image.sh                     # build with defaults
+#   ALIAS=laia-agora-v2 bash build-agora-image.sh # custom alias
+#   FORCE=1 bash build-agora-image.sh             # rebuild even if alias exists
+
+set -euo pipefail
+
+BASE_IMAGE="${BASE_IMAGE:-ubuntu:24.04}"
+BASE_CONTAINER="${BASE_CONTAINER:-laia-agora-base}"
+ALIAS="${ALIAS:-laia-agora}"
+PROFILE="${PROFILE:-laia-agora}"
+LAIA_ROOT="${LAIA_ROOT:-$HOME/LAIA}"
+FORCE="${FORCE:-0}"
+
+if [[ -t 1 ]]; then
+  GRN='\033[1;32m'; YEL='\033[1;33m'; RED='\033[1;31m'; CYN='\033[1;36m'; RST='\033[0m'
+else
+  GRN=''; YEL=''; RED=''; CYN=''; RST=''
+fi
+info() { printf "${CYN}→${RST} %s\n" "$*"; }
+ok()   { printf "${GRN}✓${RST} %s\n" "$*"; }
+warn() { printf "${YEL}⚠${RST} %s\n" "$*"; }
+die()  { printf "${RED}✗${RST} %s\n" "$*" >&2; exit 1; }
+
+# ── preflight ────────────────────────────────────────────────────────────────
+
+command -v lxc >/dev/null 2>&1 || die "lxc command not found"
+[[ -d "$LAIA_ROOT" ]] || die "LAIA_ROOT not found: $LAIA_ROOT"
+[[ -d "$LAIA_ROOT/.laia-core" ]] || die ".laia-core missing in $LAIA_ROOT"
+[[ -d "$LAIA_ROOT/services/agora-backend" ]] || die "agora-backend missing"
+[[ -d "$LAIA_ROOT/workspace_store" ]] || die "workspace_store missing"
+
+lxc profile show "$PROFILE" >/dev/null 2>&1 \
+  || die "missing LXD profile: $PROFILE (apply infra/lxd/profiles/laia-agora.yaml)"
+
+if lxc info "$BASE_CONTAINER" >/dev/null 2>&1; then
+  warn "stale base container $BASE_CONTAINER present — removing"
+  lxc delete --force "$BASE_CONTAINER"
+fi
+
+if lxc image info "$ALIAS" >/dev/null 2>&1; then
+  if [[ "$FORCE" == "1" ]]; then
+    warn "deleting existing image $ALIAS (FORCE=1)"
+    lxc image delete "$ALIAS"
+  else
+    die "image alias already exists: $ALIAS  (set FORCE=1 to rebuild)"
+  fi
+fi
+
+# ── prepare source tarball ───────────────────────────────────────────────────
+
+info "preparing source tarball from $LAIA_ROOT"
+TMPDIR=$(mktemp -d)
+trap 'rm -rf "$TMPDIR"' EXIT
+TAR="$TMPDIR/laia-agora-src.tar.gz"
+
+( cd "$LAIA_ROOT" && tar \
+    --exclude='.git' \
+    --exclude='__pycache__' \
+    --exclude='*.pyc' \
+    --exclude='node_modules' \
+    --exclude='.pytest_cache' \
+    --exclude='.mypy_cache' \
+    --exclude='.ruff_cache' \
+    --exclude='.venv' \
+    --exclude='venv' \
+    --exclude='archived' \
+    -czf "$TAR" \
+      .laia-core \
+      workspace_store \
+      services/agora-backend )
+ok "tarball ready: $(du -h "$TAR" | cut -f1)"
+
+# ── launch base container ────────────────────────────────────────────────────
+
+info "launching base container $BASE_CONTAINER from $BASE_IMAGE"
+lxc launch "$BASE_IMAGE" "$BASE_CONTAINER" -p default -p "$PROFILE"
+sleep 8
+
+# ── install OS deps ─────────────────────────────────────────────────────────
+
+info "installing OS packages"
+lxc exec "$BASE_CONTAINER" -- bash -lc '
+  set -euo pipefail
+  export DEBIAN_FRONTEND=noninteractive
+  apt-get update -y
+  apt-get install -y --no-install-recommends \
+    python3 python3-venv python3-pip \
+    sqlite3 \
+    ca-certificates curl jq \
+    ripgrep \
+    git
+  apt-get clean
+  rm -rf /var/lib/apt/lists/*
+'
+
+# ── upload + extract source ─────────────────────────────────────────────────
+
+info "uploading source to container"
+lxc file push "$TAR" "$BASE_CONTAINER/tmp/laia-agora-src.tar.gz"
+
+info "extracting source to /opt/agora/app"
+lxc exec "$BASE_CONTAINER" -- bash -lc '
+  set -euo pipefail
+  mkdir -p /opt/agora/app /opt/agora/data /opt/agora/data/workspaces
+  tar -xzf /tmp/laia-agora-src.tar.gz -C /opt/agora/app
+  rm /tmp/laia-agora-src.tar.gz
+  ls /opt/agora/app
+'
+
+# ── seed config.yaml so workspace-context activates with the collective ws ──
+
+info "seeding /opt/agora/data/config.yaml (workspace-context active = collective)"
+lxc exec "$BASE_CONTAINER" -- bash -lc '
+  set -euo pipefail
+  cat > /opt/agora/data/config.yaml <<"EOF"
+# Bootstrapped by build-agora-image.sh — overridden on first config edit.
+plugins:
+  workspace-context:
+    workspace: collective
+    inject_mode: index
+    active_workspaces:
+      - collective
+memory:
+  provider: workspace-context
+EOF
+'
+
+# ── build venv ──────────────────────────────────────────────────────────────
+
+info "building Python venv with agora-backend + .laia-core deps"
+lxc exec "$BASE_CONTAINER" -- bash -lc '
+  set -euo pipefail
+  python3 -m venv /opt/agora/venv
+  /opt/agora/venv/bin/pip install --upgrade pip setuptools wheel
+  # Install agora-backend (FastAPI service)
+  if [[ -f /opt/agora/app/services/agora-backend/pyproject.toml ]]; then
+    /opt/agora/venv/bin/pip install -e /opt/agora/app/services/agora-backend
+  elif [[ -f /opt/agora/app/services/agora-backend/requirements.txt ]]; then
+    /opt/agora/venv/bin/pip install -r /opt/agora/app/services/agora-backend/requirements.txt
+  fi
+  # Install .laia-core deps if present (motor AIAgent)
+  if [[ -f /opt/agora/app/.laia-core/requirements.txt ]]; then
+    /opt/agora/venv/bin/pip install -r /opt/agora/app/.laia-core/requirements.txt
+  fi
+'
+
+# ── install systemd unit ────────────────────────────────────────────────────
+
+info "installing systemd unit for agora-backend"
+lxc exec "$BASE_CONTAINER" -- bash -lc '
+  cat > /etc/systemd/system/agora-backend.service <<"EOF"
+[Unit]
+Description=AGORA Backend — orchestrator API + AIAgent pool
+Documentation=file:///opt/agora/app/services/agora-backend/README.md
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/opt/agora/app/services/agora-backend
+Environment="AGORA_DATA_DIR=/opt/agora/data"
+Environment="LAIA_HOME=/opt/agora/data"
+Environment="LAIA_ROOT=/opt/agora/app"
+Environment="AGORA_COLLECTIVE_WORKSPACE=collective"
+Environment="PYTHONPATH=/opt/agora/app:/opt/agora/app/.laia-core"
+ExecStart=/opt/agora/venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000
+Restart=on-failure
+RestartSec=3
+StandardOutput=journal
+StandardError=journal
+
+LimitNOFILE=65536
+TimeoutStopSec=15
+
+[Install]
+WantedBy=multi-user.target
+EOF
+  systemctl daemon-reload
+  systemctl enable agora-backend.service
+'
+
+# ── snapshot + publish ──────────────────────────────────────────────────────
+
+info "stopping base container for image publish"
+lxc stop "$BASE_CONTAINER"
+
+info "publishing image $ALIAS"
+lxc publish "$BASE_CONTAINER" --alias "$ALIAS" \
+  description="LAIA AGORA orchestrator image (built $(date -u +%Y-%m-%dT%H:%M:%SZ))"
+
+info "cleaning up base container"
+lxc delete "$BASE_CONTAINER"
+
+ok "image $ALIAS ready"
+echo
+echo "Next: create the AGORA orchestrator container with:"
+echo "  bash $(dirname "$0")/../scripts/create-agora.sh"

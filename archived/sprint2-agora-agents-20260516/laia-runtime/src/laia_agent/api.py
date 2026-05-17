@@ -30,7 +30,7 @@ from fastapi import Depends, FastAPI, HTTPException, Header, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from .agent_wrapper import AgentWrapper
+from .agent_wrapper import AgentWrapper, fetch_llm_secret_from_agora
 from .config import AgentConfig, load_config
 from .plugin_loader import DEFAULT_PLUGINS_ROOT
 from .profile import ensure_profile, get_profile, update_profile
@@ -166,11 +166,17 @@ def create_app(
     def _make_wrapper(slug: str) -> "AgentWrapper":
         if agent_wrapper_factory is not None:
             return agent_wrapper_factory(slug)
-        # Real wrapper: pulls api_token from config (used as the LLM API key
-        # placeholder until the AGORA secrets-fetch flow lands in Fase I).
+        # Fetch the real LLM API key from AGORA using bootstrap token
+        llm_key, llm_provider = fetch_llm_secret_from_agora(
+            slug=slug,
+            bootstrap_token=cfg.api_token,
+            agora_url=cfg.agora_backend_url,
+        )
+        logger.info("fetched LLM secret for %s: provider=%s", slug, llm_provider)
         return AgentWrapper(
             slug=slug,
-            api_key=cfg.api_token,
+            api_key=llm_key,
+            provider=llm_provider,
             enabled_toolsets=["agora-agent"],
             workspace_dir=cfg.workspace_dir,
         )

@@ -14,8 +14,35 @@ CREATE TABLE IF NOT EXISTS users (
     password TEXT,
     active INTEGER NOT NULL DEFAULT 1,
     created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
+    updated_at TEXT NOT NULL,
+    llm_provider TEXT,
+    llm_api_key TEXT,
+    llm_base_url TEXT,
+    llm_model TEXT,
+    llm_api_mode TEXT,
+    llm_extras_json TEXT
 );
+
+CREATE TABLE IF NOT EXISTS conversations (
+    session_id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    agent_slug TEXT NOT NULL,
+    messages_json TEXT NOT NULL DEFAULT '[]',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (user_id) REFERENCES users(id)
+);
+
+CREATE TABLE IF NOT EXISTS telegram_links (
+    telegram_user_id TEXT PRIMARY KEY,
+    agora_user_id TEXT NOT NULL,
+    linked_at TEXT NOT NULL,
+    FOREIGN KEY (agora_user_id) REFERENCES users(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_conversations_user ON conversations(user_id);
+CREATE INDEX IF NOT EXISTS idx_conversations_updated ON conversations(updated_at);
+CREATE INDEX IF NOT EXISTS idx_telegram_links_agora_user ON telegram_links(agora_user_id);
 
 CREATE TABLE IF NOT EXISTS tasks (
     id TEXT PRIMARY KEY,
@@ -82,6 +109,12 @@ class Database:
                          ("api_token",    "ALTER TABLE agents ADD COLUMN api_token TEXT")):
             if col not in existing:
                 self.conn.execute(ddl)
+        # Migrations for users table — LLM config columns added in the redesign.
+        users_cols = {row[1] for row in self.conn.execute("PRAGMA table_info(users)").fetchall()}
+        for col in ("llm_provider", "llm_api_key", "llm_base_url",
+                    "llm_model", "llm_api_mode", "llm_extras_json"):
+            if col not in users_cols:
+                self.conn.execute(f"ALTER TABLE users ADD COLUMN {col} TEXT")
         self.conn.commit()
 
     def backup(self) -> Path:

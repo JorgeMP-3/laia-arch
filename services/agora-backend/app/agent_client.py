@@ -15,7 +15,7 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_PORT = 9090
+DEFAULT_PORT = 9091
 DEFAULT_TIMEOUT = 10.0  # seconds — short because children are on local bridge
 DEFAULT_TASK_POLL_TIMEOUT = 30.0  # how long get_task_result waits before giving up
 

@@ -1,15 +1,22 @@
-"""Tests for AGORA chat relay endpoints (admin + employee paths)."""
+"""Tests for AGORA chat endpoints (admin + employee paths).
+
+The sprint-2 implementation proxied SSE from the user's container. The
+redesign drives an in-process AIAgent from :class:`AgentPool` and only
+forwards filesystem/bash tool calls to the executor. These tests stub the
+``chat_stream`` async generator so we exercise routing, auth and error
+paths without touching the real AIAgent (covered separately).
+"""
 from __future__ import annotations
 
 import json
 from typing import AsyncIterator
 
-import httpx
 import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
 from app.storage import store
+
 
 ADMIN_HEADERS = {"Authorization": "Bearer dev-admin-token"}
 client = TestClient(app)
@@ -24,39 +31,48 @@ def _provision_agent(slug: str, ip: str, token: str) -> tuple[str, str]:
     )
     assert r.status_code in (200, 201), r.text
     uid = r.json()["user"]["id"]
+    # Configure a fake LLM key so chat_stream's "no LLM key" guard doesn't
+    # short-circuit before our stub is reached.
+    client.patch(
+        f"/api/users/{uid}",
+        json={"role": "employee"},
+        headers=ADMIN_HEADERS,
+    )
+    # Login as the employee to set their LLM key.
+    r2 = client.post("/api/login", json={"username": slug, "password": "test1234"})
+    assert r2.status_code == 200, r2.text
+    jwt = r2.json()["access_token"]
+    client.patch(
+        "/api/user/llm-config",
+        json={"provider": "deepseek", "api_key": "sk-test-key"},
+        headers={"Authorization": f"Bearer {jwt}"},
+    )
     assert client.post(
         "/api/agents/register",
         json={"slug": slug, "user_id": uid, "container_ip": ip, "api_token": token},
         headers=ADMIN_HEADERS,
     ).status_code == 201
-    # Login as the employee to get their JWT
-    r2 = client.post("/api/login", json={"username": slug, "password": "test1234"})
-    assert r2.status_code == 200, r2.text
-    jwt = r2.json()["access_token"]
     return uid, jwt
 
 
-class _StubClient:
-    """Mimics AgentClient enough for the relay to stream a fixed payload."""
-
-    def __init__(self, *args, **kwargs):
-        pass
-
-    async def chat_stream(self, message, session_id=None) -> AsyncIterator[bytes]:
-        yield b"event: session\ndata: {\"session_id\": \"sid1\"}\n\n"
-        yield b"event: token\ndata: {\"type\": \"token\", \"text\": \"hi\"}\n\n"
-        yield b"event: final\ndata: {\"type\": \"final\", \"reply\": \"hi\"}\n\n"
+async def _fake_chat_stream(**_kwargs) -> AsyncIterator[bytes]:
+    """Stub for app.chat_engine.chat_stream — emits 3 canned SSE events."""
+    yield b'data: {"type": "tool", "name": "write_file", "status": "started"}\n\n'
+    yield b'data: {"type": "token", "value": "hola"}\n\n'
+    yield b'data: {"type": "done", "response": "hola desde stub", "iterations": 1}\n\n'
 
 
 @pytest.fixture(autouse=True)
-def patch_agent_client(monkeypatch):
-    monkeypatch.setattr("app.main._agent_client_for_slug", lambda slug: _StubClient())
+def patch_chat_stream(monkeypatch):
+    """Replace the real chat dispatcher with a stub for every test."""
+    import app.chat_engine
+    monkeypatch.setattr(app.chat_engine, "chat_stream", _fake_chat_stream)
 
 
 # ── admin path ───────────────────────────────────────────────────────────────
 
 
-def test_admin_chat_returns_sse(monkeypatch):
+def test_admin_chat_returns_sse():
     _provision_agent("chatadmin", "10.0.1.1", "tk-chatadmin")
     with client.stream(
         "POST", "/api/agents/chatadmin/chat",
@@ -66,8 +82,8 @@ def test_admin_chat_returns_sse(monkeypatch):
         assert r.status_code == 200
         assert r.headers["content-type"].startswith("text/event-stream")
         body = b"".join(r.iter_bytes())
-    assert b"event: token" in body
-    assert b"event: final" in body
+    assert b'"type": "token"' in body
+    assert b'"type": "done"' in body
 
 
 def test_admin_chat_requires_admin_role():
@@ -92,11 +108,11 @@ def test_employee_chat_returns_sse():
     ) as r:
         assert r.status_code == 200
         body = b"".join(r.iter_bytes())
-    assert b"event: token" in body
+    assert b'"type": "token"' in body
+    assert b'"type": "done"' in body
 
 
 def test_employee_chat_404_without_linked_agent():
-    # Create a user WITHOUT an agent
     r = client.post(
         "/api/users",
         json={"username": "lonelyuser", "display_name": "Lonely", "role": "employee", "password": "test1234"},
@@ -112,21 +128,54 @@ def test_employee_chat_404_without_linked_agent():
     assert r.status_code == 404
 
 
-def test_admin_chat_404_when_agent_not_registered(monkeypatch):
-    # Override the autouse stub so the real lookup runs and raises 404.
-    def real_lookup(slug: str):
-        from fastapi import HTTPException
-        from app.storage import store
-        container = f"laia-{slug}"
-        target = next((a for a in store.agents() if a.container_name == container), None)
-        if target is None:
-            raise HTTPException(status_code=404, detail=f"agent {slug!r} not registered")
-        return _StubClient()
-
-    monkeypatch.setattr("app.main._agent_client_for_slug", real_lookup)
+def test_admin_chat_404_when_agent_not_registered():
     r = client.post(
         "/api/agents/neverexists/chat",
         json={"message": "hola"},
         headers=ADMIN_HEADERS,
     )
     assert r.status_code == 404
+
+
+# ── unhappy paths — exercise the real chat_engine (no stub) ─────────────────
+
+
+# NOTE: the old `test_real_chat_engine_emits_error_without_llm_key` test
+# was retired when new users started defaulting to ``openai-codex`` (OAuth
+# via ChatGPT Teams). Its replacement —
+# ``test_chat_engine_still_rejects_paid_provider_without_api_key`` in
+# test_oauth_defaults.py — covers the same guard for paid-API providers.
+
+
+def test_real_chat_engine_error_without_provisioned_agent(monkeypatch):
+    """Agent registered without container_ip / api_token → 'error' event."""
+    import app.chat_engine
+    monkeypatch.undo()
+
+    r = client.post(
+        "/api/users",
+        json={"username": "noprov", "display_name": "NoProv", "role": "employee", "password": "test1234"},
+        headers=ADMIN_HEADERS,
+    )
+    uid = r.json()["user"]["id"]
+    # Register agent without container_ip / api_token.
+    client.post(
+        "/api/agents/register",
+        json={"slug": "noprov", "user_id": uid, "container_ip": "", "api_token": ""},
+        headers=ADMIN_HEADERS,
+    )
+    jwt = client.post("/api/login", json={"username": "noprov", "password": "test1234"}).json()["access_token"]
+    # Set a key so the LLM check passes and we reach the provision guard.
+    client.patch(
+        "/api/user/llm-config",
+        json={"provider": "deepseek", "api_key": "sk-test"},
+        headers={"Authorization": f"Bearer {jwt}"},
+    )
+    with client.stream(
+        "POST", "/api/agents/me/chat",
+        json={"message": "hola"},
+        headers={"Authorization": f"Bearer {jwt}"},
+    ) as r:
+        body = b"".join(r.iter_bytes())
+    assert b'"type": "error"' in body
+    assert b'not provisioned' in body

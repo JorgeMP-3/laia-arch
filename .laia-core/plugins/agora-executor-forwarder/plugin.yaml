@@ -1,0 +1,11 @@
+name: agora-executor-forwarder
+version: 0.1.0
+description: |
+  Forward filesystem/bash tool calls from an AIAgent running inside the
+  laia-agora orchestrator container to the user's `laia-executor` over HTTP.
+  Network/LLM-secondary tools (web_search, vision, etc.) continue to run
+  locally inside laia-agora. Activated only when AGORA registers a session
+  context via `configure_forwarder()`.
+author: "AGORA Agents redesign"
+hooks:
+  - pre_tool_call

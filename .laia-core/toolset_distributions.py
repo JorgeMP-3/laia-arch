@@ -222,8 +222,13 @@ DISTRIBUTIONS = {
     # Inherits most LAIA capabilities EXCEPT host management (lxc/systemctl/apt/docker).
     # Tool sandboxing (path whitelist, command blacklist) is enforced separately
     # in tools/file_tools.py and tools/terminal_tool.py when LAIA_PROFILE=agora-agent.
+    #
+    # KEPT for backward compatibility with sprint 2 callers. Superseded by
+    # ``agora-orchestrator`` below; the redesign moves the AIAgent out of the
+    # user's container into ``laia-agora`` and forwards filesystem/bash tool
+    # calls to per-user ``laia-executor`` instances via HTTP.
     "agora-agent": {
-        "description": "Personal agent for AGORA users — full LAIA capabilities, no host management, path-sandboxed",
+        "description": "Personal agent for AGORA users — full LAIA capabilities, no host management, path-sandboxed (sprint 2, deprecated by agora-orchestrator)",
         "toolsets": {
             "web": 100,        # Web search / fetch
             "vision": 100,     # Image analysis
@@ -232,12 +237,31 @@ DISTRIBUTIONS = {
             "file": 80,        # File ops (path-whitelisted to /opt/laia/data,plugins)
             "terminal": 50,    # Bash (command-blacklisted: no lxc/systemctl/apt/...)
             "moa": 40,         # Mixture-of-agents reasoning
-            # OMIT intentionally:
-            #   - delegate_task: child agents don't spawn subagents
-            #   - cronjob: no systemd inside container
-            #   - mixture_of_agents (as standalone): too heavy for personal agent
         }
-    }
+    },
+
+    # Agora Orchestrator: profile used by the AIAgent running INSIDE the
+    # laia-agora container. Filesystem and shell tools are registered
+    # (so the LLM sees them in its tool schema) but actually execute
+    # remotely on per-user laia-executor containers via the
+    # agora-executor-forwarder plugin. Network/LLM-secondary tools run
+    # locally inside laia-agora using AGORA's shared API keys.
+    "agora-orchestrator": {
+        "description": "AIAgent profile for the laia-agora orchestrator container — filesystem/bash forward to user's laia-executor, network tools run locally",
+        "toolsets": {
+            # Tools registered but routed to the user's executor via plugin.
+            "file": 100,
+            "terminal": 100,
+            # Tools that run locally in laia-agora using shared credentials.
+            "web": 100,
+            "vision": 100,
+            "image_gen": 100,
+            "browser": 100,
+            "fetch_url": 100,
+            "workspace": 100,  # Collective workspace lives in laia-agora; private one is namespaced.
+        },
+        "plugins": ["agora-executor-forwarder"],
+    },
 }
 
 

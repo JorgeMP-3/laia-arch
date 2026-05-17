@@ -9,7 +9,14 @@ import threading
 from pathlib import Path
 
 from agent.file_safety import get_read_block_error
-from tools.agora_sandbox import enforce_path_sandbox
+try:
+    # The AGORA sprint-2 sandbox; archived as part of the redesign. The wiring
+    # below stays so the host ARCH / sprint-2 paths keep working if the module
+    # is ever restored; when archived, enforce_path_sandbox is a no-op.
+    from tools.agora_sandbox import enforce_path_sandbox  # type: ignore[no-redef]
+except Exception:
+    def enforce_path_sandbox(_path):  # type: ignore[no-redef]
+        return None
 from tools.binary_extensions import has_binary_extension
 from tools.file_operations import (
     ShellFileOperations,

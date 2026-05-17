@@ -1,10 +1,18 @@
 #!/usr/bin/env bash
-# build-base-image.sh — build the `laia-agent` LXD image with everything an agent
-# child needs: code, venv, systemd units, healthcheck, user.
+# build-base-image.sh — build the `laia-agent` LXD image: per-user containers
+# that run ONLY `laia-executor` (FastAPI :9091).
+#
+# Architecture (post-redesign):
+#   - NO `.laia-core/` inside the user container — the AIAgent lives in the
+#     `laia-agora` orchestrator container instead.
+#   - NO `services/laia-runtime/` either — it's been archived; the executor
+#     replaces it with a much thinner surface.
+#   - The user is root inside the container; this image is minimal so the
+#     user can apt-install freely on top of it.
 #
 # Requirements:
 #   - lxc CLI with admin permissions
-#   - LXD profile `laia-employee` must exist (see ../profiles/)
+#   - LXD profile `laia-employee` must exist (see ../profiles/laia-employee.yaml)
 #   - Repository LAIA checked out (env LAIA_ROOT, default ~/LAIA)
 #
 # Usage:
@@ -16,7 +24,7 @@
 
 set -euo pipefail
 
-BASE_IMAGE="${BASE_IMAGE:-ubuntu:22.04}"
+BASE_IMAGE="${BASE_IMAGE:-ubuntu:24.04}"
 BASE_CONTAINER="${BASE_CONTAINER:-laia-agent-base}"
 ALIAS="${ALIAS:-laia-agent}"
 PROFILE="${PROFILE:-laia-employee}"
@@ -37,12 +45,10 @@ die()  { printf "${RED}✗${RST} %s\n" "$*" >&2; exit 1; }
 
 command -v lxc >/dev/null 2>&1 || die "lxc command not found"
 [[ -d "$LAIA_ROOT" ]] || die "LAIA_ROOT not found: $LAIA_ROOT"
-[[ -d "$LAIA_ROOT/.laia-core" ]] || die ".laia-core missing in $LAIA_ROOT"
-[[ -d "$LAIA_ROOT/workspace_store" ]] || die "workspace_store missing in $LAIA_ROOT"
-[[ -d "$LAIA_ROOT/services/laia-runtime/src" ]] || die "laia-runtime missing"
+[[ -d "$LAIA_ROOT/services/laia-executor" ]] || die "services/laia-executor missing in $LAIA_ROOT"
 
 lxc profile show "$PROFILE" >/dev/null 2>&1 \
-  || die "missing LXD profile: $PROFILE  (create with: lxc profile create $PROFILE; then apply infra/lxd/profiles/laia-employee.yaml)"
+  || die "missing LXD profile: $PROFILE (apply infra/lxd/profiles/laia-employee.yaml)"
 
 if lxc info "$BASE_CONTAINER" >/dev/null 2>&1; then
   warn "stale base container $BASE_CONTAINER present — removing"
@@ -58,29 +64,24 @@ if lxc image info "$ALIAS" >/dev/null 2>&1; then
   fi
 fi
 
-# ── prepare source tarball on host ───────────────────────────────────────────
+# ── prepare executor source tarball ─────────────────────────────────────────
 
-info "preparing source tarball from $LAIA_ROOT"
+info "preparing source tarball from $LAIA_ROOT/services/laia-executor"
 TMPDIR=$(mktemp -d)
 trap 'rm -rf "$TMPDIR"' EXIT
-TAR="$TMPDIR/laia-agent-src.tar.gz"
+TAR="$TMPDIR/laia-executor-src.tar.gz"
 
 ( cd "$LAIA_ROOT" && tar \
     --exclude='.git' \
     --exclude='__pycache__' \
     --exclude='*.pyc' \
-    --exclude='node_modules' \
     --exclude='.pytest_cache' \
     --exclude='.mypy_cache' \
     --exclude='.ruff_cache' \
     --exclude='.venv' \
     --exclude='venv' \
     -czf "$TAR" \
-      .laia-core \
-      workspace_store \
-      services/laia-runtime/src/laia_agent \
-      services/laia-runtime/systemd \
-      services/laia-runtime/healthcheck.sh )
+      services/laia-executor )
 ok "tarball ready: $(du -h "$TAR" | cut -f1)"
 
 # ── launch base container ────────────────────────────────────────────────────
@@ -89,100 +90,74 @@ info "launching base container $BASE_CONTAINER from $BASE_IMAGE"
 lxc launch "$BASE_IMAGE" "$BASE_CONTAINER" -p default -p "$PROFILE"
 sleep 8
 
-# ── install system deps + create user + structure ───────────────────────────
+# ── install OS deps ─────────────────────────────────────────────────────────
 
-info "installing OS packages and creating laia-agent user"
+info "installing OS packages"
 lxc exec "$BASE_CONTAINER" -- bash -lc '
   set -euo pipefail
   export DEBIAN_FRONTEND=noninteractive
   apt-get update -y
   apt-get install -y --no-install-recommends \
     python3 python3-venv python3-pip \
-    git curl ca-certificates jq sqlite3 rsync less
-  if ! id laia-agent >/dev/null 2>&1; then
-    useradd -m -d /home/laia-agent -s /bin/bash laia-agent
-  fi
-  mkdir -p /opt/laia/agent /opt/laia/data /opt/laia/logs /opt/laia/runtime /opt/laia/workspaces/personal
-  mkdir -p /opt/laia/data/profile /opt/laia/data/tasks/inbox /opt/laia/data/tasks/done /opt/laia/data/tasks/failed
+    git curl ca-certificates jq sqlite3 ripgrep less \
+    sudo
+  mkdir -p /opt/laia-executor /etc/laia /var/lib/laia/workspace /opt/laia/plugins
+  # The user inside the container is root (LXD unprivileged maps to uid 100000
+  # on the host). Provide a /home/user for bind-mounted personal files.
+  mkdir -p /home/user
+  apt-get clean
+  rm -rf /var/lib/apt/lists/*
 '
 
-# ── push source tarball ──────────────────────────────────────────────────────
+# ── push executor source + install ──────────────────────────────────────────
 
-info "pushing source tarball into container"
-lxc file push "$TAR" "$BASE_CONTAINER/tmp/laia-agent-src.tar.gz"
+info "uploading executor source"
+lxc file push "$TAR" "$BASE_CONTAINER/tmp/laia-executor-src.tar.gz"
+
+info "installing laia-executor into /opt/laia-executor"
 lxc exec "$BASE_CONTAINER" -- bash -lc '
   set -euo pipefail
-  tar -xzf /tmp/laia-agent-src.tar.gz -C /opt/laia/agent/
-  rm /tmp/laia-agent-src.tar.gz
-
-  # Reorganize: src/, systemd/, healthcheck at predictable paths.
-  mkdir -p /opt/laia/agent/src
-  mv /opt/laia/agent/services/laia-runtime/src/laia_agent /opt/laia/agent/src/laia_agent
-  mv /opt/laia/agent/services/laia-runtime/systemd /opt/laia/agent/systemd
-  install -m 0755 /opt/laia/agent/services/laia-runtime/healthcheck.sh /opt/laia/healthcheck.sh
-  rm -rf /opt/laia/agent/services
+  tar -xzf /tmp/laia-executor-src.tar.gz -C /tmp/
+  rm /tmp/laia-executor-src.tar.gz
+  cp -a /tmp/services/laia-executor/. /opt/laia-executor/
+  rm -rf /tmp/services
 '
 
-# ── build python venv + install deps ────────────────────────────────────────
-
-info "building python venv at /opt/laia/runtime/venv"
+info "building python venv at /opt/laia-executor/venv"
 lxc exec "$BASE_CONTAINER" -- bash -lc '
   set -euo pipefail
-  python3 -m venv /opt/laia/runtime/venv
-  /opt/laia/runtime/venv/bin/pip install --upgrade pip
-  /opt/laia/runtime/venv/bin/pip install \
-    "fastapi>=0.115" \
-    "uvicorn[standard]>=0.30" \
-    "pydantic>=2.7"
+  python3 -m venv /opt/laia-executor/venv
+  /opt/laia-executor/venv/bin/pip install --upgrade pip setuptools wheel
+  /opt/laia-executor/venv/bin/pip install -e /opt/laia-executor
 '
 ok "venv built"
 
-# ── install systemd units ───────────────────────────────────────────────────
+# ── install systemd unit ────────────────────────────────────────────────────
 
-info "installing systemd units"
+info "installing laia-executor.service"
 lxc exec "$BASE_CONTAINER" -- bash -lc '
   set -euo pipefail
-  install -m 0644 /opt/laia/agent/systemd/laia-agent.service \
-      /etc/systemd/system/laia-agent.service
-  install -m 0644 /opt/laia/agent/systemd/laia-agent-api.service \
-      /etc/systemd/system/laia-agent-api.service
+  install -m 0644 /opt/laia-executor/systemd/laia-executor.service \
+      /etc/systemd/system/laia-executor.service
   systemctl daemon-reload
-  systemctl enable laia-agent.service laia-agent-api.service
-  # Do NOT start now — per-container agent.json is missing in the image; created by create-agent.sh
+  systemctl enable laia-executor.service
+  # Do NOT start now — the per-container token at /etc/laia/executor-token
+  # is written by create-agent.sh at provisioning time.
 '
 
-# ── ownership + smoke import test ───────────────────────────────────────────
+# ── smoke test (import only — service starts in create-agent.sh) ────────────
 
-info "fixing ownership (sprint 2: root:laia-agent 0750 on agent code)"
+info "smoke test: import laia_executor"
 lxc exec "$BASE_CONTAINER" -- bash -lc '
   set -euo pipefail
-  # Data & plugins: agent + users (via API) can read/write
-  chown -R laia-agent:laia-agent /opt/laia/data /opt/laia/logs /opt/laia/workspaces
-  chmod -R 0750 /opt/laia/data /opt/laia/logs /opt/laia/workspaces
-
-  # Plugins dir: agent reads + writes, user uploads via API
-  mkdir -p /opt/laia/plugins
-  chown -R laia-agent:laia-agent /opt/laia/plugins
-  chmod -R 0750 /opt/laia/plugins
-
-  # Agent code & venv: owned by root, readable only by laia-agent group.
-  # Even if a user gained shell access, they could not cat .laia-core/* files.
-  chown -R root:laia-agent /opt/laia/agent /opt/laia/runtime
-  chmod -R 0750 /opt/laia/agent /opt/laia/runtime
-  # The systemd unit files in /etc/systemd are root-only by default — keep that.
-
-  # Verify a non-laia-agent user genuinely cannot read agent code.
-  # Run as ubuntu (default unprivileged user in the base image) — must fail.
-  if id ubuntu >/dev/null 2>&1; then
-    if su -s /bin/sh ubuntu -c "cat /opt/laia/agent/.laia-core/run_agent.py" >/dev/null 2>&1; then
-      echo "SECURITY ERROR: ubuntu user can read .laia-core/run_agent.py" >&2
-      exit 1
-    fi
-    echo "ownership smoke test OK: ubuntu cannot read .laia-core/"
-  fi
-
-  # Smoke import (laia-agent IS in the file group, so import works)
-  su -s /bin/sh laia-agent -c "/opt/laia/runtime/venv/bin/python -c \"import sys; sys.path.insert(0, \\\"/opt/laia/agent/src\\\"); import laia_agent; from laia_agent.api import create_app; print(\\\"import laia_agent.api OK\\\")\""
+  /opt/laia-executor/venv/bin/python -c "
+import laia_executor
+from laia_executor.api import build_app
+from laia_executor.tools.registry import default_registry
+assert default_registry.has(\"read_file\")
+assert default_registry.has(\"bash\")
+print(\"laia-executor import OK; tools=\", len(default_registry.list_tools()))
+"
 '
 ok "import smoke test passed"
 
@@ -190,8 +165,9 @@ ok "import smoke test passed"
 
 info "stopping container and publishing as $ALIAS"
 lxc stop "$BASE_CONTAINER"
-lxc publish "$BASE_CONTAINER" --alias "$ALIAS" description="LAIA child agent base ($(date -u +%Y-%m-%dT%H:%M:%SZ))"
+lxc publish "$BASE_CONTAINER" --alias "$ALIAS" \
+    description="LAIA per-user container image — laia-executor only ($(date -u +%Y-%m-%dT%H:%M:%SZ))"
 lxc delete "$BASE_CONTAINER"
 
 ok "Published image: $ALIAS"
-info "Next: bash $LAIA_ROOT/infra/lxd/scripts/create-agent.sh <slug>"
+info "Next: sudo bash $LAIA_ROOT/infra/lxd/scripts/create-agent.sh <slug>"

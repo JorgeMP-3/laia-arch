@@ -1,0 +1,22 @@
+config:
+  limits.cpu: "2"
+  limits.memory: 3GB
+  security.nesting: "false"
+  security.privileged: "false"
+description: |
+  LAIA AGORA orchestrator profile.
+  Hosts the agora-backend FastAPI service, the AIAgent pool, and the
+  shared `.laia-core` runtime. Forwards filesystem/bash tool calls to
+  per-user laia-executor containers via HTTP over the LXD bridge.
+  On ARM dev host (7.2 GB RAM total) we start with 2 vCPU / 3 GB so
+  user executor containers still have room. Adjust for production.
+devices:
+  root:
+    path: /
+    pool: default
+    type: disk
+  eth0:
+    name: eth0
+    network: lxdbr0
+    type: nic
+name: laia-agora

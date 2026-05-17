@@ -1083,23 +1083,28 @@ def invoke_hook(hook_name: str, **kwargs: Any) -> List[Any]:
 
 
 
-def get_pre_tool_call_block_message(
+def get_pre_tool_call_directive(
     tool_name: str,
     args: Optional[Dict[str, Any]],
     task_id: str = "",
     session_id: str = "",
     tool_call_id: str = "",
-) -> Optional[str]:
-    """Check ``pre_tool_call`` hooks for a blocking directive.
+) -> Optional[Dict[str, Any]]:
+    """Check ``pre_tool_call`` hooks for a directive.
 
-    Plugins that need to enforce policy (rate limiting, security
-    restrictions, approval workflows) can return::
+    Plugins that need to interpose on a tool call can return one of:
 
-        {"action": "block", "message": "Reason the tool was blocked"}
+        {"action": "block",   "message": "Reason the tool was blocked"}
+        {"action": "replace", "message": "<JSON-serializable tool result>"}
 
-    from their ``pre_tool_call`` callback.  The first valid block
-    directive wins.  Invalid or irrelevant hook return values are
-    silently ignored so existing observer-only hooks are unaffected.
+    ``block`` wraps the message in ``{"error": message}`` so the LLM sees
+    a structured error.  ``replace`` injects the message verbatim as the
+    tool's return value — used by the AGORA executor forwarder to inject
+    the result of a remote HTTP execution as if the tool had run locally.
+
+    The first valid directive wins.  Invalid or irrelevant hook return
+    values are silently ignored so existing observer-only hooks are
+    unaffected.
     """
     hook_results = invoke_hook(
         "pre_tool_call",
@@ -1113,13 +1118,36 @@ def get_pre_tool_call_block_message(
     for result in hook_results:
         if not isinstance(result, dict):
             continue
-        if result.get("action") != "block":
+        action = result.get("action")
+        if action not in ("block", "replace"):
             continue
         message = result.get("message")
         if isinstance(message, str) and message:
-            return message
+            return {"action": action, "message": message}
 
     return None
+
+
+def get_pre_tool_call_block_message(
+    tool_name: str,
+    args: Optional[Dict[str, Any]],
+    task_id: str = "",
+    session_id: str = "",
+    tool_call_id: str = "",
+) -> Optional[str]:
+    """Backwards-compatible wrapper around :func:`get_pre_tool_call_directive`.
+
+    Returns only the message string when the directive is a ``block``.
+    Callers that need to honor ``replace`` directives should call
+    :func:`get_pre_tool_call_directive` directly.
+    """
+    directive = get_pre_tool_call_directive(
+        tool_name, args, task_id=task_id, session_id=session_id, tool_call_id=tool_call_id
+    )
+    if directive is None or directive.get("action") != "block":
+        return None
+    msg = directive.get("message")
+    return msg if isinstance(msg, str) and msg else None
 
 
 def _ensure_plugins_discovered(force: bool = False) -> PluginManager:

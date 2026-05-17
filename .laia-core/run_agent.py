@@ -9060,17 +9060,25 @@ class AIAgent:
         tools. Used by the concurrent execution path; the sequential path retains
         its own inline invocation for backward-compatible display handling.
         """
-        # Check plugin hooks for a block directive before executing anything.
-        block_message: Optional[str] = None
+        # Check plugin hooks for a block-or-replace directive before executing.
+        # block:   wrap message in {"error": ...} (e.g. policy denial)
+        # replace: inject message verbatim as tool result (e.g. AGORA forwarder
+        #          returning the JSON result of a remote executor call)
+        directive: Optional[Dict[str, Any]] = None
         try:
-            from laia_cli.plugins import get_pre_tool_call_block_message
-            block_message = get_pre_tool_call_block_message(
+            from laia_cli.plugins import get_pre_tool_call_directive
+            directive = get_pre_tool_call_directive(
                 function_name, function_args, task_id=effective_task_id or "",
             )
         except Exception:
             pass
-        if block_message is not None:
-            return json.dumps({"error": block_message}, ensure_ascii=False)
+        if directive is not None:
+            _action = directive.get("action")
+            _message = directive.get("message", "")
+            if _action == "replace":
+                return _message
+            if _action == "block":
+                return json.dumps({"error": _message}, ensure_ascii=False)
 
         if function_name == "todo":
             from tools.todo_tool import todo_tool as _todo_tool

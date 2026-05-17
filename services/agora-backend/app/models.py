@@ -30,10 +30,68 @@ class User(BaseModel):
     password: str | None = None
     active: bool = True
     created_at: str = Field(default_factory=now_iso)
+    # Per-user LLM configuration (parity with LAIA ARCH providers).
+    # api_key is encrypted at rest via the storage layer (Fernet, key in AGORA env).
+    llm_provider: str | None = None       # any provider supported by .laia-core/laia_cli/providers.py
+    llm_api_key: str | None = None        # encrypted on write, decrypted on read
+    llm_base_url: str | None = None       # override for self-hosted / custom endpoints
+    llm_model: str | None = None          # specific model id (e.g. "claude-opus-4.6")
+    llm_api_mode: str | None = None       # override of auto-detected api_mode
+    llm_extras_json: str | None = None    # free-form JSON for advanced settings
+
+
+class LLMConfigUpdate(BaseModel):
+    provider: str | None = None
+    api_key: str | None = None
+    base_url: str | None = None
+    model: str | None = None
+    api_mode: str | None = None
+    extras: dict[str, Any] | None = None
+
+
+class LLMConfigView(BaseModel):
+    """Read-only view of a user's LLM config — api_key is masked."""
+
+    provider: str | None
+    base_url: str | None
+    model: str | None
+    api_mode: str | None
+    api_key_masked: str | None  # e.g. "sk-...AbCd" or None
+    has_key: bool
+
+
+class LLMProviderInfo(BaseModel):
+    id: str
+    label: str
+    transport: str             # openai_chat | anthropic_messages | codex_responses | bedrock_converse
+    base_url: str | None = None
+    base_url_env_var: str | None = None
+    is_aggregator: bool = False
+    auth_type: str = "api_key"
+    default_models: list[str] = Field(default_factory=list)
+
+
+class TelegramLinkTokenResponse(BaseModel):
+    token: str
+    expires_at: float
+    expires_in_seconds: int
+    deep_link: str | None = None      # e.g. ``https://t.me/<bot>?start=link_<token>``
+
+
+class TelegramLinkStatus(BaseModel):
+    linked: bool
+    telegram_user_ids: list[str] = Field(default_factory=list)
 
 
 class UserCreateRequest(BaseModel):
-    username: str = Field(min_length=2, max_length=32, pattern=r"^[a-z0-9_]+$")
+    # Allow hyphens in the middle (matches the slug regex used by create-agent.sh:39
+    # and typical Linux usernames like ``john-doe``). First and last char must be
+    # alphanumeric/underscore so we never end up with weird names like ``-bad`` or ``bad-``.
+    username: str = Field(
+        min_length=2,
+        max_length=32,
+        pattern=r"^[a-z0-9_][a-z0-9_-]*[a-z0-9_]$|^[a-z0-9_]$",
+    )
     display_name: str = Field(min_length=1, max_length=64)
     role: Role = "employee"
     password: str | None = Field(default=None, min_length=4, max_length=128)
@@ -169,7 +227,7 @@ class RegisterAgentRequest(BaseModel):
     user_id: str
     container_ip: str
     api_token: str
-    api_port: int = 9090
+    api_port: int = 9091
 
 
 class SecretsFetchRequest(BaseModel):
