@@ -61,6 +61,18 @@ EXECUTOR_TOOLS: frozenset[str] = frozenset({
     "private_workspace_add_node",
     "private_workspace_find_related",
     "private_workspace_read_node",
+    # Safe equivalents of the AGORA-local-denied tools (see
+    # AGORA_LOCAL_DENY). These execute in the user's container instead of
+    # the orchestrator's address space, so the user is root in their own
+    # container and the brain stays isolated.
+    "python_exec",          # replaces execute_code
+    "process_start",        # replaces process.start
+    "process_list",         # replaces process.list
+    "process_status",       # replaces process.status
+    "process_kill",         # replaces process.kill
+    "cron_create",          # replaces cronjob.create
+    "cron_list",            # replaces cronjob.list
+    "cron_delete",          # replaces cronjob.delete
 })
 
 
@@ -116,6 +128,15 @@ _EXECUTOR_ALLOWED_ARGS: Dict[str, frozenset[str]] = {
     "delete_file": frozenset({"path"}),
     "move_file": frozenset({"src", "dst"}),
     "make_dir": frozenset({"path", "parents"}),
+    # Safe equivalents (run inside the user's container):
+    "python_exec": frozenset({"code", "timeout"}),
+    "process_start": frozenset({"command", "name", "cwd", "env"}),
+    "process_list": frozenset(),  # no args
+    "process_status": frozenset({"name_or_pid", "tail_chars"}),
+    "process_kill": frozenset({"name_or_pid"}),
+    "cron_create": frozenset({"name", "schedule", "command", "description", "cwd"}),
+    "cron_list": frozenset(),  # no args
+    "cron_delete": frozenset({"name"}),
 }
 
 
@@ -553,6 +574,121 @@ PRIVATE_WORKSPACE_TOOL_SCHEMAS: tuple[dict[str, Any], ...] = (
 )
 
 
+# Safe equivalents of the AGORA-local-denied tools — execute inside the
+# user's container so the orchestrator stays isolated.
+SAFE_EXEC_TOOLSET = "user_runtime"
+
+
+SAFE_EXEC_TOOL_SCHEMAS: tuple[dict[str, Any], ...] = (
+    {
+        "name": "python_exec",
+        "description": (
+            "Ejecuta un snippet de Python DENTRO del container del usuario "
+            "(cwd=/home/user, sin sandbox, root en su propio container). "
+            "Cada llamada es un intérprete nuevo — usa `write_file` para "
+            "código persistente. Para tareas largas usa `terminal` o "
+            "`process_start`. Devuelve `{ok, stdout, stderr, exit_code}`."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "code": {"type": "string", "description": "Código Python (multi-línea OK)."},
+                "timeout": {"type": "integer", "description": "Segundos antes de matar el proceso (default 60, max 600).", "default": 60},
+            },
+            "required": ["code"],
+        },
+    },
+    {
+        "name": "process_start",
+        "description": (
+            "Lanza un comando en background dentro del container del usuario. "
+            "Captura stdout+stderr a un log (/var/log/laia-processes/<name>.log). "
+            "Usa esto para dev servers, watchers o cualquier proceso largo "
+            "que sobreviva al turno de chat. El nombre permite referirse al "
+            "proceso luego con process_status / process_kill."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "command": {"type": "string", "description": "Comando shell completo (se ejecuta con bash -c)."},
+                "name": {"type": "string", "description": "Nombre humano para referirse después (auto-generado si se omite)."},
+                "cwd": {"type": "string", "description": "Working dir (default /home/user)."},
+                "env": {"type": "object", "description": "Variables de entorno extra."},
+            },
+            "required": ["command"],
+        },
+    },
+    {
+        "name": "process_list",
+        "description": "Lista todos los procesos en background lanzados con process_start en este container.",
+        "parameters": {"type": "object", "properties": {}, "required": []},
+    },
+    {
+        "name": "process_status",
+        "description": (
+            "Inspecciona un proceso en background: estado (alive/exited), "
+            "returncode si terminó, y el final del log capturado."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "name_or_pid": {"type": "string", "description": "Nombre dado en process_start o PID numérico."},
+                "tail_chars": {"type": "integer", "description": "Tamaño del tail del log a devolver."},
+            },
+            "required": ["name_or_pid"],
+        },
+    },
+    {
+        "name": "process_kill",
+        "description": "Mata un proceso (SIGTERM con gracia de 3s, después SIGKILL).",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "name_or_pid": {"type": "string", "description": "Nombre o PID."},
+            },
+            "required": ["name_or_pid"],
+        },
+    },
+    {
+        "name": "cron_create",
+        "description": (
+            "Programa una tarea recurrente dentro del container del usuario "
+            "via systemd timer. El cron muere cuando el container se borra. "
+            "`schedule` es un OnCalendar de systemd (ejemplos: 'daily', "
+            "'hourly', '*-*-* 09:00:00', 'Mon..Fri 08:30:00'). Ver `man "
+            "systemd.time`."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "Identificador (letras/dígitos/_/-)."},
+                "schedule": {"type": "string", "description": "OnCalendar de systemd."},
+                "command": {"type": "string", "description": "Comando shell a ejecutar (bash -lc)."},
+                "description": {"type": "string", "description": "Descripción humana opcional."},
+                "cwd": {"type": "string", "description": "Working dir (default /home/user)."},
+            },
+            "required": ["name", "schedule", "command"],
+        },
+    },
+    {
+        "name": "cron_list",
+        "description": "Lista todos los crons activos en el container del usuario.",
+        "parameters": {"type": "object", "properties": {}, "required": []},
+    },
+    {
+        "name": "cron_delete",
+        "description": "Detiene y elimina un cron por nombre.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "Identificador usado en cron_create."},
+            },
+            "required": ["name"],
+        },
+    },
+)
+
+
 def register(ctx) -> None:
     ctx.register_hook("pre_tool_call", _on_pre_tool_call)
     # Register the private_workspace_* schemas so the LLM sees them in its
@@ -573,12 +709,32 @@ def register(ctx) -> None:
                 "agora-executor-forwarder: failed to register %s: %s",
                 schema["name"], exc,
             )
+    # Safe equivalents of the AGORA-locally-denied tools (execute_code,
+    # process, cronjob). Same forwarding flow: LLM sees the schema, the
+    # pre_tool_call hook routes to the user's executor.
+    for schema in SAFE_EXEC_TOOL_SCHEMAS:
+        try:
+            ctx.register_tool(
+                name=schema["name"],
+                toolset=SAFE_EXEC_TOOLSET,
+                schema=schema,
+                handler=_stub_handler,
+                emoji="🧪" if "exec" in schema["name"] else ("⏱️" if "cron" in schema["name"] else "⚙️"),
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "agora-executor-forwarder: failed to register %s: %s",
+                schema["name"], exc,
+            )
 
 
 __all__ = [
     "EXECUTOR_TOOLS",
     "PRIVATE_WORKSPACE_TOOL_SCHEMAS",
+    "SAFE_EXEC_TOOL_SCHEMAS",
     "configure_session",
     "clear_session",
     "register",
+    "register_context",
+    "unregister_context",
 ]

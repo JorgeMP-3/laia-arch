@@ -360,6 +360,10 @@ AGORA_ENABLED_TOOLSETS: list[str] = [
     "workspace",
     "clarify",
     "todo",
+    # Safe equivalents of execute_code/process/cronjob — registered by the
+    # forwarder plugin in this toolset. They are forwarded to the user's
+    # executor, never run locally in laia-agora.
+    "user_runtime",
 ]
 
 

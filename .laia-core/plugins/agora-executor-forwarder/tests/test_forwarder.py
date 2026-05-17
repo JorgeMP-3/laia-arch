@@ -168,7 +168,12 @@ def test_private_workspace_schemas_shape():
 
 
 def test_register_wires_tools_and_hook():
-    """ctx.register_tool is called for each private_workspace_* schema."""
+    """ctx.register_tool is called for each forwarder-exposed schema.
+
+    The plugin registers two families: private_workspace_* (toolset
+    'workspace') and the safe-runtime equivalents (toolset 'user_runtime')
+    that replace the AGORA-locally-denied tools execute_code, process,
+    cronjob."""
     plug = _load_plugin()
     registered_tools: list[dict] = []
     registered_hooks: list[tuple[str, object]] = []
@@ -182,14 +187,19 @@ def test_register_wires_tools_and_hook():
 
     plug.register(_Ctx())
 
-    names = [t["name"] for t in registered_tools]
-    assert names == [
-        "private_workspace_search",
-        "private_workspace_read_node",
-        "private_workspace_add_node",
-        "private_workspace_find_related",
-    ]
-    assert all(t["toolset"] == "workspace" for t in registered_tools)
+    names = {t["name"] for t in registered_tools}
+    # Private workspace family.
+    assert {"private_workspace_search", "private_workspace_read_node",
+            "private_workspace_add_node", "private_workspace_find_related"} <= names
+    # Safe-runtime family (replaces execute_code / process / cronjob).
+    assert {"python_exec", "process_start", "process_list", "process_status",
+            "process_kill", "cron_create", "cron_list", "cron_delete"} <= names
+    # Toolset mapping.
+    by_name = {t["name"]: t for t in registered_tools}
+    assert by_name["private_workspace_search"]["toolset"] == "workspace"
+    assert by_name["python_exec"]["toolset"] == "user_runtime"
+    assert by_name["cron_create"]["toolset"] == "user_runtime"
+    # And the hook itself.
     assert registered_hooks and registered_hooks[0][0] == "pre_tool_call"
 
 

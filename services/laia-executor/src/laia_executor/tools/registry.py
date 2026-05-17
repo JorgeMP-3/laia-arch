@@ -48,6 +48,13 @@ def _build_default_registry() -> ToolRegistry:
         private_workspace_add_node,
         private_workspace_find_related,
     )
+    from laia_executor.tools.python_exec import python_exec
+    from laia_executor.tools.process_tools import (
+        process_start, process_list, process_status, process_kill,
+    )
+    from laia_executor.tools.cron_tools import (
+        cron_create, cron_list, cron_delete,
+    )
 
     reg = ToolRegistry()
     reg.register("read_file", read_file)
@@ -64,6 +71,19 @@ def _build_default_registry() -> ToolRegistry:
     reg.register("private_workspace_read_node", private_workspace_read_node)
     reg.register("private_workspace_add_node", private_workspace_add_node)
     reg.register("private_workspace_find_related", private_workspace_find_related)
+    # Safe equivalents of the AGORA-local-denied tools, executed inside the
+    # user's container instead of the orchestrator. See:
+    #   - python_exec      ← replaces execute_code
+    #   - process_*        ← replaces process
+    #   - cron_*           ← replaces cronjob
+    reg.register("python_exec", python_exec)
+    reg.register("process_start", process_start)
+    reg.register("process_list", process_list)
+    reg.register("process_status", process_status)
+    reg.register("process_kill", process_kill)
+    reg.register("cron_create", cron_create)
+    reg.register("cron_list", cron_list)
+    reg.register("cron_delete", cron_delete)
     return reg
 
 
