@@ -11,17 +11,21 @@ import argparse
 import curses
 import json
 import os
+import signal
 import textwrap
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from getpass import getpass
+from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 
 DEFAULT_API_URL = os.environ.get("AGORA_API_URL", "http://127.0.0.1:8088")
+SESSION_PATH = Path(os.environ.get("AGORA_SESSION_PATH", str(Path.home() / ".laia" / "admin-session.json")))
+MAX_LOG_LINES = 500
 
 
 class ApiError(RuntimeError):
@@ -130,6 +134,51 @@ class AgoraAdminClient:
     def restore_container(self, name: str, snapshot: str) -> dict[str, Any]:
         return self.request("POST", f"/api/admin/containers/{name}/restore", {"name": snapshot})
 
+    def errors(self, limit: int = 100) -> dict[str, Any]:
+        return self.request("GET", f"/api/admin/errors?limit={limit}")
+
+    def fixes(self) -> dict[str, Any]:
+        return self.request("GET", "/api/admin/fixes")
+
+    def run_fix(self, name: str) -> dict[str, Any]:
+        return self.request("POST", f"/api/admin/fix/{name}")
+
+    def tests_status(self) -> dict[str, Any]:
+        return self.request("GET", "/api/admin/tests/status")
+
+    def tests_run(self) -> dict[str, Any]:
+        return self.request("POST", "/api/admin/tests/run")
+
+
+def _load_session_token() -> str | None:
+    try:
+        if not SESSION_PATH.exists():
+            return None
+        data = json.loads(SESSION_PATH.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    token = data.get("access_token") if isinstance(data, dict) else None
+    return str(token) if token else None
+
+
+def _save_session_token(token: str) -> None:
+    try:
+        SESSION_PATH.parent.mkdir(parents=True, exist_ok=True)
+        SESSION_PATH.write_text(json.dumps({"access_token": token, "saved_at": datetime.now(timezone.utc).isoformat()}), encoding="utf-8")
+        try:
+            os.chmod(SESSION_PATH, 0o600)
+        except OSError:
+            pass
+    except OSError:
+        pass
+
+
+def _clear_session_token() -> None:
+    try:
+        SESSION_PATH.unlink(missing_ok=True)
+    except OSError:
+        pass
+
 
 def _url_quote(value: str) -> str:
     from urllib.parse import quote
@@ -192,8 +241,21 @@ SCREENS = [
     Screen("jobs", "Jobs"),
     Screen("logs", "Logs"),
     Screen("audit", "Audit"),
+    Screen("errors", "Errores"),
     Screen("system", "Sistema"),
 ]
+
+
+SCREEN_HINTS: dict[str, str] = {
+    "dashboard": "r refrescar  Tab cambia vista  ? ayuda  q salir",
+    "users": "p provisionar  b rebuild  d borrar/desactivar  r refrescar",
+    "containers": "R restart  s snapshot  o restore  r refrescar",
+    "jobs": "Enter detalle  r refrescar",
+    "logs": "n cambiar fuente  l recargar  Ctrl+L clear",
+    "audit": "u filtrar user_id  r refrescar",
+    "errors": "r refrescar  Enter detalle",
+    "system": "a refresh OAuth  B restart backend  T run tests  F aplicar fix  r refrescar",
+}
 
 
 class ControlCenterTUI:
@@ -213,6 +275,8 @@ class ControlCenterTUI:
         self.logs: list[str] = []
         self.audit_user_filter = ""
         self.audit_calls: list[dict[str, Any]] = []
+        self.errors_list: list[dict[str, Any]] = []
+        self._shutdown_requested = False
 
     @property
     def screen(self) -> Screen:
@@ -230,16 +294,30 @@ class ControlCenterTUI:
             curses.init_pair(3, curses.COLOR_YELLOW, -1)
             curses.init_pair(4, curses.COLOR_RED, -1)
             curses.init_pair(5, curses.COLOR_BLACK, curses.COLOR_CYAN)
-        if not self.client.token:
-            self.login_wizard()
-        self.refresh(force=True)
-        while True:
-            self.draw()
-            key = self.stdscr.getch()
-            if key == -1:
-                continue
-            if self.handle_key(key):
-                break
+
+        def _on_sigint(signum: int, frame: Any) -> None:
+            self._shutdown_requested = True
+
+        prev_sigint = signal.signal(signal.SIGINT, _on_sigint)
+        try:
+            if not self.client.token:
+                self.login_wizard()
+            self.refresh(force=True)
+            while True:
+                if self._shutdown_requested:
+                    break
+                self.draw()
+                try:
+                    key = self.stdscr.getch()
+                except KeyboardInterrupt:
+                    self._shutdown_requested = True
+                    continue
+                if key == -1:
+                    continue
+                if self.handle_key(key):
+                    break
+        finally:
+            signal.signal(signal.SIGINT, prev_sigint)
 
     def login_wizard(self) -> None:
         while not self.client.token:
@@ -248,6 +326,8 @@ class ControlCenterTUI:
             password = self.prompt_secret("Password")
             try:
                 self.client.login(username, password)
+                if self.client.token:
+                    _save_session_token(self.client.token)
                 self.message = f"Login OK como {username}"
             except ApiError as exc:
                 self.error = f"Login fallo: {exc}"
@@ -257,6 +337,10 @@ class ControlCenterTUI:
             return self.confirm("Salir del Centro de Control?")
         if key in (ord("?"), ord("h")):
             self.show_help()
+            return False
+        if key == 12:  # Ctrl+L
+            self.stdscr.clear()
+            self.refresh(force=True)
             return False
         if key in (ord("r"), ord("R")) and self.screen.key not in {"containers"}:
             self.refresh(force=True)
@@ -317,11 +401,18 @@ class ControlCenterTUI:
             if key == ord("u"):
                 self.audit_user_filter = self.prompt("Filtrar user_id (vacio=todos)", self.audit_user_filter)
                 self.refresh_audit()
+        elif name == "errors":
+            if key in (ord("\n"), curses.KEY_ENTER, 10, 13):
+                self.show_selected_error()
         elif name == "system":
             if key == ord("a"):
                 self.refresh_oauth()
             elif key == ord("B"):
                 self.restart_backend()
+            elif key == ord("T"):
+                self.run_tests()
+            elif key == ord("F"):
+                self.apply_fix_wizard()
         return False
 
     def move_selection(self, delta: int) -> None:
@@ -330,6 +421,7 @@ class ControlCenterTUI:
             "containers": len(self.containers),
             "jobs": len(self.jobs),
             "audit": len(self.audit_calls),
+            "errors": len(self.errors_list),
         }.get(self.screen.key, 0)
         if max_items:
             self.selected = max(0, min(max_items - 1, self.selected + delta))
@@ -343,14 +435,22 @@ class ControlCenterTUI:
                 self.status = self.client.status().get("status", {})
             elif self.screen.key == "users":
                 self.users = self.client.users().get("users", [])
+                self.status = self.client.status().get("status", {})
             elif self.screen.key == "containers":
                 self.containers = self.client.containers().get("containers", [])
+                self.status = self.client.status().get("status", {})
             elif self.screen.key == "jobs":
                 self.jobs = self.client.jobs().get("jobs", [])
+                self.status = self.client.status().get("status", {})
             elif self.screen.key == "logs":
                 self.refresh_logs()
+                self.status = self.client.status().get("status", {})
             elif self.screen.key == "audit":
                 self.refresh_audit()
+                self.status = self.client.status().get("status", {})
+            elif self.screen.key == "errors":
+                self.refresh_errors()
+                self.status = self.client.status().get("status", {})
             elif self.screen.key == "system":
                 self.status = self.client.status().get("status", {})
                 self.jobs = self.client.jobs().get("jobs", [])
@@ -359,11 +459,15 @@ class ControlCenterTUI:
             self.error = f"API: {exc}"
 
     def refresh_logs(self) -> None:
-        self.logs = self.client.logs(self.logs_source).get("logs", {}).get("lines", [])
+        lines = self.client.logs(self.logs_source).get("logs", {}).get("lines", [])
+        self.logs = lines[-MAX_LOG_LINES:]
 
     def refresh_audit(self) -> None:
         user_id = self.audit_user_filter.strip() or None
         self.audit_calls = self.client.audit(user_id=user_id).get("tool_calls", [])
+
+    def refresh_errors(self) -> None:
+        self.errors_list = self.client.errors().get("errors", [])
 
     def provision_wizard(self) -> None:
         slug = self.prompt("Slug nuevo usuario (a-z, 0-9, guion)", "")
@@ -496,6 +600,56 @@ class ControlCenterTUI:
         ]
         self.show_text("Detalle job", lines)
 
+    def show_selected_error(self) -> None:
+        if not self.errors_list:
+            return
+        row = self.errors_list[max(0, min(self.selected, len(self.errors_list) - 1))]
+        lines = [
+            f"Timestamp: {row.get('ts')}",
+            f"Logger:    {row.get('logger')}",
+            f"Level:     {row.get('level')}",
+            f"Event:     {row.get('event')}",
+            "",
+            "Mensaje:",
+            _short(row.get("message")),
+            "",
+            "Contexto:",
+            json.dumps(row.get("context") or {}, indent=2, ensure_ascii=False),
+        ]
+        self.show_text("Detalle error", lines)
+
+    def run_tests(self) -> None:
+        if not self.confirm("Lanzar pytest de agora-backend en background?"):
+            return
+        try:
+            job = self.client.tests_run()
+            self.message = f"Job tests-run iniciado: {job.get('job_id')}"
+            self.screen_idx = SCREENS.index(next(s for s in SCREENS if s.key == "jobs"))
+            self.refresh(force=True)
+        except ApiError as exc:
+            self.error = f"tests run fallo: {exc}"
+
+    def apply_fix_wizard(self) -> None:
+        try:
+            registry = self.client.fixes().get("fixes", [])
+        except ApiError as exc:
+            self.error = f"fixes fallo: {exc}"
+            return
+        if not registry:
+            self.error = "No hay fixes registrados"
+            return
+        names = [str(f.get("name", "")) for f in registry if f.get("name")]
+        choice = self.prompt(f"Fix a aplicar ({'|'.join(names)})", names[0])
+        if not choice or choice not in names:
+            return
+        if not self.confirm(f"Ejecutar fix '{choice}'?"):
+            return
+        try:
+            result = self.client.run_fix(choice)
+            self.message = f"Fix {choice}: ok={result.get('ok')} {_short(result.get('summary'))}"
+        except ApiError as exc:
+            self.error = f"fix {choice} fallo: {exc}"
+
     def refresh_oauth(self) -> None:
         if not self.confirm("Re-pushear auth.json al container laia-agora?"):
             return
@@ -538,6 +692,8 @@ class ControlCenterTUI:
             self.draw_logs(content_top, height, width)
         elif self.screen.key == "audit":
             self.draw_audit(content_top, height, width)
+        elif self.screen.key == "errors":
+            self.draw_errors(content_top, height, width)
         elif self.screen.key == "system":
             self.draw_system(content_top, height, width)
         self.draw_footer(height, width)
@@ -550,10 +706,26 @@ class ControlCenterTUI:
         self.add(0, max(0, width - len(timestamp) - 1), f" {timestamp}", curses.color_pair(5))
 
     def draw_tabs(self, width: int) -> None:
+        jobs_info = self.status.get("jobs") if isinstance(self.status, dict) else None
+        running_jobs = 0
+        if isinstance(jobs_info, dict):
+            try:
+                running_jobs = int(jobs_info.get("running", 0) or 0)
+            except (TypeError, ValueError):
+                running_jobs = 0
+        errors_info = self.status.get("recent_errors") if isinstance(self.status, dict) else None
+        recent_errors = len(errors_info) if isinstance(errors_info, list) else 0
         x = 0
         for idx, screen in enumerate(SCREENS):
-            label = f" {idx + 1}:{screen.title} "
+            badge = ""
+            if screen.key == "jobs" and running_jobs:
+                badge = f"({running_jobs})"
+            elif screen.key == "errors" and recent_errors:
+                badge = f"({recent_errors})"
+            label = f" {idx + 1}:{screen.title}{badge} "
             attr = curses.A_REVERSE | curses.A_BOLD if idx == self.screen_idx else curses.A_NORMAL
+            if badge and idx != self.screen_idx:
+                attr = curses.color_pair(3) | curses.A_BOLD
             self.add(2, x, label, attr)
             x += len(label) + 1
             if x >= width:
@@ -633,8 +805,22 @@ class ControlCenterTUI:
             ])
         self.table(top + 2, 2, height - top - 5, width - 4, ["TS", "User", "Agent", "Phase", "Tool", "ms"], rows, self.selected)
 
+    def draw_errors(self, top: int, height: int, width: int) -> None:
+        self.add(top, 2, "Enter detalle  r refrescar", curses.color_pair(1))
+        rows = []
+        for row in self.errors_list:
+            rows.append([
+                row.get("ts"),
+                row.get("level"),
+                row.get("logger"),
+                row.get("event"),
+                row.get("message"),
+            ])
+        self.table(top + 2, 2, height - top - 5, width - 4,
+                   ["TS", "Level", "Logger", "Event", "Message"], rows, self.selected)
+
     def draw_system(self, top: int, height: int, width: int) -> None:
-        self.add(top, 2, "a refresh OAuth  B restart backend  r refrescar", curses.color_pair(1))
+        self.add(top, 2, "a refresh OAuth  B restart backend  T run tests  F aplicar fix  r refrescar", curses.color_pair(1))
         auth = self.status.get("auth", {})
         health = self.status.get("health", {})
         self.panel(top + 2, 2, 9, width - 4, "Sistema")
@@ -650,7 +836,8 @@ class ControlCenterTUI:
         ])
 
     def draw_footer(self, height: int, width: int) -> None:
-        line = self.error or self.message or "Tab/flechas cambia vista. ? ayuda. q salir."
+        hint = SCREEN_HINTS.get(self.screen.key, "Tab/flechas cambia vista. ? ayuda. q salir.")
+        line = self.error or self.message or hint
         attr = curses.color_pair(4) if self.error else curses.color_pair(2) if self.message else curses.A_DIM
         self.add(height - 1, 0, line[:width].ljust(width), attr)
 
@@ -659,10 +846,15 @@ class ControlCenterTUI:
             "AGORA Control Center",
             "",
             "Navegacion:",
-            "  1-7 / Tab / flechas izquierda-derecha  cambiar vista",
+            "  1-8 / Tab / flechas izquierda-derecha  cambiar vista",
             "  flechas arriba-abajo                    mover seleccion",
             "  r                                      refrescar vista",
-            "  q                                      salir",
+            "  Ctrl+L                                 limpiar pantalla y refrescar",
+            "  q                                      salir (Ctrl+C tambien sale limpio)",
+            "",
+            "Badges en tabs:",
+            "  (N) en Jobs    jobs en ejecucion",
+            "  (N) en Errores errores recientes registrados",
             "",
             "Usuarios:",
             "  p provisionar usuario + container",
@@ -675,9 +867,18 @@ class ControlCenterTUI:
             "Jobs:",
             "  Enter muestra detalle y tail de log",
             "",
+            "Errores:",
+            "  Enter muestra contexto JSON del evento",
+            "",
             "Sistema:",
             "  a refresh OAuth auth.json",
             "  B restart agora-backend",
+            "  T run pytest agora-backend",
+            "  F aplicar fix curado (auth-json-push, pip-install-laia-core, ...)",
+            "",
+            "Sesion:",
+            "  El token se guarda en " + str(SESSION_PATH) + " (modo 600)",
+            "  Para forzar nuevo login borra ese archivo.",
         ]
         self.show_text("Ayuda", lines)
 
@@ -853,14 +1054,26 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
-    client = AgoraAdminClient(args.api_url, token=args.token, timeout=args.timeout)
+    initial_token = args.token or _load_session_token()
+    client = AgoraAdminClient(args.api_url, token=initial_token, timeout=args.timeout)
+    if client.token:
+        try:
+            client.status()
+        except ApiError as exc:
+            if exc.status in (401, 403):
+                _clear_session_token()
+                client.token = None
     if args.username and args.password and not client.token:
         client.login(args.username, args.password)
+        if client.token:
+            _save_session_token(client.token)
     if args.print_status:
         if not client.token:
             username = args.username or input("Admin username: ")
             password = args.password or getpass("Admin password: ")
             client.login(username, password)
+            if client.token:
+                _save_session_token(client.token)
         return print_status(client)
     curses.wrapper(lambda stdscr: ControlCenterTUI(stdscr, client).run())
     return 0

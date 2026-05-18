@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import csv
 import json
+import logging
 import os
 import re
 import subprocess
 import tempfile
+import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
@@ -23,12 +26,113 @@ from .security import hash_password
 from .storage import store
 
 
+# Structured logger for every admin action. Goes through agora-backend's
+# JSON formatter (logging.py) so each call leaves a trail with actor /
+# action / outcome that operators can grep without parsing audit.log
+# separately. The category is ``agora.admin`` so `journalctl -u
+# agora-backend | grep agora.admin` filters to admin activity only.
+logger = logging.getLogger("agora.admin")
+
+
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
 SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{1,30}$")
 CONTAINER_RE = re.compile(r"^laia-[a-z0-9][a-z0-9-]{1,30}$|^laia-agora$")
 
+# Whitelist of LXD image aliases the admin endpoints may pass to
+# create-agent.sh / lxc launch. ``laia-agent`` is the only image the
+# rebuild scripts produce today; if you add more (e.g. an `arm-gpu`
+# variant) include them here, otherwise the request gets rejected with
+# 422 so an injected payload can't trick the script into pulling a
+# random alias. Override via env for dev experiments.
+_ALLOWED_IMAGE_ALIASES: frozenset[str] = frozenset(
+    item.strip()
+    for item in os.environ.get("AGORA_ADMIN_ALLOWED_IMAGES", "laia-agent").split(",")
+    if item.strip()
+)
+
+
 _executor = ThreadPoolExecutor(max_workers=int(os.environ.get("AGORA_ADMIN_JOB_WORKERS", "2")))
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Rate limiter — separate bucket from the login rate limiter
+# (security.should_rate_limit) so a noisy admin doesn't trip the login
+# protection and vice-versa. Bucket key is the actor.id, max 30 mutating
+# admin calls per minute by default. Read-only endpoints (status, logs,
+# audit) are intentionally NOT rate-limited so the TUI can poll freely.
+# ──────────────────────────────────────────────────────────────────────────
+
+
+_admin_rate_lock = threading.RLock()
+_admin_rate_buckets: dict[str, list[float]] = {}
+
+
+def _admin_rate_window_seconds() -> int:
+    try:
+        return max(5, int(os.environ.get("AGORA_ADMIN_RATE_WINDOW_SECONDS", "60")))
+    except ValueError:
+        return 60
+
+
+def _admin_rate_max_per_window() -> int:
+    try:
+        return max(1, int(os.environ.get("AGORA_ADMIN_RATE_MAX", "30")))
+    except ValueError:
+        return 30
+
+
+def _admin_rate_limit(actor_id: str) -> None:
+    """Raise 429 if ``actor_id`` has spent its mutate budget for the window.
+
+    Sliding window: keep timestamps of the last calls, drop the ones older
+    than ``window_seconds``. Cheap (lock + list filter) and good enough for
+    a single-process backend; if AGORA ever scales horizontally swap for
+    Redis.
+    """
+    if not actor_id:
+        return
+    now = time.monotonic()
+    window = _admin_rate_window_seconds()
+    limit = _admin_rate_max_per_window()
+    with _admin_rate_lock:
+        bucket = _admin_rate_buckets.setdefault(actor_id, [])
+        cutoff = now - window
+        bucket[:] = [t for t in bucket if t >= cutoff]
+        if len(bucket) >= limit:
+            retry_after = max(1, int(window - (now - bucket[0])))
+            raise HTTPException(
+                status_code=429,
+                detail=f"admin rate limit: {limit} mutating actions per {window}s. retry in {retry_after}s",
+                headers={"Retry-After": str(retry_after)},
+            )
+        bucket.append(now)
+
+
+def _log_admin_action(
+    actor: User | None,
+    action: str,
+    *,
+    outcome: str = "started",
+    **fields: object,
+) -> None:
+    """Emit a structured log line for an admin action.
+
+    The JSON formatter in app/logging.py picks up every non-standard
+    LogRecord attribute via `extra=…`, so a call like
+    ``_log_admin_action(actor, "provision-user", slug=slug)`` produces a
+    one-liner JSON event with `actor_id`, `action`, `outcome`, `slug` —
+    grep-friendly for incident review.
+    """
+    extra = {
+        "event": "admin",
+        "action": action,
+        "outcome": outcome,
+        "actor_id": getattr(actor, "id", None),
+        "actor_username": getattr(actor, "username", None),
+    }
+    extra.update(fields)
+    logger.info("admin action: %s outcome=%s", action, outcome, extra=extra)
 
 
 class AdminProvisionUserRequest(BaseModel):
@@ -623,6 +727,50 @@ def get_admin_job(job_id: str, _: User = Depends(require_roles("agora_admin"))):
     return {"job": job}
 
 
+def _jobs_summary() -> dict:
+    """Compact roll-up of admin_jobs for the dashboard.
+
+    Walks the most recent N jobs (default 100) and groups by status.
+    The TUI consumes ``running`` / ``pending`` counts to draw a badge on
+    the Jobs tab without hitting `/jobs` separately.
+    """
+    try:
+        recent = store.admin_jobs(limit=200)
+    except Exception:
+        return {"running": 0, "pending": 0, "failed_recent": 0, "total_recent": 0}
+    running = sum(1 for j in recent if j.get("status") == "running")
+    pending = sum(1 for j in recent if j.get("status") == "pending")
+    failed = sum(1 for j in recent if j.get("status") == "failed")
+    return {
+        "running": running,
+        "pending": pending,
+        "failed_recent": failed,
+        "total_recent": len(recent),
+    }
+
+
+def _tests_snapshot() -> dict:
+    """Last test-suite run, surfaced from the most recent admin_job of
+    kind 'run-tests'. Returns ``{"status": "unknown", "last_run": None}``
+    when no such job has ever been created."""
+    try:
+        recent = store.admin_jobs(limit=50)
+    except Exception:
+        return {"status": "unknown", "last_run": None}
+    tests = [j for j in recent if j.get("kind") == "run-tests"]
+    if not tests:
+        return {"status": "unknown", "last_run": None}
+    latest = tests[0]
+    result = latest.get("result") or {}
+    return {
+        "status": latest.get("status"),
+        "last_run": latest.get("finished_at") or latest.get("started_at") or latest.get("created_at"),
+        "passed": result.get("passed"),
+        "failed": result.get("failed"),
+        "job_id": latest.get("id"),
+    }
+
+
 @router.get("/status")
 def admin_status(_: User = Depends(require_roles("agora_admin"))):
     containers, container_error = _list_lxc_containers()
@@ -648,10 +796,8 @@ def admin_status(_: User = Depends(require_roles("agora_admin"))):
                 "running": sum(1 for a in agents if a.status == "running"),
             },
             "auth": _auth_snapshot(),
-            "tests": {
-                "status": "unknown",
-                "last_run": None,
-            },
+            "tests": _tests_snapshot(),
+            "jobs": _jobs_summary(),
             "recent_errors": _recent_error_lines(),
         }
     }
@@ -688,13 +834,65 @@ def admin_tool_audit(
     from_: str | None = Query(default=None, alias="from"),
     to: str | None = None,
     limit: int = Query(default=100, ge=1, le=500),
+    before: str | None = Query(default=None, description="ISO timestamp — return events strictly older than this; pair with `limit` to page back in time"),
     _: User = Depends(require_roles("agora_admin")),
 ):
-    return {"tool_calls": _audit_events(user_id=user_id, from_ts=from_, to_ts=to, limit=limit)}
+    """Tool-call audit events from the structured log file.
+
+    Pagination model is cursor-based on timestamp: pass ``before=<ts>`` to
+    retrieve the next older page. Returns ``next_before`` (the oldest ``ts``
+    in the current batch) when the page is full so the caller can chain
+    requests without managing offsets.
+    """
+    effective_to = before or to
+    events = _audit_events(user_id=user_id, from_ts=from_, to_ts=effective_to, limit=limit)
+    # Events come back chronologically ascending (oldest first, newest
+    # last after the `[-limit:]` trim). To page BACKWARDS in time the
+    # cursor must be the ts of the OLDEST event on this page (events[0]),
+    # not the newest — otherwise the next request would re-include the
+    # boundary event because the filter is `ts > to_ts` (exclusive).
+    next_before = events[0].get("ts") if len(events) >= limit and events else None
+    return {"tool_calls": events, "next_before": next_before, "page_size": limit}
+
+
+@router.get("/errors")
+def admin_errors(
+    limit: int = Query(default=50, ge=1, le=500),
+    since_minutes: int = Query(default=60, ge=1, le=24 * 60 * 7),
+    _: User = Depends(require_roles("agora_admin")),
+):
+    """Recent error/warn lines from the backend log.
+
+    Reads ``_recent_error_lines`` (same source the dashboard uses) but
+    paginates and parses each line into structured fields when possible.
+    Dedicated tab in the TUI consumes this — operators see exactly what
+    failed without grepping journalctl.
+    """
+    raw = _recent_error_lines(limit=limit * 2)  # request more, filter below
+    cutoff = datetime.now(timezone.utc).timestamp() - since_minutes * 60
+    parsed: list[dict] = []
+    for line in raw:
+        item = _parse_audit_line(line) or {"raw": line}
+        ts_str = item.get("ts") or item.get("asctime") or ""
+        try:
+            ts_epoch = datetime.fromisoformat(ts_str.replace("Z", "+00:00")).timestamp()
+        except (ValueError, TypeError):
+            ts_epoch = 0.0
+        if ts_epoch and ts_epoch < cutoff:
+            continue
+        parsed.append(item)
+        if len(parsed) >= limit:
+            break
+    return {
+        "errors": parsed,
+        "since_minutes": since_minutes,
+        "count": len(parsed),
+    }
 
 
 @router.post("/system/refresh-oauth")
 def refresh_oauth(actor: User = Depends(require_roles("agora_admin"))):
+    _admin_rate_limit(actor.id)
     host_auth = Path(
         os.environ.get("AGORA_ADMIN_HOST_AUTH_JSON")
         or os.environ.get("AGORA_ARCH_AUTH_JSON")
@@ -727,12 +925,20 @@ def refresh_oauth(actor: User = Depends(require_roles("agora_admin"))):
         payload={"ok": result["ok"], "target": target},
     ))
     if not result["ok"]:
+        _log_admin_action(actor, "refresh-oauth", outcome="failed", error=(result["stderr"] or result["stdout"])[:200])
         raise HTTPException(status_code=500, detail=result["stderr"] or result["stdout"])
+    _log_admin_action(actor, "refresh-oauth", outcome="ok", target=f"{container}{target}")
     return {"ok": True, "result": {"target": f"{container}{target}", "output": result["stdout"]}}
 
 
 @router.post("/users/provision", response_model=AdminJobResponse, status_code=202)
 def provision_user(payload: AdminProvisionUserRequest, actor: User = Depends(require_roles("agora_admin"))):
+    _admin_rate_limit(actor.id)
+    if payload.image_alias not in _ALLOWED_IMAGE_ALIASES:
+        raise HTTPException(
+            status_code=422,
+            detail=f"image_alias {payload.image_alias!r} not in allow-list {sorted(_ALLOWED_IMAGE_ALIASES)}",
+        )
     params = payload.model_dump()
     job_id = _start_job(
         kind="provision-user",
@@ -740,6 +946,7 @@ def provision_user(payload: AdminProvisionUserRequest, actor: User = Depends(req
         params=params,
         fn=_provision_user_job(actor.id),
     )
+    _log_admin_action(actor, "provision-user", job_id=job_id, slug=payload.slug)
     return AdminJobResponse(job_id=job_id)
 
 
@@ -772,6 +979,7 @@ def admin_users(_: User = Depends(require_roles("agora_admin"))):
 
 @router.delete("/users/{slug}", response_model=AdminJobResponse, status_code=202)
 def delete_admin_user(slug: str, actor: User = Depends(require_roles("agora_admin"))):
+    _admin_rate_limit(actor.id)
     if not SLUG_RE.fullmatch(slug):
         raise HTTPException(status_code=422, detail="invalid slug")
     if slug == actor.username:
@@ -782,6 +990,7 @@ def delete_admin_user(slug: str, actor: User = Depends(require_roles("agora_admi
         params={"slug": slug},
         fn=_delete_user_job(actor.id),
     )
+    _log_admin_action(actor, "delete-user", job_id=job_id, slug=slug)
     return AdminJobResponse(job_id=job_id)
 
 
@@ -791,19 +1000,27 @@ def rebuild_admin_user(
     image_alias: str = "laia-agent",
     actor: User = Depends(require_roles("agora_admin")),
 ):
+    _admin_rate_limit(actor.id)
     if not SLUG_RE.fullmatch(slug):
         raise HTTPException(status_code=422, detail="invalid slug")
+    if image_alias not in _ALLOWED_IMAGE_ALIASES:
+        raise HTTPException(
+            status_code=422,
+            detail=f"image_alias {image_alias!r} not in allow-list {sorted(_ALLOWED_IMAGE_ALIASES)}",
+        )
     job_id = _start_job(
         kind="rebuild-user",
         actor=actor,
         params={"slug": slug, "image_alias": image_alias},
         fn=_rebuild_user_job(actor.id),
     )
+    _log_admin_action(actor, "rebuild-user", job_id=job_id, slug=slug, image_alias=image_alias)
     return AdminJobResponse(job_id=job_id)
 
 
 @router.post("/containers/{name}/restart", response_model=AdminJobResponse, status_code=202)
 def restart_container(name: str, actor: User = Depends(require_roles("agora_admin"))):
+    _admin_rate_limit(actor.id)
     container = _normalize_container_name(name)
     job_id = _start_job(
         kind="container-restart",
@@ -811,6 +1028,7 @@ def restart_container(name: str, actor: User = Depends(require_roles("agora_admi
         params={"container": container},
         fn=_container_command_job("restart", actor.id),
     )
+    _log_admin_action(actor, "container-restart", job_id=job_id, container=container)
     return AdminJobResponse(job_id=job_id)
 
 
@@ -820,6 +1038,7 @@ def snapshot_container(
     payload: AdminContainerSnapshotRequest,
     actor: User = Depends(require_roles("agora_admin")),
 ):
+    _admin_rate_limit(actor.id)
     container = _normalize_container_name(name)
     job_id = _start_job(
         kind="container-snapshot",
@@ -827,6 +1046,7 @@ def snapshot_container(
         params={"container": container, "snapshot": payload.name},
         fn=_container_command_job("snapshot", actor.id),
     )
+    _log_admin_action(actor, "container-snapshot", job_id=job_id, container=container, snapshot=payload.name)
     return AdminJobResponse(job_id=job_id)
 
 
@@ -836,6 +1056,7 @@ def restore_container(
     payload: AdminContainerSnapshotRequest,
     actor: User = Depends(require_roles("agora_admin")),
 ):
+    _admin_rate_limit(actor.id)
     container = _normalize_container_name(name)
     job_id = _start_job(
         kind="container-restore",
@@ -843,11 +1064,14 @@ def restore_container(
         params={"container": container, "snapshot": payload.name},
         fn=_container_command_job("restore", actor.id),
     )
+    _log_admin_action(actor, "container-restore", job_id=job_id, container=container, snapshot=payload.name)
     return AdminJobResponse(job_id=job_id)
 
 
 @router.post("/system/restart-backend", response_model=AdminJobResponse, status_code=202)
 def restart_backend(actor: User = Depends(require_roles("agora_admin"))):
+    _admin_rate_limit(actor.id)
+
     def run(_params: dict, log_path: str) -> dict:
         args = ["lxc", "exec", "laia-agora", "--", "systemctl", "restart", "agora-backend"]
         _append_job_log(log_path, " ".join(args))
@@ -857,4 +1081,225 @@ def restart_backend(actor: User = Depends(require_roles("agora_admin"))):
         return {"ok": True, "output": result["stdout"], "error": result["stderr"]}
 
     job_id = _start_job(kind="restart-backend", actor=actor, params={}, fn=run)
+    _log_admin_action(actor, "restart-backend", job_id=job_id)
+    return AdminJobResponse(job_id=job_id)
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Self-heal fixes (F8)
+#
+# A curated registry of one-shot scripts that resolve specific known
+# failure modes. Each fix is keyed by a short slug; the body is a
+# callable that does the work and returns a dict. The handler wraps it
+# in the standard job machinery so the TUI can follow progress.
+#
+# Why curated (vs an arbitrary command runner): the admin endpoints
+# already let any agora_admin run lxc/systemctl. The fix registry exists
+# so common recipes don't have to be reinvented or copy-pasted from
+# docs/HANDOFF_*.md each time an operator hits them — they show up as
+# `POST /api/admin/fix/{name}` with a one-line description.
+# ──────────────────────────────────────────────────────────────────────────
+
+
+def _fix_auth_json_push(actor_id: str, log_path: str) -> dict:
+    """G1 from the handoff: re-push host ~/.laia/auth.json to laia-agora."""
+    host_auth = Path(
+        os.environ.get("AGORA_ADMIN_HOST_AUTH_JSON")
+        or os.environ.get("AGORA_ARCH_AUTH_JSON")
+        or str(Path.home() / ".laia" / "auth.json")
+    )
+    if not host_auth.is_file():
+        raise RuntimeError(f"host auth.json not found at {host_auth}")
+    container = os.environ.get("AGORA_ADMIN_AUTH_CONTAINER", "laia-agora")
+    target = os.environ.get("AGORA_ADMIN_AUTH_TARGET", "/opt/agora/data/auth.json")
+    _append_job_log(log_path, f"lxc file push {host_auth} {container}{target}")
+    result = _run_command(
+        [
+            "lxc", "file", "push", str(host_auth), f"{container}{target}",
+            "--uid", os.environ.get("AGORA_ADMIN_AUTH_UID", "999"),
+            "--gid", os.environ.get("AGORA_ADMIN_AUTH_GID", "988"),
+            "--mode", os.environ.get("AGORA_ADMIN_AUTH_MODE", "644"),
+        ],
+        timeout=30,
+    )
+    if not result["ok"]:
+        raise RuntimeError(result["stderr"] or result["stdout"] or "lxc file push failed")
+    return {"target": f"{container}{target}", "output": result["stdout"]}
+
+
+def _fix_pip_install_laia_core(actor_id: str, log_path: str) -> dict:
+    """G3 from the handoff: `.laia-core` deps missing inside laia-agora
+    container (the build script used to look for requirements.txt that
+    no longer exists). Installs the package — useful if a fresh image
+    was built without the fix in build-agora-image.sh."""
+    container = os.environ.get("AGORA_ADMIN_AGORA_CONTAINER", "laia-agora")
+    args = [
+        "lxc", "exec", container, "--",
+        "/opt/agora/venv/bin/pip", "install", "/opt/agora/app/.laia-core",
+    ]
+    _append_job_log(log_path, " ".join(args))
+    result = _run_command(args, timeout=600)
+    if not result["ok"]:
+        raise RuntimeError(result["stderr"] or result["stdout"] or "pip install failed")
+    return {"output": result["stdout"][-2000:], "container": container}
+
+
+def _fix_pm2_stop_respawner(actor_id: str, log_path: str) -> dict:
+    """G4 from the handoff: a stray PM2 daemon respawns an old uvicorn
+    on host :8088 even after kill. Stop + delete the PM2 entry."""
+    # PM2 lives in the operator's HOME, so this needs to run as that user.
+    pm2_user = os.environ.get("AGORA_ADMIN_PM2_USER", "laia-hermes")
+    args = ["sudo", "-u", pm2_user, "pm2", "delete", "agora-backend"]
+    _append_job_log(log_path, " ".join(args))
+    result = _run_command(args, timeout=10)
+    save_args = ["sudo", "-u", pm2_user, "pm2", "save"]
+    _run_command(save_args, timeout=10)
+    return {
+        "deleted": result["ok"],
+        "stdout": result["stdout"],
+        "stderr": result["stderr"],
+    }
+
+
+def _fix_chmod_laia_dir(actor_id: str, log_path: str) -> dict:
+    """G1 sub-issue: ~/.laia keeps reverting to 0700 (some tool resets
+    it). Re-applies 0755 + chmod 644 auth.json so the LXD bind mount
+    is readable from inside the container.
+
+    Note: requires the script to run as the file owner OR as root.
+    Typically AGORA backend has neither, so this fix is best-effort.
+    """
+    home_laia = Path(
+        os.environ.get("AGORA_ADMIN_HOST_LAIA_DIR")
+        or str(Path.home() / ".laia")
+    )
+    if not home_laia.is_dir():
+        raise RuntimeError(f"{home_laia} is not a directory")
+    auth = home_laia / "auth.json"
+    _append_job_log(log_path, f"chmod 0755 {home_laia} && chmod 0644 {auth}")
+    try:
+        os.chmod(home_laia, 0o755)
+        if auth.is_file():
+            os.chmod(auth, 0o644)
+    except PermissionError as exc:
+        raise RuntimeError(f"chmod failed: {exc} — run as the file owner")
+    return {"dir": str(home_laia), "auth": str(auth) if auth.is_file() else None}
+
+
+_FIX_REGISTRY: dict[str, dict] = {
+    "auth-json-push": {
+        "description": "Push host ~/.laia/auth.json to laia-agora (OAuth refresh)",
+        "fn": _fix_auth_json_push,
+        "timeout": 60,
+    },
+    "pip-install-laia-core": {
+        "description": "Install .laia-core deps inside laia-agora venv",
+        "fn": _fix_pip_install_laia_core,
+        "timeout": 700,
+    },
+    "pm2-stop-respawner": {
+        "description": "Stop + delete PM2 entry that respawns old agora-backend",
+        "fn": _fix_pm2_stop_respawner,
+        "timeout": 30,
+    },
+    "chmod-laia-dir": {
+        "description": "Re-apply 0755 to ~/.laia + 0644 to auth.json",
+        "fn": _fix_chmod_laia_dir,
+        "timeout": 5,
+    },
+}
+
+
+@router.get("/fixes")
+def list_fixes(_: User = Depends(require_roles("agora_admin"))):
+    return {
+        "fixes": [
+            {"name": name, "description": info["description"]}
+            for name, info in _FIX_REGISTRY.items()
+        ]
+    }
+
+
+@router.post("/fix/{name}", response_model=AdminJobResponse, status_code=202)
+def run_fix(name: str, actor: User = Depends(require_roles("agora_admin"))):
+    _admin_rate_limit(actor.id)
+    fix = _FIX_REGISTRY.get(name)
+    if not fix:
+        raise HTTPException(status_code=404, detail=f"unknown fix: {name!r}. Try GET /api/admin/fixes")
+    timeout = fix.get("timeout", 60)
+    fn = fix["fn"]
+    description = fix["description"]
+
+    def run(_params: dict, log_path: str) -> dict:
+        _append_job_log(log_path, f"running fix: {name} — {description}")
+        try:
+            result = fn(actor.id, log_path)
+        except Exception as exc:
+            _append_job_log(log_path, f"fix failed: {exc}")
+            raise
+        _append_job_log(log_path, "fix completed OK")
+        return {"name": name, **result}
+
+    job_id = _start_job(kind=f"fix-{name}", actor=actor, params={"fix": name}, fn=run)
+    _log_admin_action(actor, f"fix-{name}", job_id=job_id, description=description)
+    return AdminJobResponse(job_id=job_id)
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Test suite runner (F9)
+# ──────────────────────────────────────────────────────────────────────────
+
+
+@router.get("/tests/status")
+def tests_status(_: User = Depends(require_roles("agora_admin"))):
+    """Last test-suite run (or 'unknown' if never run via the admin)."""
+    return {"tests": _tests_snapshot()}
+
+
+@router.post("/tests/run", response_model=AdminJobResponse, status_code=202)
+def run_tests(actor: User = Depends(require_roles("agora_admin"))):
+    """Trigger the agora-backend pytest suite as a background job.
+
+    Operators use this to confirm the system is still green after an
+    auto-fix or upgrade — no SSH needed.
+    """
+    _admin_rate_limit(actor.id)
+
+    def run(_params: dict, log_path: str) -> dict:
+        backend_dir = settings.laia_root / "services" / "agora-backend"
+        pytest_bin = backend_dir / ".venv" / "bin" / "pytest"
+        if not pytest_bin.is_file():
+            raise RuntimeError(f"pytest binary not found at {pytest_bin}")
+        env_extra = {"PYTHONPATH": str(settings.laia_root / ".laia-core")}
+        cmd = [
+            str(pytest_bin), "tests/", "-q", "--no-header",
+            "--maxfail", "5",
+        ]
+        _append_job_log(log_path, "$ " + " ".join(cmd))
+        result = subprocess.run(
+            cmd, cwd=str(backend_dir),
+            capture_output=True, text=True, timeout=600,
+            env={**os.environ, **env_extra},
+        )
+        output = (result.stdout or "") + "\n" + (result.stderr or "")
+        for line in output.splitlines()[-40:]:
+            _append_job_log(log_path, line)
+        # Parse pytest summary "X passed, Y failed" (best-effort)
+        passed = failed = 0
+        for line in output.splitlines():
+            m = re.search(r"(\d+)\s+passed", line)
+            if m:
+                passed = int(m.group(1))
+            m = re.search(r"(\d+)\s+failed", line)
+            if m:
+                failed = int(m.group(1))
+        return {
+            "passed": passed,
+            "failed": failed,
+            "returncode": result.returncode,
+            "tail": output.splitlines()[-15:],
+        }
+
+    job_id = _start_job(kind="run-tests", actor=actor, params={}, fn=run)
+    _log_admin_action(actor, "run-tests", job_id=job_id)
     return AdminJobResponse(job_id=job_id)
