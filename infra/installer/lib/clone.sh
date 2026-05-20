@@ -1,0 +1,443 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# clone.sh — phases for laia-clone (data-only path; LXD is Fase E)
+#
+# Two source modes:
+#   (a) Remote:    OPT_SOURCE = "user@host"  (SSH, plus rsync via ssh)
+#   (b) Local:     OPT_SOURCE_DIR = "/path"  (no SSH; useful for migrations on
+#                                             the same machine and for tests)
+#
+# Both modes expect this layout on the source side:
+#
+#   <root>/
+#     LAIA-ARCH/             # → local LAIA_HOME      (Phase 1)
+#     users/                 # → /srv/laia/users      (Phase 3)
+#     home/                  # → $HOME (per-CLI files) (Phase 4, --with-tools)
+#
+# For the SSH variant, <root> is implicit (each phase queries a different
+# absolute path on the remote box). For the local variant the layout above
+# is rooted at $OPT_SOURCE_DIR.
+#
+# Service handling reuses the helpers from release.sh:
+#   rel_capture_active_units   → snapshot what's running before we touch state
+#   rel_restart_active         → start the captured units again after sync
+#
+# Override behaviour (for tests):
+#   LAIA_HOME_OVERRIDE         dest LAIA_HOME (also set by laia-install)
+#   LAIA_USERS_DIR_OVERRIDE    dest /srv/laia/users
+#   LAIA_TOOLS_HOME_OVERRIDE   dest $HOME for personal CLIs
+#
+# When any of these is set, inst_is_override_mode is true and we skip:
+#   - sudo for /srv/laia/users writes
+#   - systemctl stop/start
+#   - smoke-test systemctl probes
+# ─────────────────────────────────────────────────────────────────────────────
+
+[[ -n "${LAIA_LIB_CLONE_LOADED:-}" ]] && return 0
+readonly LAIA_LIB_CLONE_LOADED=1
+
+readonly LAIA_USERS_DIR_DEFAULT="/srv/laia/users"
+readonly LAIA_AGORA_HEALTH_URL="http://127.0.0.1:8088/api/health"
+
+# Populated by clone_detect_paths.
+REMOTE_HOME=""
+REMOTE_LAIA_HOME=""
+REMOTE_LAIA_VER=""
+
+# ─── Path helpers (override-aware) ─────────────────────────────────────────
+clone_dest_laia_home() {
+  printf '%s\n' "${LAIA_HOME_OVERRIDE:-$LAIA_USER_HOME/$LAIA_DATA_DIR_NAME}"
+}
+clone_dest_users_dir() {
+  printf '%s\n' "${LAIA_USERS_DIR_OVERRIDE:-$LAIA_USERS_DIR_DEFAULT}"
+}
+clone_dest_tools_home() {
+  printf '%s\n' "${LAIA_TOOLS_HOME_OVERRIDE:-$LAIA_USER_HOME}"
+}
+
+# True iff using --source-dir instead of user@host.
+clone_is_local_source() {
+  [[ -n "${OPT_SOURCE_DIR:-}" ]]
+}
+
+# clone_src_for <kind>  →  rsync-compatible source URL ending in '/'
+clone_src_for() {
+  local kind="$1"
+  if clone_is_local_source; then
+    case "$kind" in
+      laia_home) printf '%s/LAIA-ARCH/\n' "$OPT_SOURCE_DIR" ;;
+      users)     printf '%s/users/\n'     "$OPT_SOURCE_DIR" ;;
+      home)      printf '%s/home/\n'      "$OPT_SOURCE_DIR" ;;
+    esac
+  else
+    case "$kind" in
+      laia_home) printf '%s:%s/\n' "$OPT_SOURCE" "$REMOTE_LAIA_HOME" ;;
+      users)     printf '%s:%s/\n' "$OPT_SOURCE" "$LAIA_USERS_DIR_DEFAULT" ;;
+      home)      printf '%s:%s/\n' "$OPT_SOURCE" "$REMOTE_HOME" ;;
+    esac
+  fi
+}
+
+# clone_rsync_base — common rsync options array. Mode-aware for -e ssh.
+# Sets a global array CLONE_RSYNC_OPTS the callers can extend.
+clone_rsync_base_opts() {
+  CLONE_RSYNC_OPTS=(-a --info=stats1)
+  if ! clone_is_local_source; then
+    CLONE_RSYNC_OPTS+=(-e 'ssh -o BatchMode=yes')
+  fi
+}
+
+# ─── D.1: pre-flight ───────────────────────────────────────────────────────
+clone_preflight() {
+  log_step "Pre-flight"
+
+  command -v rsync >/dev/null 2>&1 || die "rsync not installed (apt install rsync)" 3
+
+  if clone_is_local_source; then
+    [[ -d "$OPT_SOURCE_DIR" ]] || die "Source directory not found: $OPT_SOURCE_DIR" 3
+    [[ -d "$OPT_SOURCE_DIR/LAIA-ARCH" ]] \
+      || die "Source dir layout invalid: $OPT_SOURCE_DIR/LAIA-ARCH missing" 3
+    log_success "Source (local): $OPT_SOURCE_DIR"
+  else
+    command -v ssh >/dev/null 2>&1 || die "ssh not installed (apt install openssh-client)" 3
+    if ! ssh -o BatchMode=yes -o ConnectTimeout=5 "$OPT_SOURCE" true 2>/dev/null; then
+      die "SSH to $OPT_SOURCE failed (passwordless required). Test: ssh -o BatchMode=yes $OPT_SOURCE true" 3
+    fi
+    log_success "SSH to $OPT_SOURCE works (passwordless)"
+  fi
+
+  # Local LAIA_HOME must exist — i.e. laia-install must have run.
+  local dest_home
+  dest_home="$(clone_dest_laia_home)"
+  if [[ ! -d "$dest_home" ]]; then
+    if inst_is_override_mode; then
+      mkdir -p "$dest_home"
+    else
+      die "Destination $dest_home does not exist. Run laia-install first." 3
+    fi
+  fi
+  log_info "Destination LAIA_HOME: $dest_home"
+}
+
+# ─── D.1: detect remote paths (or local equivalents) ───────────────────────
+clone_detect_paths() {
+  log_step "Detecting source paths"
+
+  if clone_is_local_source; then
+    REMOTE_HOME="$OPT_SOURCE_DIR/home"
+    REMOTE_LAIA_HOME="$OPT_SOURCE_DIR/LAIA-ARCH"
+    REMOTE_LAIA_VER="(local)"
+  else
+    local out
+    out="$(ssh -o BatchMode=yes "$OPT_SOURCE" '
+      printf "HOME=%s\n"      "$HOME"
+      bash -lc "printf LAIA_HOME=%s\\\\n \"\${LAIA_HOME:-}\""
+      readlink /opt/laia 2>/dev/null || true
+    ' 2>/dev/null)" || die "Remote path detection failed (SSH error)"
+
+    REMOTE_HOME="$(printf '%s\n' "$out" | grep '^HOME='      | head -1 | cut -d= -f2-)"
+    REMOTE_LAIA_HOME="$(printf '%s\n' "$out" | grep '^LAIA_HOME=' | head -1 | cut -d= -f2-)"
+    [[ -n "$REMOTE_LAIA_HOME" ]] || REMOTE_LAIA_HOME="$REMOTE_HOME/$LAIA_DATA_DIR_NAME"
+    REMOTE_LAIA_VER="$(printf '%s\n' "$out" | grep '^laia-' | head -1 || true)"
+    [[ -n "$REMOTE_LAIA_VER" ]] || REMOTE_LAIA_VER="<not installed>"
+  fi
+
+  log_info "Source HOME:       $REMOTE_HOME"
+  log_info "Source LAIA_HOME:  $REMOTE_LAIA_HOME"
+  log_info "Source LAIA ver:   $REMOTE_LAIA_VER"
+}
+
+# ─── Excludes per phase ────────────────────────────────────────────────────
+_clone_excludes_laia_home() {
+  cat <<'EOF'
+cache/
+logs/
+*.log
+*.lock
+gateway.pid
+.DS_Store
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+.venv-*/
+node_modules/
+.tmp/
+*.swp
+EOF
+  if [[ "$OPT_WITH_MLX_MODELS" != true ]]; then
+    # Heavy local models — 1.4 GB on the dev box. Re-downloadable.
+    cat <<'EOF'
+mlx-servers/
+EOF
+  fi
+}
+
+_clone_excludes_users() {
+  cat <<'EOF'
+__pycache__/
+*.pyc
+.DS_Store
+*.lock
+EOF
+}
+
+# Tab-separated: path<TAB>exclude1<TAB>exclude2 ... (no trailing newline tabs)
+# Per plan §3.2 step 6. Order matters only for readability.
+_clone_tool_specs() {
+  cat <<'EOF'
+.claude.json
+.claude/	shell-snapshots/	ide/	statsig/	logs/	*.log
+.claude-cuenta2/	shell-snapshots/	ide/	statsig/
+.codex/	log/	logs/	sessions/
+.opencode/	bin/opencode
+.copilot/
+.gemini/
+.gitconfig
+.pm2/dump.pm2
+.docker/config.json
+EOF
+}
+
+# ─── D.1.5: service stop/start (reuses release.sh) ─────────────────────────
+clone_stop_services() {
+  if [[ "${#REL_ACTIVE_UNITS[@]}" -eq 0 ]]; then
+    log_info "No active LAIA services — nothing to stop"
+    return 0
+  fi
+  log_step "Stopping services: ${REL_ACTIVE_UNITS[*]}"
+  local u
+  for u in "${REL_ACTIVE_UNITS[@]}"; do
+    log_info "  systemctl stop $u"
+    if is_root; then
+      systemctl stop "$u" || log_warn "  stop $u failed"
+    else
+      sudo systemctl stop "$u" || log_warn "  stop $u failed"
+    fi
+  done
+}
+
+# ─── D.2: Phase 1 — rsync LAIA_HOME ────────────────────────────────────────
+clone_phase1_laia_home() {
+  log_step "Phase 1: LAIA_HOME (data)"
+
+  local src dst excludes_file
+  src="$(clone_src_for laia_home)"
+  dst="$(clone_dest_laia_home)/"
+
+  excludes_file="$(mktemp)"
+  _clone_excludes_laia_home >"$excludes_file"
+
+  mkdir -p "$dst"
+
+  clone_rsync_base_opts
+  CLONE_RSYNC_OPTS+=(--exclude-from="$excludes_file")
+
+  log_info "  rsync $src → $dst"
+  if ! rsync "${CLONE_RSYNC_OPTS[@]}" "$src" "$dst" >/dev/null; then
+    rm -f "$excludes_file"
+    die "Phase 1 rsync failed"
+  fi
+
+  rm -f "$excludes_file"
+  log_success "Phase 1 complete"
+}
+
+# ─── D.3: Phase 3 — rsync /srv/laia/users ──────────────────────────────────
+clone_phase3_users() {
+  log_step "Phase 3: /srv/laia/users (PA-AGORA bind mounts)"
+
+  local src dst excludes_file
+  src="$(clone_src_for users)"
+  dst="$(clone_dest_users_dir)/"
+
+  # If the source dir doesn't have users/ at all, treat as "nothing to clone"
+  # (a brand-new origin may not have any agents yet).
+  if clone_is_local_source && [[ ! -d "$OPT_SOURCE_DIR/users" ]]; then
+    log_info "  Source has no users/ directory — skipping Phase 3"
+    return 0
+  fi
+
+  excludes_file="$(mktemp)"
+  _clone_excludes_users >"$excludes_file"
+
+  clone_rsync_base_opts
+  CLONE_RSYNC_OPTS+=(--exclude-from="$excludes_file")
+
+  if clone_is_local_source; then
+    # Local: rsync directly with sudo for the write.
+    if inst_is_override_mode; then
+      mkdir -p "$dst"
+      rsync "${CLONE_RSYNC_OPTS[@]}" "$src" "$dst" >/dev/null \
+        || { rm -f "$excludes_file"; die "Phase 3 rsync failed"; }
+    else
+      sudo mkdir -p "$dst"
+      sudo rsync "${CLONE_RSYNC_OPTS[@]}" "$src" "$dst" >/dev/null \
+        || { rm -f "$excludes_file"; die "Phase 3 rsync failed"; }
+    fi
+  else
+    # Remote: stage to $HOME first (so SSH runs as $LAIA_USER with their keys),
+    # then promote to /srv with sudo. Avoids root-needs-SSH-keys.
+    local stage="$LAIA_USER_HOME/.laia-clone-stage/users"
+    rm -rf "$stage" 2>/dev/null || true
+    mkdir -p "$stage"
+
+    log_info "  Staging in $stage"
+    rsync "${CLONE_RSYNC_OPTS[@]}" "$src" "$stage/" >/dev/null \
+      || { rm -f "$excludes_file"; die "Phase 3 stage rsync failed"; }
+
+    log_info "  Promoting to $dst"
+    if inst_is_override_mode; then
+      mkdir -p "$dst"
+      rsync -a "$stage/" "$dst" >/dev/null
+    else
+      sudo mkdir -p "$dst"
+      sudo rsync -a "$stage/" "$dst" >/dev/null
+    fi
+    rm -rf "$stage" 2>/dev/null || true
+  fi
+
+  rm -f "$excludes_file"
+  log_success "Phase 3 complete"
+}
+
+# ─── D.4: Phase 4 — --with-tools (personal CLIs) ───────────────────────────
+clone_phase4_tools() {
+  if [[ "$OPT_WITH_TOOLS" != true ]]; then
+    log_step "Phase 4: tools (SKIPPED — pass --with-tools to include)"
+    return 0
+  fi
+
+  log_step "Phase 4: personal CLI tools"
+
+  local dst_home count=0
+  dst_home="$(clone_dest_tools_home)"
+  mkdir -p "$dst_home"
+
+  while IFS= read -r spec; do
+    [[ -z "$spec" ]] && continue
+    local path excludes
+    path="$(printf '%s\n' "$spec" | cut -f1)"
+    excludes="$(printf '%s\n' "$spec" | cut -f2- -s)"
+    _clone_rsync_tool "$path" "$excludes" "$dst_home" && count=$((count + 1)) || true
+  done < <(_clone_tool_specs)
+
+  log_success "Phase 4: processed $count tool specs"
+}
+
+# _clone_rsync_tool <rel> <tab-separated-excludes> <dest_home>
+# Returns 0 if rsync ran, 1 if skipped (source missing).
+_clone_rsync_tool() {
+  local rel="$1" excludes="$2" dst_home="$3"
+
+  local src exc_args=()
+  if [[ -n "$excludes" ]]; then
+    local e
+    while IFS= read -r e; do
+      [[ -n "$e" ]] && exc_args+=(--exclude="$e")
+    done < <(printf '%s\n' "$excludes" | tr '\t' '\n')
+  fi
+
+  local src_full dst_target is_dir=false
+  if clone_is_local_source; then
+    src_full="$OPT_SOURCE_DIR/home/$rel"
+    if [[ ! -e "$src_full" ]]; then
+      log_info "  skip $rel (not at source)"
+      return 1
+    fi
+    [[ -d "$src_full" ]] && is_dir=true
+  else
+    src_full="$OPT_SOURCE:$REMOTE_HOME/$rel"
+    # We don't probe over SSH; rsync will report "no such file" gracefully.
+    # Best-effort: assume dir if ends with /, else file. _clone_tool_specs
+    # never has trailing /, so heuristic: presence of "." in last segment.
+    if [[ "${rel##*/}" == .* && "${rel##*/}" != *.* ]]; then
+      is_dir=true
+    elif [[ "$rel" == */* && "${rel##*/}" != *.* ]]; then
+      is_dir=true
+    fi
+  fi
+
+  dst_target="$dst_home/$rel"
+  if [[ "$is_dir" == true ]]; then
+    mkdir -p "$dst_target"
+    src_full="${src_full%/}/"      # ensure trailing slash for "contents into dst"
+    dst_target="${dst_target%/}/"
+  else
+    mkdir -p "$(dirname "$dst_target")"
+  fi
+
+  local rsync_opts=(-a --info=stats1 "${exc_args[@]}")
+  clone_is_local_source || rsync_opts+=(-e 'ssh -o BatchMode=yes')
+
+  log_info "  $rel"
+  if rsync "${rsync_opts[@]}" "$src_full" "$dst_target" 2>/dev/null; then
+    return 0
+  else
+    log_warn "    (rsync of $rel returned nonzero — likely missing at source)"
+    return 1
+  fi
+}
+
+# ─── D.5: Phase 5 — smoke test ─────────────────────────────────────────────
+# Returns 0 on success, nonzero if any captured unit is inactive.
+clone_phase5_smoke() {
+  if inst_is_override_mode; then
+    log_step "Phase 5: smoke test (override mode — skipped)"
+    return 0
+  fi
+
+  log_step "Phase 5: smoke test"
+
+  local failed=0 u
+  if [[ "${#REL_ACTIVE_UNITS[@]}" -gt 0 ]] && command -v systemctl >/dev/null 2>&1; then
+    for u in "${REL_ACTIVE_UNITS[@]}"; do
+      if systemctl is-active --quiet "$u" 2>/dev/null; then
+        log_success "  $u active"
+      else
+        log_error   "  $u NOT active"
+        failed=$((failed + 1))
+      fi
+    done
+  else
+    log_info "  No services were stopped — nothing to re-verify"
+  fi
+
+  if command -v curl >/dev/null 2>&1; then
+    if curl -fsS --max-time 5 "$LAIA_AGORA_HEALTH_URL" >/dev/null 2>&1; then
+      log_success "  $LAIA_AGORA_HEALTH_URL responds"
+    else
+      log_warn    "  $LAIA_AGORA_HEALTH_URL not reachable (backend may be off)"
+    fi
+  fi
+
+  [[ "$failed" -eq 0 ]]
+}
+
+# ─── Summary ───────────────────────────────────────────────────────────────
+clone_print_summary() {
+  log_step "Clone complete"
+  printf '\n'
+  printf '  %sSource:%s          %s\n' "$C_BLD" "$C_RST" "${OPT_SOURCE_DIR:-$OPT_SOURCE}"
+  printf '  %sLAIA_HOME:%s       %s\n' "$C_BLD" "$C_RST" "$(clone_dest_laia_home)"
+  printf '  %sUsers dir:%s       %s\n' "$C_BLD" "$C_RST" "$(clone_dest_users_dir)"
+  if [[ "$OPT_WITH_TOOLS" == true ]]; then
+    printf '  %sTools (home):%s    %s\n' "$C_BLD" "$C_RST" "$(clone_dest_tools_home)"
+  fi
+  printf '\n'
+
+  if [[ "$OPT_NO_LXD" != true ]]; then
+    printf '  %sLXD containers:%s  NOT cloned (Fase E not implemented yet)\n' "$C_YEL" "$C_RST"
+    printf '                     Use --no-lxd to silence this warning.\n'
+  fi
+  if [[ -n "$OPT_ONLY_AGENT" ]]; then
+    printf '  %sNote:%s --only-agent %s ignored (LXD support is Fase E)\n' \
+      "$C_YEL" "$C_RST" "$OPT_ONLY_AGENT"
+  fi
+  if [[ "$OPT_WITH_MLX_MODELS" == true ]]; then
+    printf '  %sMLX models:%s      included (heavy — %s\n)' "$C_BLD" "$C_RST" "mlx-servers/"
+  fi
+  printf '\n'
+}

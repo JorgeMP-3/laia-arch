@@ -56,7 +56,9 @@ inst_is_override_mode() {
   [[ -n "${LAIA_INSTALL_ROOT_OVERRIDE:-}" \
      || -n "${LAIA_BIN_DIR_OVERRIDE:-}" \
      || -n "${LAIA_HOME_OVERRIDE:-}" \
-     || -n "${LAIA_SYSTEMD_DIR_OVERRIDE:-}" ]]
+     || -n "${LAIA_SYSTEMD_DIR_OVERRIDE:-}" \
+     || -n "${LAIA_USERS_DIR_OVERRIDE:-}" \
+     || -n "${LAIA_TOOLS_HOME_OVERRIDE:-}" ]]
 }
 
 # inst_install_root — install root respecting LAIA_INSTALL_ROOT_OVERRIDE.

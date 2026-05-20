@@ -7,11 +7,13 @@
 #
 # What it clones from <user@host>:
 #   - Phase 1: rsync of $LAIA_HOME/ (data, workspaces, sessions, db, auth, ...)
-#   - Phase 2: lxc export of laia-agora + each agent-<slug> container
 #   - Phase 3: rsync of /srv/laia/users/ (PA-AGORA persistent bind mounts)
 #   - Phase 4 (opt-in via --with-tools): ~/.claude, ~/.codex, ~/.opencode, etc.
+#   - Phase 5: smoke test (services active, /api/health responding)
 #
-# Status: SCAFFOLD (Fase A). Implementation tracked in plan §5 Fases D and E.
+# Phase 2 (LXD container export/import) is Fase E — not implemented yet.
+# Without --no-lxd the script will WARN about this and continue with the
+# data-only path; pass --no-lxd to silence the warning.
 # ─────────────────────────────────────────────────────────────────────────────
 set -euo pipefail
 
@@ -26,9 +28,18 @@ source "$LIB_DIR/common.sh"
 source "$LIB_DIR/sudo.sh"
 # shellcheck source=../infra/installer/lib/system.sh
 source "$LIB_DIR/system.sh"
+# shellcheck source=../infra/installer/lib/version.sh
+source "$LIB_DIR/version.sh"
+# shellcheck source=../infra/installer/lib/install.sh
+source "$LIB_DIR/install.sh"
+# shellcheck source=../infra/installer/lib/release.sh
+source "$LIB_DIR/release.sh"
+# shellcheck source=../infra/installer/lib/clone.sh
+source "$LIB_DIR/clone.sh"
 
 # ─── Options ────────────────────────────────────────────────────────────────
 OPT_SOURCE=""
+OPT_SOURCE_DIR=""
 OPT_YES=false
 OPT_DRY_RUN=false
 OPT_WITH_TOOLS=false
@@ -42,30 +53,35 @@ laia-clone — clone LAIA state from a remote server
 
 USAGE
     laia-clone <user@host> [OPTIONS]
+    laia-clone --source-dir <path> [OPTIONS]
     laia clone <user@host> [OPTIONS]
 
 ARGUMENTS
     <user@host>           SSH target of the source server (passwordless required)
 
 OPTIONS
+    --source-dir PATH     Use a local directory as the source instead of SSH.
+                          Expected layout: <PATH>/{LAIA-ARCH,users,home}/
+                          Useful for migrations on the same machine and tests.
     --with-tools          Also clone personal CLI configs (Claude Code, Codex,
                           OpenCode, .gitconfig, .pm2, .docker)
-    --with-mlx-models     Also clone heavy local models (~/LAIA-ARCH/mlx-servers/)
-    --no-lxd              Skip LXD container export/import (data only)
-    --only-agent <slug>   Clone a single PA-AGORA container, not all
+    --with-mlx-models     Also clone heavy local models (LAIA-ARCH/mlx-servers/)
+    --no-lxd              Acknowledge LXD phase is skipped (Fase E, not yet
+                          implemented). Default behaviour is the same; this
+                          flag just silences the warning at the end.
+    --only-agent <slug>   (Reserved for Fase E — LXD container export.)
     --yes, -y             Non-interactive mode
-    --dry-run             Print sizes and plan, don't transfer anything
+    --dry-run             Print plan, don't transfer anything
     --help, -h            Show this help
 
 PRE-CONDITIONS
-    - `laia-install` already ran on this host
-    - Passwordless SSH to <user@host>
-    - LXD initialized locally (`laia init` or `lxd init`) unless --no-lxd
+    - `laia-install` already ran on this host (LAIA_HOME exists)
+    - Passwordless SSH to <user@host>  (when not using --source-dir)
 
 EXAMPLES
     laia-clone laia-hermes@old.example.com --yes
     laia-clone jorge@10.0.0.5 --with-tools --no-lxd
-    laia-clone jorge@10.0.0.5 --only-agent maria
+    laia-clone --source-dir /mnt/backup/laia-snapshot-2026-05-20 --with-tools
 
 EXIT CODES
     0   Success
@@ -79,6 +95,9 @@ parse_args() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
       -h|--help)       print_help; exit 0 ;;
+      --source-dir)
+        [[ $# -ge 2 && -n "${2:-}" ]] || die "--source-dir requires PATH" 2
+        OPT_SOURCE_DIR="$(readlink -f "$2")"; shift 2 ;;
       --with-tools)    OPT_WITH_TOOLS=true; shift ;;
       --with-mlx-models) OPT_WITH_MLX_MODELS=true; shift ;;
       --no-lxd)        OPT_NO_LXD=true; shift ;;
@@ -98,31 +117,57 @@ parse_args() {
     esac
   done
 
-  [[ -n "$OPT_SOURCE" ]] || { print_help; exit 2; }
-  [[ "$OPT_SOURCE" == *@* ]] || die "Source must be user@host (got: $OPT_SOURCE)" 2
+  if [[ -z "$OPT_SOURCE" && -z "$OPT_SOURCE_DIR" ]]; then
+    print_help
+    die "Specify either <user@host> or --source-dir PATH" 2
+  fi
+  if [[ -n "$OPT_SOURCE" && -n "$OPT_SOURCE_DIR" ]]; then
+    die "Cannot combine <user@host> and --source-dir (got: $OPT_SOURCE + $OPT_SOURCE_DIR)" 2
+  fi
+  if [[ -n "$OPT_SOURCE" && "$OPT_SOURCE" != *@* ]]; then
+    die "Source must be user@host (got: $OPT_SOURCE)" 2
+  fi
 }
 
 # ─── Main ───────────────────────────────────────────────────────────────────
 main() {
   parse_args "$@"
-  detect_os
 
-  log_step "laia-clone (SCAFFOLD — not yet functional)"
-  log_info "Source:           $OPT_SOURCE"
+  log_step "laia-clone"
+  log_info "Source:           ${OPT_SOURCE_DIR:-$OPT_SOURCE}"
   log_info "With tools:       $OPT_WITH_TOOLS"
   log_info "With MLX models:  $OPT_WITH_MLX_MODELS"
-  log_info "LXD containers:   $([[ "$OPT_NO_LXD" == true ]] && echo skip || echo include)"
-  [[ -n "$OPT_ONLY_AGENT" ]] && log_info "Only agent:       $OPT_ONLY_AGENT"
+  log_info "LXD containers:   skip (Fase E not implemented yet)"
+  [[ -n "$OPT_ONLY_AGENT" ]] && log_info "Only agent:       $OPT_ONLY_AGENT (no effect — Fase E)"
   log_info "Dry-run:          $OPT_DRY_RUN"
   log_info "Admin user:       $LAIA_USER ($LAIA_USER_HOME)"
 
   if [[ "$OPT_DRY_RUN" == true ]]; then
-    log_warn "Dry-run mode — no changes made."
+    log_warn "Dry-run mode — stopping before any network calls or mutations."
     exit 0
   fi
 
-  log_warn "This is a scaffold. Implementation tracked in plan §5 Fases D and E."
-  exit 0
+  clone_preflight
+  clone_detect_paths
+
+  if ! inst_is_override_mode; then
+    ensure_sudo_cached
+  fi
+
+  rel_capture_active_units
+  clone_stop_services
+
+  clone_phase1_laia_home
+  clone_phase3_users
+  clone_phase4_tools
+
+  rel_restart_active
+
+  if ! clone_phase5_smoke; then
+    log_warn "Smoke test reported failures — investigate manually"
+  fi
+
+  clone_print_summary
 }
 
 main "$@"
