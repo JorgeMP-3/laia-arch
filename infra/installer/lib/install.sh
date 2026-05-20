@@ -59,6 +59,40 @@ inst_is_override_mode() {
      || -n "${LAIA_SYSTEMD_DIR_OVERRIDE:-}" ]]
 }
 
+# inst_install_root — install root respecting LAIA_INSTALL_ROOT_OVERRIDE.
+# Use this instead of $LAIA_INSTALL_ROOT directly when paths must work in tests.
+inst_install_root() {
+  printf '%s\n' "${LAIA_INSTALL_ROOT_OVERRIDE:-$LAIA_INSTALL_ROOT}"
+}
+
+# inst_install_prefix — the symlink path, override-aware.
+inst_install_prefix() {
+  printf '%s/laia\n' "$(inst_install_root)"
+}
+
+# inst_current_version — version string the symlink points to, or empty.
+# Override-aware variant of version.sh's current_installed_version().
+# Tolerates either absolute or relative symlink targets.
+inst_current_version() {
+  local prefix
+  prefix="$(inst_install_prefix)"
+  [[ -L "$prefix" ]] || return 0
+  local target
+  target="$(basename "$(readlink "$prefix")")"
+  printf '%s\n' "${target#laia-}"
+}
+
+# inst_list_versions — every installed version, sorted ascending.
+inst_list_versions() {
+  local root d v
+  root="$(inst_install_root)"
+  for d in "$root"/laia-v*/; do
+    [[ -d "$d" ]] || continue
+    v="${d%/}"; v="${v##*/laia-}"
+    printf '%s\n' "$v"
+  done | sort -V
+}
+
 # ─── B.1: Pre-flight ────────────────────────────────────────────────────────
 inst_preflight() {
   log_step "Pre-flight checks"

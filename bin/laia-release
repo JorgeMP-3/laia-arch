@@ -11,8 +11,6 @@
 # Internally this is essentially `laia-install --from-local "$LAIA_ROOT"` with
 # version auto-detection and a post-build atomic symlink switch + service
 # restart. On healthcheck failure it automatically rolls back.
-#
-# Status: SCAFFOLD (Fase A). Implementation tracked in plan §5 Fase C.
 # ─────────────────────────────────────────────────────────────────────────────
 set -euo pipefail
 
@@ -29,6 +27,12 @@ source "$LIB_DIR/sudo.sh"
 source "$LIB_DIR/system.sh"
 # shellcheck source=../infra/installer/lib/version.sh
 source "$LIB_DIR/version.sh"
+# shellcheck source=../infra/installer/lib/install.sh
+source "$LIB_DIR/install.sh"
+# shellcheck source=../infra/installer/lib/systemd.sh
+source "$LIB_DIR/systemd.sh"
+# shellcheck source=../infra/installer/lib/release.sh
+source "$LIB_DIR/release.sh"
 
 # ─── Options ────────────────────────────────────────────────────────────────
 OPT_SRC=""
@@ -39,6 +43,12 @@ OPT_PRUNE=false
 OPT_KEEP=3
 OPT_YES=false
 OPT_DRY_RUN=false
+OPT_FORCE=false
+OPT_NO_SYSTEMD=false
+OPT_SKIP_PIP=false
+OPT_SKIP_FRONTEND=false
+# Install pipeline reads these names; release uses OPT_SRC.
+OPT_FROM_LOCAL=""
 
 print_help() {
   cat <<'EOF'
@@ -53,10 +63,14 @@ ARGUMENTS
 
 OPTIONS
     --version VER         Force release version (default: git describe HEAD tag)
-    --skip-tests          Skip pre-release pytest/pnpm test
+    --skip-tests          Skip pre-release smoke tests
+    --skip-pip            Skip venv creation / pip install (build phase)
+    --skip-frontend       Skip frontend artifact check
+    --no-systemd          Don't re-render or install systemd units
     --allow-dirty         Release even if the working tree has uncommitted changes
+    --force               Allow re-building over an existing /opt/laia-vX.Y.Z dir
     --prune               Delete versions older than --keep N
-    --keep N              When --prune, keep last N versions (default: 3)
+    --keep N              When --prune, keep last N versions besides current (default: 3)
     --yes, -y             Non-interactive
     --dry-run             Show what would happen, don't change anything
     --help, -h            Show this help
@@ -85,7 +99,11 @@ parse_args() {
         [[ $# -ge 2 && -n "${2:-}" ]] || die "--version requires VER" 2
         OPT_VERSION="$2"; shift 2 ;;
       --skip-tests)     OPT_SKIP_TESTS=true; shift ;;
+      --skip-pip)       OPT_SKIP_PIP=true; shift ;;
+      --skip-frontend)  OPT_SKIP_FRONTEND=true; shift ;;
+      --no-systemd)     OPT_NO_SYSTEMD=true; shift ;;
       --allow-dirty)    OPT_ALLOW_DIRTY=true; shift ;;
+      --force)          OPT_FORCE=true; shift ;;
       --prune)          OPT_PRUNE=true; shift ;;
       --keep)
         [[ $# -ge 2 && "${2:-}" =~ ^[0-9]+$ ]] || die "--keep requires a positive integer" 2
@@ -110,34 +128,79 @@ parse_args() {
 # ─── Main ───────────────────────────────────────────────────────────────────
 main() {
   parse_args "$@"
-  detect_os
 
-  log_step "laia-release (SCAFFOLD — not yet functional)"
-  log_info "Source tree:    $OPT_SRC"
-  log_info "Version:        ${OPT_VERSION:-<auto-detect from git>}"
-  log_info "Skip tests:     $OPT_SKIP_TESTS"
-  log_info "Allow dirty:    $OPT_ALLOW_DIRTY"
-  log_info "Prune:          $OPT_PRUNE (keep last $OPT_KEEP)"
-  log_info "Dry-run:        $OPT_DRY_RUN"
-  log_info "Admin user:     $LAIA_USER ($LAIA_USER_HOME)"
+  log_step "laia-release"
+  log_info "Source tree:     $OPT_SRC"
+  log_info "Version:         ${OPT_VERSION:-<auto-detect from git>}"
+  log_info "Skip tests:      $OPT_SKIP_TESTS"
+  log_info "Skip pip:        $OPT_SKIP_PIP"
+  log_info "Skip frontend:   $OPT_SKIP_FRONTEND"
+  log_info "No systemd:      $OPT_NO_SYSTEMD"
+  log_info "Allow dirty:     $OPT_ALLOW_DIRTY"
+  log_info "Force overwrite: $OPT_FORCE"
+  log_info "Prune:           $OPT_PRUNE (keep last $OPT_KEEP)"
+  log_info "Dry-run:         $OPT_DRY_RUN"
+  log_info "Admin user:      $LAIA_USER ($LAIA_USER_HOME)"
 
-  # Sanity: try to detect the version (this part works already).
-  if [[ -z "$OPT_VERSION" ]]; then
-    if ! OPT_VERSION="$(detect_version "$OPT_SRC" 2>/dev/null)"; then
-      log_warn "Could not auto-detect version of $OPT_SRC"
-      log_info "Either tag HEAD (git tag vX.Y.Z) or pass --version vX.Y.Z"
-    else
-      log_success "Auto-detected version: $OPT_VERSION"
-    fi
+  rel_preflight_src_tree
+  rel_run_tests
+
+  # Bridge release args to the install pipeline.
+  OPT_FROM_LOCAL="$OPT_SRC"
+
+  inst_preflight
+  inst_resolve_source
+  inst_resolve_version
+  inst_resolve_paths
+
+  # Snapshot before any mutation so we know what to roll back to.
+  REL_PREV_VERSION="$(inst_current_version)"
+  rel_capture_active_units
+
+  if [[ -n "$REL_PREV_VERSION" ]]; then
+    log_info "Currently active version: $REL_PREV_VERSION"
+  else
+    log_info "No previous version installed (this will be the first)"
   fi
 
   if [[ "$OPT_DRY_RUN" == true ]]; then
-    log_warn "Dry-run mode — no changes made."
+    log_warn "Dry-run mode — stopping before any mutations."
     exit 0
   fi
 
-  log_warn "This is a scaffold. Implementation tracked in plan §5 Fase C."
-  exit 0
+  inst_check_existing_version
+
+  if ! inst_is_override_mode; then
+    ensure_sudo_cached
+  fi
+
+  inst_copy_source_to_dest
+  inst_create_venvs
+  inst_check_frontend
+  inst_finalize_permissions
+  inst_switch_symlink
+  inst_install_wrappers
+  systemd_install_all
+
+  rel_record_previous "$REL_PREV_VERSION"
+  rel_restart_active
+
+  if ! rel_healthcheck; then
+    log_error "Healthcheck failed — initiating auto-rollback"
+    if [[ -n "$REL_PREV_VERSION" ]]; then
+      rel_rollback_symlink "$REL_PREV_VERSION"
+      rel_restart_active
+      die "Release rolled back to $REL_PREV_VERSION. Investigate $INST_DEST."
+    else
+      die "Healthcheck failed and no previous version to roll back to. $INST_DEST left active."
+    fi
+  fi
+
+  if [[ "$OPT_PRUNE" == true ]]; then
+    rel_prune
+  fi
+
+  rel_print_summary
 }
 
 main "$@"

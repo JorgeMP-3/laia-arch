@@ -92,6 +92,12 @@ for script in laia-install laia-clone laia-release laia-rollback; do
       assert_zero "$script --dry-run" \
         "$BIN/$script" --dry-run --from-local "$LAIA_ROOT" --version v0.0.0-test
       ;;
+    laia-release)
+      # laia-release needs a source tree (positional arg) + --allow-dirty since
+      # the repo may have uncommitted changes.
+      assert_zero "$script --dry-run" \
+        "$BIN/$script" --dry-run --version v0.0.0-test --allow-dirty --skip-tests "$LAIA_ROOT"
+      ;;
     *)
       assert_zero "$script --dry-run" "$BIN/$script" --dry-run
       ;;

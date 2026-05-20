@@ -9,8 +9,6 @@
 #
 # This is intentionally separate from laia-release so it stays simple and
 # never invokes builds — just flips the symlink and restarts services.
-#
-# Status: SCAFFOLD (Fase A). Implementation tracked in plan §5 Fase C.
 # ─────────────────────────────────────────────────────────────────────────────
 set -euo pipefail
 
@@ -23,8 +21,14 @@ LIB_DIR="$LAIA_ROOT/infra/installer/lib"
 source "$LIB_DIR/common.sh"
 # shellcheck source=../infra/installer/lib/sudo.sh
 source "$LIB_DIR/sudo.sh"
+# shellcheck source=../infra/installer/lib/system.sh
+source "$LIB_DIR/system.sh"
 # shellcheck source=../infra/installer/lib/version.sh
 source "$LIB_DIR/version.sh"
+# shellcheck source=../infra/installer/lib/install.sh
+source "$LIB_DIR/install.sh"
+# shellcheck source=../infra/installer/lib/release.sh
+source "$LIB_DIR/release.sh"
 
 # ─── Options ────────────────────────────────────────────────────────────────
 OPT_TARGET=""
@@ -85,16 +89,17 @@ parse_args() {
 
 cmd_list() {
   log_step "Installed LAIA versions"
-  local current
-  current="$(current_installed_version)"
-  local versions
-  versions="$(list_installed_versions)"
+  local current versions root
+  current="$(inst_current_version)"
+  versions="$(inst_list_versions)"
+  root="$(inst_install_root)"
 
   if [[ -z "$versions" ]]; then
-    log_warn "No versions installed at $LAIA_INSTALL_ROOT/laia-v*"
+    log_warn "No versions installed at $root/laia-v*"
     return
   fi
 
+  local v
   while IFS= read -r v; do
     if [[ "$v" == "$current" ]]; then
       printf '  %s* %s%s  (current)\n' "$C_GRN" "$v" "$C_RST"
@@ -102,30 +107,94 @@ cmd_list() {
       printf '    %s\n' "$v"
     fi
   done <<<"$versions"
+
+  local prev
+  prev="$(rel_load_previous 2>/dev/null || true)"
+  if [[ -n "$prev" ]]; then
+    printf '\n  Previous (default rollback target): %s\n' "$prev"
+  fi
 }
 
 # ─── Main ───────────────────────────────────────────────────────────────────
 main() {
   parse_args "$@"
 
+  # rollback never builds, so INST_DEST/INST_PREFIX are set from the install
+  # root directly (no version resolution needed up-front).
+  INST_PREFIX="$(inst_install_prefix)"
+  INST_BIN_DIR="${LAIA_BIN_DIR_OVERRIDE:-$LAIA_USR_LOCAL_BIN}"
+  DATA_DIR="${LAIA_HOME_OVERRIDE:-$LAIA_USER_HOME/$LAIA_DATA_DIR_NAME}"
+  SYSTEMD_DIR="${LAIA_SYSTEMD_DIR_OVERRIDE:-/etc/systemd/system}"
+
   if [[ "$OPT_LIST" == true ]]; then
     cmd_list
     exit 0
   fi
 
-  log_step "laia-rollback (SCAFFOLD — not yet functional)"
-  log_info "Target version: ${OPT_TARGET:-<previous>}"
-  log_info "Current:        $(current_installed_version || echo '<none>')"
-  log_info "Available:      $(list_installed_versions | tr '\n' ' ' || echo '<none>')"
-  log_info "Dry-run:        $OPT_DRY_RUN"
+  log_step "laia-rollback"
+
+  local current target
+  current="$(inst_current_version)"
+  if [[ -z "$current" ]]; then
+    if [[ "$OPT_DRY_RUN" == true ]]; then
+      log_warn "No current install at $INST_PREFIX — nothing to roll back (dry-run)"
+      exit 0
+    fi
+    die "Nothing to roll back — no current install at $INST_PREFIX"
+  fi
+
+  if [[ -n "$OPT_TARGET" ]]; then
+    target="$OPT_TARGET"
+    [[ "$target" =~ ^v ]] || target="v$target"
+  else
+    target="$(rel_load_previous)"
+    if [[ -z "$target" ]]; then
+      # Fall back: pick the most recent installed version that isn't current.
+      target="$(inst_list_versions | sort -Vr | grep -vxF "$current" | head -1 || true)"
+      [[ -n "$target" ]] || die "No previous version recorded and no other installed version found."
+      log_warn "No .previous file found; falling back to most recent other version: $target"
+    fi
+  fi
+
+  log_info "Current:        $current"
+  log_info "Rolling back to: $target"
+  log_info "Available:      $(inst_list_versions | tr '\n' ' ')"
+
+  [[ "$target" != "$current" ]] \
+    || die "Already at $target — nothing to do"
+
+  local root target_dir
+  root="$(inst_install_root)"
+  target_dir="$root/laia-$target"
+  [[ -d "$target_dir" ]] \
+    || die "Version $target not installed at $target_dir (use --list to see what's available)"
 
   if [[ "$OPT_DRY_RUN" == true ]]; then
     log_warn "Dry-run mode — no changes made."
     exit 0
   fi
 
-  log_warn "This is a scaffold. Implementation tracked in plan §5 Fase C."
-  exit 0
+  if ! inst_is_override_mode; then
+    require_root "rollback writes to $INST_PREFIX"
+    ensure_sudo_cached
+  fi
+
+  rel_capture_active_units
+
+  # Set INST_DEST so inst_switch_symlink knows where to point.
+  INST_DEST="$target_dir"
+  inst_switch_symlink
+
+  # The version we just rolled FROM is the new "previous".
+  rel_record_previous "$current"
+
+  rel_restart_active
+  if ! rel_healthcheck; then
+    log_warn "Healthcheck failed after rollback. No further automatic recovery."
+    log_warn "If services are broken, investigate manually or restore from snapshot."
+  fi
+
+  rollback_print_summary
 }
 
 main "$@"
