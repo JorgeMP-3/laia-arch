@@ -87,6 +87,11 @@ for script in laia-install laia-clone laia-release laia-rollback; do
     laia-clone)
       assert_zero "$script --dry-run with dummy host" "$BIN/$script" --dry-run dummy@example.com
       ;;
+    laia-install)
+      # laia-install needs --from-local to resolve a source tree before stopping in dry-run.
+      assert_zero "$script --dry-run" \
+        "$BIN/$script" --dry-run --from-local "$LAIA_ROOT" --version v0.0.0-test
+      ;;
     *)
       assert_zero "$script --dry-run" "$BIN/$script" --dry-run
       ;;
@@ -107,7 +112,8 @@ assert_zero "laia-rollback --list" "$BIN/laia-rollback" --list
 
 echo
 echo "→ laia delegator dispatches to subcommands"
-assert_contains "laia install --dry-run dispatches" "SCAFFOLD" "$BIN/laia" install --dry-run
+assert_contains "laia install --dry-run dispatches" "laia-install" \
+  "$BIN/laia" install --dry-run --from-local "$LAIA_ROOT" --version v0.0.0-test
 assert_contains "laia rollback --list dispatches" "Installed LAIA" "$BIN/laia" rollback --list
 
 # ── Summary ─────────────────────────────────────────────────────────────────
