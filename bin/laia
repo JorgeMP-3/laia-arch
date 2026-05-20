@@ -1,0 +1,102 @@
+#!/usr/bin/env bash
+# ─────────────────────────────────────────────────────────────────────────────
+# laia — top-level delegator for the LAIA host-side CLI
+#
+# Usage:
+#   laia <subcommand> [args...]
+#
+# Subcommands:
+#   install    Install LAIA on a clean host           (sudo required)
+#   clone      Clone state from another LAIA server   (sudo required for LXD)
+#   release    Promote a dev tree to /opt versioned   (sudo required)
+#   rollback   Switch /opt symlink back to a prior version (sudo required)
+#   init       Bootstrap LAIA-AGORA (LXD images + first user)
+#   status     Show host-side LAIA status
+#   --help     Show this help
+#   --version  Show installed LAIA version
+#
+# laia is a thin dispatcher: it locates the matching `laia-<subcommand>` binary
+# in the same directory and execs it, so subcommands behave identically whether
+# they are called as `laia clone` or `laia-clone` directly.
+# ─────────────────────────────────────────────────────────────────────────────
+set -euo pipefail
+
+# Resolve real path of this script (handles /usr/local/bin/laia symlink).
+SCRIPT_PATH="$(readlink -f "${BASH_SOURCE[0]}")"
+SCRIPT_DIR="$(dirname "$SCRIPT_PATH")"
+LAIA_ROOT="$(dirname "$SCRIPT_DIR")"
+LIB_DIR="$LAIA_ROOT/infra/installer/lib"
+
+# shellcheck source=../infra/installer/lib/common.sh
+source "$LIB_DIR/common.sh"
+# shellcheck source=../infra/installer/lib/version.sh
+source "$LIB_DIR/version.sh"
+
+print_help() {
+  cat <<'EOF'
+laia — host-side CLI for the LAIA ecosystem
+
+USAGE
+    laia <subcommand> [args...]
+
+SUBCOMMANDS
+    install     Install LAIA on a clean host
+    clone       Clone state from another LAIA server (data + LXD containers)
+    release     Promote a dev tree at ~/.laia to /opt/laia-vX.Y.Z and restart
+    rollback    Switch /opt/laia symlink back to a previous version
+    init        Bootstrap LAIA-AGORA (LXD images + AGORA backend + first user)
+    status      Show host-side LAIA status (services, version, paths)
+
+OPTIONS
+    --help, -h        Show this help
+    --version, -v     Show installed LAIA version
+
+EXAMPLES
+    sudo laia install --version v0.1.0
+    sudo laia release                  # detects version from git tag
+    laia clone laia-hermes@server.example.com --with-tools
+    sudo laia rollback                 # revert to previous version
+EOF
+}
+
+print_version() {
+  local v
+  if v="$(detect_version "$LAIA_ROOT" "" 2>/dev/null)"; then
+    printf 'laia %s\n' "$v"
+  else
+    printf 'laia (unversioned dev tree at %s)\n' "$LAIA_ROOT"
+  fi
+}
+
+main() {
+  if [[ $# -eq 0 ]]; then
+    print_help
+    exit 0
+  fi
+
+  case "$1" in
+    -h|--help)    print_help; exit 0 ;;
+    -v|--version) print_version; exit 0 ;;
+    install|clone|release|rollback|status)
+      local sub="$1"; shift
+      local target="$SCRIPT_DIR/laia-$sub"
+      [[ -x "$target" ]] || die "Subcommand binary not found or not executable: $target"
+      exec "$target" "$@"
+      ;;
+    init)
+      # init lives in infra/dev/laia-init.sh — that wizard handles AGORA bootstrap.
+      local init_script="$LAIA_ROOT/infra/dev/laia-init.sh"
+      [[ -x "$init_script" ]] || die "AGORA init script not found: $init_script"
+      shift
+      exec bash "$init_script" "$@"
+      ;;
+    *)
+      log_error "Unknown subcommand: $1"
+      printf '\n' >&2
+      print_help >&2
+      exit 2
+      ;;
+  esac
+}
+
+main "$@"

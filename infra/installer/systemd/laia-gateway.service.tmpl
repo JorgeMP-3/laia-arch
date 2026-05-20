@@ -1,0 +1,24 @@
+[Unit]
+Description=LAIA Core Gateway
+After=network-online.target
+Wants=network-online.target
+X-LaiaPathDeps=laia_core,laia_venv
+
+[Service]
+Type=simple
+User=${LAIA_USER}
+Group=${LAIA_USER}
+# Path registry — defines LAIA_ROOT, LAIA_CORE, LAIA_VENV, etc.
+EnvironmentFile=-${LAIA_HOME}/.env.paths
+WorkingDirectory=${LAIA_INSTALL_PREFIX}/.laia-core
+Environment=HOME=${LAIA_USER_HOME}
+Environment=LAIA_HOME=${LAIA_HOME}
+# NOTE: ExecStart must use literal absolute paths — systemd does not expand
+# Environment= variables for the executable itself. The Atlas daemon watches
+# X-LaiaPathDeps aliases and writes a pending-restart marker on changes.
+ExecStart=${LAIA_INSTALL_PREFIX}/.laia-core/venv/bin/python ${LAIA_INSTALL_PREFIX}/.laia-core/laia gateway run
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

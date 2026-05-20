@@ -1,0 +1,128 @@
+#!/usr/bin/env bash
+# ─────────────────────────────────────────────────────────────────────────────
+# laia-clone — clone LAIA state from a remote server
+#
+# Pre-condition: laia-install must already have run on this host (LAIA is
+# installed at /opt/laia, ~/LAIA-ARCH/ exists, LXD is initialized if --with-lxd).
+#
+# What it clones from <user@host>:
+#   - Phase 1: rsync of $LAIA_HOME/ (data, workspaces, sessions, db, auth, ...)
+#   - Phase 2: lxc export of laia-agora + each agent-<slug> container
+#   - Phase 3: rsync of /srv/laia/users/ (PA-AGORA persistent bind mounts)
+#   - Phase 4 (opt-in via --with-tools): ~/.claude, ~/.codex, ~/.opencode, etc.
+#
+# Status: SCAFFOLD (Fase A). Implementation tracked in plan §5 Fases D and E.
+# ─────────────────────────────────────────────────────────────────────────────
+set -euo pipefail
+
+SCRIPT_PATH="$(readlink -f "${BASH_SOURCE[0]}")"
+SCRIPT_DIR="$(dirname "$SCRIPT_PATH")"
+LAIA_ROOT="$(dirname "$SCRIPT_DIR")"
+LIB_DIR="$LAIA_ROOT/infra/installer/lib"
+
+# shellcheck source=../infra/installer/lib/common.sh
+source "$LIB_DIR/common.sh"
+# shellcheck source=../infra/installer/lib/sudo.sh
+source "$LIB_DIR/sudo.sh"
+# shellcheck source=../infra/installer/lib/system.sh
+source "$LIB_DIR/system.sh"
+
+# ─── Options ────────────────────────────────────────────────────────────────
+OPT_SOURCE=""
+OPT_YES=false
+OPT_DRY_RUN=false
+OPT_WITH_TOOLS=false
+OPT_WITH_MLX_MODELS=false
+OPT_NO_LXD=false
+OPT_ONLY_AGENT=""
+
+print_help() {
+  cat <<'EOF'
+laia-clone — clone LAIA state from a remote server
+
+USAGE
+    laia-clone <user@host> [OPTIONS]
+    laia clone <user@host> [OPTIONS]
+
+ARGUMENTS
+    <user@host>           SSH target of the source server (passwordless required)
+
+OPTIONS
+    --with-tools          Also clone personal CLI configs (Claude Code, Codex,
+                          OpenCode, .gitconfig, .pm2, .docker)
+    --with-mlx-models     Also clone heavy local models (~/LAIA-ARCH/mlx-servers/)
+    --no-lxd              Skip LXD container export/import (data only)
+    --only-agent <slug>   Clone a single PA-AGORA container, not all
+    --yes, -y             Non-interactive mode
+    --dry-run             Print sizes and plan, don't transfer anything
+    --help, -h            Show this help
+
+PRE-CONDITIONS
+    - `laia-install` already ran on this host
+    - Passwordless SSH to <user@host>
+    - LXD initialized locally (`laia init` or `lxd init`) unless --no-lxd
+
+EXAMPLES
+    laia-clone laia-hermes@old.example.com --yes
+    laia-clone jorge@10.0.0.5 --with-tools --no-lxd
+    laia-clone jorge@10.0.0.5 --only-agent maria
+
+EXIT CODES
+    0   Success
+    1   Generic failure
+    2   Bad arguments
+    3   SSH unreachable / pre-condition violated
+EOF
+}
+
+parse_args() {
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -h|--help)       print_help; exit 0 ;;
+      --with-tools)    OPT_WITH_TOOLS=true; shift ;;
+      --with-mlx-models) OPT_WITH_MLX_MODELS=true; shift ;;
+      --no-lxd)        OPT_NO_LXD=true; shift ;;
+      --only-agent)
+        [[ $# -ge 2 && -n "${2:-}" ]] || die "--only-agent requires SLUG" 2
+        OPT_ONLY_AGENT="$2"; shift 2 ;;
+      -y|--yes)        OPT_YES=true; export LAIA_NONINTERACTIVE=true; shift ;;
+      --dry-run)       OPT_DRY_RUN=true; shift ;;
+      -*) die "Unknown option: $1 (use --help)" 2 ;;
+      *)
+        if [[ -z "$OPT_SOURCE" ]]; then
+          OPT_SOURCE="$1"; shift
+        else
+          die "Multiple source hosts given; only one allowed: $OPT_SOURCE vs $1" 2
+        fi
+        ;;
+    esac
+  done
+
+  [[ -n "$OPT_SOURCE" ]] || { print_help; exit 2; }
+  [[ "$OPT_SOURCE" == *@* ]] || die "Source must be user@host (got: $OPT_SOURCE)" 2
+}
+
+# ─── Main ───────────────────────────────────────────────────────────────────
+main() {
+  parse_args "$@"
+  detect_os
+
+  log_step "laia-clone (SCAFFOLD — not yet functional)"
+  log_info "Source:           $OPT_SOURCE"
+  log_info "With tools:       $OPT_WITH_TOOLS"
+  log_info "With MLX models:  $OPT_WITH_MLX_MODELS"
+  log_info "LXD containers:   $([[ "$OPT_NO_LXD" == true ]] && echo skip || echo include)"
+  [[ -n "$OPT_ONLY_AGENT" ]] && log_info "Only agent:       $OPT_ONLY_AGENT"
+  log_info "Dry-run:          $OPT_DRY_RUN"
+  log_info "Admin user:       $LAIA_USER ($LAIA_USER_HOME)"
+
+  if [[ "$OPT_DRY_RUN" == true ]]; then
+    log_warn "Dry-run mode — no changes made."
+    exit 0
+  fi
+
+  log_warn "This is a scaffold. Implementation tracked in plan §5 Fases D and E."
+  exit 0
+}
+
+main "$@"

@@ -1,0 +1,131 @@
+#!/usr/bin/env bash
+# ─────────────────────────────────────────────────────────────────────────────
+# laia-rollback — switch the /opt/laia symlink back to a previous version
+#
+# After a release goes wrong, recovery is one command:
+#   sudo laia-rollback                 # prev version
+#   sudo laia-rollback v0.2.0          # specific version
+#   sudo laia-rollback --list          # show installed versions
+#
+# This is intentionally separate from laia-release so it stays simple and
+# never invokes builds — just flips the symlink and restarts services.
+#
+# Status: SCAFFOLD (Fase A). Implementation tracked in plan §5 Fase C.
+# ─────────────────────────────────────────────────────────────────────────────
+set -euo pipefail
+
+SCRIPT_PATH="$(readlink -f "${BASH_SOURCE[0]}")"
+SCRIPT_DIR="$(dirname "$SCRIPT_PATH")"
+LAIA_ROOT="$(dirname "$SCRIPT_DIR")"
+LIB_DIR="$LAIA_ROOT/infra/installer/lib"
+
+# shellcheck source=../infra/installer/lib/common.sh
+source "$LIB_DIR/common.sh"
+# shellcheck source=../infra/installer/lib/sudo.sh
+source "$LIB_DIR/sudo.sh"
+# shellcheck source=../infra/installer/lib/version.sh
+source "$LIB_DIR/version.sh"
+
+# ─── Options ────────────────────────────────────────────────────────────────
+OPT_TARGET=""
+OPT_LIST=false
+OPT_YES=false
+OPT_DRY_RUN=false
+
+print_help() {
+  cat <<'EOF'
+laia-rollback — switch /opt/laia symlink to a previous version
+
+USAGE
+    sudo laia-rollback [OPTIONS] [VERSION]
+    sudo laia rollback [OPTIONS] [VERSION]
+
+ARGUMENTS
+    VERSION               Specific version to roll back to (e.g. v0.2.0).
+                          Default: the version that was active immediately
+                          before the current one.
+
+OPTIONS
+    --list                List installed versions in /opt and exit
+    --yes, -y             Non-interactive
+    --dry-run             Show what would happen, don't change anything
+    --help, -h            Show this help
+
+EXAMPLES
+    sudo laia-rollback                 # most recent prior version
+    sudo laia-rollback v0.2.0          # specific version
+    sudo laia-rollback --list          # what versions are available
+
+NOTE
+    Rollback only flips the symlink and restarts services. It does NOT rebuild,
+    re-run migrations, or touch user data in ~/LAIA-ARCH/. If a release made
+    breaking schema changes, plain rollback may leave the agent in an
+    inconsistent state — restore from snapshot in that case.
+EOF
+}
+
+parse_args() {
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -h|--help)  print_help; exit 0 ;;
+      --list)     OPT_LIST=true; shift ;;
+      -y|--yes)   OPT_YES=true; export LAIA_NONINTERACTIVE=true; shift ;;
+      --dry-run)  OPT_DRY_RUN=true; shift ;;
+      -*) die "Unknown option: $1 (use --help)" 2 ;;
+      *)
+        if [[ -z "$OPT_TARGET" ]]; then
+          OPT_TARGET="$1"; shift
+        else
+          die "Multiple versions given: $OPT_TARGET vs $1" 2
+        fi
+        ;;
+    esac
+  done
+}
+
+cmd_list() {
+  log_step "Installed LAIA versions"
+  local current
+  current="$(current_installed_version)"
+  local versions
+  versions="$(list_installed_versions)"
+
+  if [[ -z "$versions" ]]; then
+    log_warn "No versions installed at $LAIA_INSTALL_ROOT/laia-v*"
+    return
+  fi
+
+  while IFS= read -r v; do
+    if [[ "$v" == "$current" ]]; then
+      printf '  %s* %s%s  (current)\n' "$C_GRN" "$v" "$C_RST"
+    else
+      printf '    %s\n' "$v"
+    fi
+  done <<<"$versions"
+}
+
+# ─── Main ───────────────────────────────────────────────────────────────────
+main() {
+  parse_args "$@"
+
+  if [[ "$OPT_LIST" == true ]]; then
+    cmd_list
+    exit 0
+  fi
+
+  log_step "laia-rollback (SCAFFOLD — not yet functional)"
+  log_info "Target version: ${OPT_TARGET:-<previous>}"
+  log_info "Current:        $(current_installed_version || echo '<none>')"
+  log_info "Available:      $(list_installed_versions | tr '\n' ' ' || echo '<none>')"
+  log_info "Dry-run:        $OPT_DRY_RUN"
+
+  if [[ "$OPT_DRY_RUN" == true ]]; then
+    log_warn "Dry-run mode — no changes made."
+    exit 0
+  fi
+
+  log_warn "This is a scaffold. Implementation tracked in plan §5 Fase C."
+  exit 0
+}
+
+main "$@"

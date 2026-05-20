@@ -1,0 +1,129 @@
+#!/usr/bin/env bash
+# ─────────────────────────────────────────────────────────────────────────────
+# laia-install — install LAIA on a clean host
+#
+# Lays down /opt/laia-vX.Y.Z/, switches /opt/laia symlink, registers wrappers
+# in /usr/local/bin, installs systemd units (disabled), prepares ~/LAIA-ARCH/
+# and writes LAIA_HOME into the user's shell rc files.
+#
+# What this script does NOT do:
+#   - Does not initialize LXD or build AGORA images (use `laia init`)
+#   - Does not start systemd services (the operator decides when)
+#   - Does not install Docker, Tailscale, Samba, etc. (separate concerns)
+#   - Does not clone user data (use `laia clone <host>` after install)
+#
+# Status: SCAFFOLD (Fase A) — the install steps are not implemented yet.
+# Implementation tracked in plan §5 Fase B.
+# ─────────────────────────────────────────────────────────────────────────────
+set -euo pipefail
+
+SCRIPT_PATH="$(readlink -f "${BASH_SOURCE[0]}")"
+SCRIPT_DIR="$(dirname "$SCRIPT_PATH")"
+LAIA_ROOT="$(dirname "$SCRIPT_DIR")"
+LIB_DIR="$LAIA_ROOT/infra/installer/lib"
+
+# shellcheck source=../infra/installer/lib/common.sh
+source "$LIB_DIR/common.sh"
+# shellcheck source=../infra/installer/lib/sudo.sh
+source "$LIB_DIR/sudo.sh"
+# shellcheck source=../infra/installer/lib/system.sh
+source "$LIB_DIR/system.sh"
+# shellcheck source=../infra/installer/lib/version.sh
+source "$LIB_DIR/version.sh"
+
+# ─── Options ────────────────────────────────────────────────────────────────
+OPT_YES=false
+OPT_DRY_RUN=false
+OPT_FORCE=false
+OPT_NO_SYSTEMD=false
+OPT_ALSO_DEV_CLONE=false
+OPT_VERSION=""
+OPT_FROM_LOCAL=""
+
+print_help() {
+  cat <<'EOF'
+laia-install — install LAIA on a clean host
+
+USAGE
+    sudo laia-install [OPTIONS]
+    sudo laia install [OPTIONS]        # via the laia delegator
+
+OPTIONS
+    --version VER         Force install version (default: read from git tag or VERSION)
+    --from-local PATH     Build from a local source tree (default: clone from GitHub)
+    --also-dev-clone      Also clone the repo to ~/.laia/ for development
+    --no-systemd          Don't install systemd unit files
+    --yes, -y             Non-interactive mode, accept defaults
+    --force               Overwrite an existing install of the same version
+    --dry-run             Print what would happen, don't change anything
+    --help, -h            Show this help
+
+ENVIRONMENT
+    SUDO_USER             Must be set when invoking via sudo (preserved by `sudo -E`)
+    LAIA_HOME             Override admin data directory (default: $HOME/LAIA-ARCH)
+
+EXAMPLES
+    sudo -E laia-install --from-local "$HOME/.laia" --version v0.1.0
+    sudo -E laia-install --yes        # install latest tagged version
+
+EXIT CODES
+    0   Success
+    1   Generic failure
+    2   Bad arguments
+    3   Missing prerequisites
+EOF
+}
+
+parse_args() {
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -h|--help)        print_help; exit 0 ;;
+      -v|--version)
+        if [[ $# -ge 2 && -n "${2:-}" && "${2:0:1}" != "-" ]]; then
+          OPT_VERSION="$2"; shift 2
+        else
+          # `--version` with no arg → print our own version
+          local self_v
+          self_v="$(detect_version "$LAIA_ROOT" "" 2>/dev/null || echo 'dev')"
+          printf 'laia-install %s\n' "$self_v"
+          exit 0
+        fi
+        ;;
+      --from-local)
+        [[ $# -ge 2 && -n "${2:-}" ]] || die "--from-local requires PATH" 2
+        OPT_FROM_LOCAL="$(readlink -f "$2")"; shift 2 ;;
+      --also-dev-clone) OPT_ALSO_DEV_CLONE=true; shift ;;
+      --no-systemd)     OPT_NO_SYSTEMD=true; shift ;;
+      -y|--yes)         OPT_YES=true; export LAIA_NONINTERACTIVE=true; shift ;;
+      --force)          OPT_FORCE=true; shift ;;
+      --dry-run)        OPT_DRY_RUN=true; shift ;;
+      *) die "Unknown option: $1 (use --help)" 2 ;;
+    esac
+  done
+}
+
+# ─── Main ───────────────────────────────────────────────────────────────────
+main() {
+  parse_args "$@"
+  detect_os
+
+  log_step "laia-install (SCAFFOLD — not yet functional)"
+  log_info "Source tree:    ${OPT_FROM_LOCAL:-<clone from GitHub>}"
+  log_info "Target version: ${OPT_VERSION:-<auto-detect>}"
+  log_info "Dry-run:        $OPT_DRY_RUN"
+  log_info "Non-interactive: $OPT_YES"
+  log_info "Install systemd: $([[ "$OPT_NO_SYSTEMD" == true ]] && echo no || echo yes)"
+  log_info "OS:             $LAIA_OS / $LAIA_DISTRO"
+  log_info "Admin user:     $LAIA_USER ($LAIA_USER_HOME)"
+
+  if [[ "$OPT_DRY_RUN" == true ]]; then
+    log_warn "Dry-run mode — no changes made."
+    exit 0
+  fi
+
+  log_warn "This is a scaffold. Implementation tracked in plan §5 Fase B."
+  log_info "Until then, use ~/.laia/.laia-core/bin/clone-laia (the old wizard)."
+  exit 0
+}
+
+main "$@"

@@ -1,0 +1,21 @@
+[Unit]
+Description=LAIA Path Resolver Daemon
+After=default.target
+
+[Service]
+Type=simple
+User=${LAIA_USER}
+Group=${LAIA_USER}
+Environment=HOME=${LAIA_USER_HOME}
+Environment=LAIA_HOME=${LAIA_HOME}
+# Use the .laia-core venv: it has `watchdog` installed for inotify support.
+# Without watchdog the daemon still works but falls back to polling-only mode.
+ExecStart=${LAIA_INSTALL_PREFIX}/.laia-core/venv/bin/python ${LAIA_INSTALL_PREFIX}/infra/bin/laia-pathd --log-level INFO
+Restart=on-failure
+RestartSec=5
+# NOTE: do NOT enable PrivateTmp=true here. The daemon may need to watch
+# directories under /tmp (e.g. test setups, transient services). PrivateTmp
+# would give the daemon a private /tmp namespace, hiding host /tmp from it.
+
+[Install]
+WantedBy=default.target

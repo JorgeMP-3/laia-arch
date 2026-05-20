@@ -1,0 +1,143 @@
+#!/usr/bin/env bash
+# ─────────────────────────────────────────────────────────────────────────────
+# laia-release — promote a dev tree to /opt/laia-vX.Y.Z and restart services
+#
+# Typical workflow:
+#   cd ~/.laia
+#   git status                       # working tree clean
+#   git tag v0.4.0
+#   sudo -E laia-release             # detects tag, builds, switches, restarts
+#
+# Internally this is essentially `laia-install --from-local "$LAIA_ROOT"` with
+# version auto-detection and a post-build atomic symlink switch + service
+# restart. On healthcheck failure it automatically rolls back.
+#
+# Status: SCAFFOLD (Fase A). Implementation tracked in plan §5 Fase C.
+# ─────────────────────────────────────────────────────────────────────────────
+set -euo pipefail
+
+SCRIPT_PATH="$(readlink -f "${BASH_SOURCE[0]}")"
+SCRIPT_DIR="$(dirname "$SCRIPT_PATH")"
+LAIA_ROOT="$(dirname "$SCRIPT_DIR")"
+LIB_DIR="$LAIA_ROOT/infra/installer/lib"
+
+# shellcheck source=../infra/installer/lib/common.sh
+source "$LIB_DIR/common.sh"
+# shellcheck source=../infra/installer/lib/sudo.sh
+source "$LIB_DIR/sudo.sh"
+# shellcheck source=../infra/installer/lib/system.sh
+source "$LIB_DIR/system.sh"
+# shellcheck source=../infra/installer/lib/version.sh
+source "$LIB_DIR/version.sh"
+
+# ─── Options ────────────────────────────────────────────────────────────────
+OPT_SRC=""
+OPT_VERSION=""
+OPT_SKIP_TESTS=false
+OPT_ALLOW_DIRTY=false
+OPT_PRUNE=false
+OPT_KEEP=3
+OPT_YES=false
+OPT_DRY_RUN=false
+
+print_help() {
+  cat <<'EOF'
+laia-release — promote a dev tree to /opt/laia-vX.Y.Z and restart services
+
+USAGE
+    sudo -E laia-release [OPTIONS] [SRC_TREE]
+    sudo -E laia release [OPTIONS] [SRC_TREE]
+
+ARGUMENTS
+    SRC_TREE              Dev tree to release (default: ~/.laia)
+
+OPTIONS
+    --version VER         Force release version (default: git describe HEAD tag)
+    --skip-tests          Skip pre-release pytest/pnpm test
+    --allow-dirty         Release even if the working tree has uncommitted changes
+    --prune               Delete versions older than --keep N
+    --keep N              When --prune, keep last N versions (default: 3)
+    --yes, -y             Non-interactive
+    --dry-run             Show what would happen, don't change anything
+    --help, -h            Show this help
+
+WORKFLOW
+    1. Validate SRC_TREE is a git repo, working tree clean (unless --allow-dirty)
+    2. Run tests (unless --skip-tests)
+    3. Build to /opt/laia-vX.Y.Z/ (cp + venv + pnpm build + permissions)
+    4. Switch /opt/laia symlink atomically
+    5. Restart systemd services
+    6. Healthcheck: rollback on failure
+    7. Optional: prune older versions
+
+EXAMPLES
+    sudo -E laia-release                     # detect version from git tag
+    sudo -E laia-release --version v0.2.0    # explicit version
+    sudo -E laia-release --skip-tests --prune
+EOF
+}
+
+parse_args() {
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -h|--help)        print_help; exit 0 ;;
+      --version)
+        [[ $# -ge 2 && -n "${2:-}" ]] || die "--version requires VER" 2
+        OPT_VERSION="$2"; shift 2 ;;
+      --skip-tests)     OPT_SKIP_TESTS=true; shift ;;
+      --allow-dirty)    OPT_ALLOW_DIRTY=true; shift ;;
+      --prune)          OPT_PRUNE=true; shift ;;
+      --keep)
+        [[ $# -ge 2 && "${2:-}" =~ ^[0-9]+$ ]] || die "--keep requires a positive integer" 2
+        OPT_KEEP="$2"; shift 2 ;;
+      -y|--yes)         OPT_YES=true; export LAIA_NONINTERACTIVE=true; shift ;;
+      --dry-run)        OPT_DRY_RUN=true; shift ;;
+      -*) die "Unknown option: $1 (use --help)" 2 ;;
+      *)
+        if [[ -z "$OPT_SRC" ]]; then
+          OPT_SRC="$(readlink -f "$1")"; shift
+        else
+          die "Multiple source trees given: $OPT_SRC vs $1" 2
+        fi
+        ;;
+    esac
+  done
+
+  # Default source: the user's hidden dev tree.
+  [[ -n "$OPT_SRC" ]] || OPT_SRC="$LAIA_USER_HOME/.laia"
+}
+
+# ─── Main ───────────────────────────────────────────────────────────────────
+main() {
+  parse_args "$@"
+  detect_os
+
+  log_step "laia-release (SCAFFOLD — not yet functional)"
+  log_info "Source tree:    $OPT_SRC"
+  log_info "Version:        ${OPT_VERSION:-<auto-detect from git>}"
+  log_info "Skip tests:     $OPT_SKIP_TESTS"
+  log_info "Allow dirty:    $OPT_ALLOW_DIRTY"
+  log_info "Prune:          $OPT_PRUNE (keep last $OPT_KEEP)"
+  log_info "Dry-run:        $OPT_DRY_RUN"
+  log_info "Admin user:     $LAIA_USER ($LAIA_USER_HOME)"
+
+  # Sanity: try to detect the version (this part works already).
+  if [[ -z "$OPT_VERSION" ]]; then
+    if ! OPT_VERSION="$(detect_version "$OPT_SRC" 2>/dev/null)"; then
+      log_warn "Could not auto-detect version of $OPT_SRC"
+      log_info "Either tag HEAD (git tag vX.Y.Z) or pass --version vX.Y.Z"
+    else
+      log_success "Auto-detected version: $OPT_VERSION"
+    fi
+  fi
+
+  if [[ "$OPT_DRY_RUN" == true ]]; then
+    log_warn "Dry-run mode — no changes made."
+    exit 0
+  fi
+
+  log_warn "This is a scaffold. Implementation tracked in plan §5 Fase C."
+  exit 0
+}
+
+main "$@"

@@ -1,0 +1,36 @@
+[Unit]
+Description=LAIA AGORA Backend
+After=network-online.target
+Wants=network-online.target
+# laia-pathd watches this alias; on change, writes a pending-restart marker
+# (see laia-path apply-restarts).
+X-LaiaPathDeps=agora
+
+[Service]
+Type=simple
+User=${LAIA_USER}
+Group=${LAIA_USER}
+# Path registry — defines LAIA_ROOT, LAIA_AGORA, LAIA_AGORA_VENV, LAIACTL, etc.
+EnvironmentFile=-${LAIA_HOME}/.env.paths
+WorkingDirectory=${LAIA_INSTALL_PREFIX}/services/agora-backend
+Environment=AGORA_ENV=prod
+Environment=AGORA_DATA_DIR=/srv/laia/agora
+Environment=LAIA_STATE_ROOT=/srv/laia/state
+Environment=LAIACTL_PATH=${LAIA_INSTALL_PREFIX}/infra/laiactl
+Environment=LAIA_HOME=${LAIA_HOME}
+# NOTE: ExecStart must use a literal absolute path. The Atlas daemon detects
+# renames of the path below and writes a pending-restart marker; an operator
+# applies them with `laia-path apply-restarts`.
+ExecStart=${LAIA_INSTALL_PREFIX}/services/agora-backend/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8088
+Restart=on-failure
+RestartSec=3
+
+# Basic hardening. Keep this compatible with local file access under /srv/laia.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=read-only
+ReadWritePaths=/srv/laia/agora /srv/laia/state ${LAIA_INSTALL_PREFIX}/services/agora-backend/data ${LAIA_HOME}/state
+
+[Install]
+WantedBy=multi-user.target
