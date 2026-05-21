@@ -8,9 +8,12 @@
 
 - Ubuntu 22.04+ con kernel 5.15+.
 - Arquitectura `amd64` o `arm64`.
-- `sudo`, `git`, `rsync`, `python3` 3.11+, `curl`.
+- `sudo`, `git`, `rsync`, `python3` 3.11+, `sqlite3`, `curl`.
 - 15 GB libres para imágenes y containers LXD.
 - SSH saliente si luego se usará `laia-clone`.
+
+`install.sh` instala automáticamente cualquiera de los prerequisitos
+faltantes vía `apt-get` cuando se ejecuta como root.
 
 ## Instalación Factory Desde GitHub
 
@@ -78,9 +81,29 @@ El resultado esperado es `laia-agora` en `RUNNING` y `/api/health` con HTTP 200.
 
 ## Troubleshooting
 
-- LXD ausente: usa `--init-lxd --yes` o instala manualmente con
+- **LXD ausente**: usa `--init-lxd --yes` o instala manualmente con
   `sudo snap install lxd && sudo lxd init --auto`.
-- `auth.json` unset: es válido para factory. Configura proveedor LLM antes del
+- **`auth.json` unset**: es válido para factory. Configura proveedor LLM antes del
   primer chat real.
-- Rebuild de imágenes lento: es normal la primera vez; se construye con la
-  arquitectura nativa del host.
+- **Rebuild de imágenes lento (10-20 min)**: es normal la primera vez; se
+  construye con la arquitectura nativa del host. El instalador emite un
+  heartbeat cada 60s y tee'a a `/tmp/build-{base,agora}.log`. Si quieres
+  silenciar, `LAIA_BUILD_QUIET=1`. Si parece colgado:
+  ```bash
+  tail -f /tmp/build-base.log /tmp/build-agora.log
+  ```
+- **Snap install lxd cuelga 5+ min**: la primera vez `snap install` puede
+  tardar. Revisa `sudo journalctl -u snapd -n 50` en otro shell.
+- **`sqlite3` not installed**: requerido por el clone-time admin reset.
+  `apt-get install -y sqlite3`.
+
+## Limitaciones conocidas
+
+- **Container `laia-agora` ve `auth.json` con mode 644**: trade-off por LXD
+  unprivileged uid mapping. En el host sigue mode 600.
+- **Cross-arch**: los containers se reconstruyen locales en el destino con la
+  arquitectura nativa; el `.venv` del host se recrea (a menos que se pase
+  `--skip-pip`).
+- **Schema drift `agora.db`**: si reinstalas sobre datos antiguos, asegúrate
+  de que la versión del backend en `/opt/laia/services/agora-backend` aplica
+  las migraciones en el startup del container (es el comportamiento default).

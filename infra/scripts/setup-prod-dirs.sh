@@ -7,7 +7,11 @@ if [[ $EUID -ne 0 ]]; then
   exit 1
 fi
 
-LAIA_USER="${LAIA_USER:-laia-hermes}"
+LAIA_USER="${LAIA_USER:-${SUDO_USER:-${LAIA_ADMIN_USER:-}}}"
+if [[ -z "$LAIA_USER" || "$LAIA_USER" == "root" ]]; then
+  LAIA_USER=$(getent passwd | awk -F: '$3 >= 1000 && $3 < 65534 {print $1; exit}')
+fi
+[[ -n "$LAIA_USER" ]] || { echo "Cannot determine LAIA_USER (set LAIA_USER or SUDO_USER)" >&2; exit 1; }
 
 dirs=(
   /srv/laia

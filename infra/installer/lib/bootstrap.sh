@@ -123,7 +123,11 @@ boot_build_images() {
   script="$(boot_script_path rebuild-2-images.sh)"
   [[ -x "$script" || -f "$script" ]] || die "Missing bootstrap script: $script"
   log_info "Running: LAIA_ROOT=$LAIA_ROOT bash $script"
-  LAIA_ROOT="$LAIA_ROOT" bash "$script" || die "rebuild-2-images.sh failed"
+  log_info "  Build streams stdout + tees to /tmp/build-{base,agora}.log"
+  log_info "  Expected: 10-20 min on aarch64; heartbeat every 60s"
+  log_info "  → if you suspect a hang, tail /tmp/build-*.log in another shell"
+  LAIA_ROOT="$LAIA_ROOT" bash "$script" \
+    || die "rebuild-2-images.sh failed → tail /tmp/build-base.log /tmp/build-agora.log"
 }
 
 boot_provision_agora() {

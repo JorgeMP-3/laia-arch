@@ -22,14 +22,18 @@ from typing import Iterable
 
 
 def _repo_systemd_dir() -> Path:
-    """Locate the LAIA repo's systemd unit sources via the path registry.
+    """Locate the LAIA repo's systemd unit *templates* via the path registry.
 
-    Falls back to ~/LAIA/infra/systemd if the env var is unset.
+    Since installer-v2 (2026-05-21), raw units live as templates at
+    ``infra/installer/systemd/*.service.tmpl``. The legacy plain ``.service``
+    sources under ``infra/systemd/`` were archived.
+
+    Falls back to ``~/LAIA/infra/installer/systemd`` if the env var is unset.
     """
     env = os.environ.get("LAIA_SYSTEMD_UNITS")
     if env:
         return Path(env)
-    return Path.home() / "LAIA" / "infra" / "systemd"
+    return Path.home() / "LAIA" / "infra" / "installer" / "systemd"
 
 
 # Standard locations where systemd unit files might live, in priority order.

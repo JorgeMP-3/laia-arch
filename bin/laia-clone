@@ -27,6 +27,8 @@ source "$LIB_DIR/install.sh"
 source "$LIB_DIR/release.sh"
 # shellcheck source=../infra/installer/lib/bootstrap.sh
 source "$LIB_DIR/bootstrap.sh"
+# shellcheck source=../infra/installer/lib/factory.sh
+source "$LIB_DIR/factory.sh"
 # shellcheck source=../infra/installer/lib/clone.sh
 source "$LIB_DIR/clone.sh"
 
@@ -42,6 +44,7 @@ OPT_ONLY_AGENT=""
 OPT_KEEP_SESSION=false
 OPT_BWLIMIT=""
 OPT_PREFLIGHT_ONLY=false
+OPT_RESUME=false
 
 print_help() {
   cat <<'EOF'
@@ -69,6 +72,9 @@ OPTIONS
     --no-lxd              Compatibility no-op; containers are rebuilt locally.
     --only-agent <slug>   Rebuild only this agent container after data import.
     --preflight-only      Stop after source/destination checks.
+    --resume              Skip phases whose target already looks complete
+                          (agora.db with >= 20 tables → skip rsync agora).
+                          Use this when reattempting after a failed run.
     --yes, -y             Non-interactive mode
     --dry-run             Print plan, don't transfer anything
     --help, -h            Show this help
@@ -111,6 +117,7 @@ parse_args() {
       --with-mlx-models) OPT_WITH_MLX_MODELS=true; shift ;;
       --no-lxd)        OPT_NO_LXD=true; shift ;;
       --preflight-only) OPT_PREFLIGHT_ONLY=true; shift ;;
+      --resume)         OPT_RESUME=true; shift ;;
       --only-agent)
         [[ $# -ge 2 && -n "${2:-}" ]] || die "--only-agent requires SLUG" 2
         OPT_ONLY_AGENT="$2"; shift 2 ;;
@@ -140,9 +147,44 @@ parse_args() {
 }
 
 clone_install_first_if_needed() {
-  local prefix
+  local prefix root
   prefix="$(inst_install_prefix)"
-  [[ -e "$prefix" ]] && return 0
+  root="$(inst_install_root)"
+
+  # Detect a partial / broken install in any of these shapes:
+  #   1) $prefix is a regular dir (not a symlink) — corruption.
+  #   2) $prefix is a symlink but its target lacks .laia-core.
+  #   3) $prefix doesn't exist but versioned `laia-v*` dirs are lying
+  #      around from a previous failed attempt → `laia-install` would
+  #      then abort with "Version already installed".
+  # In any of those cases, wipe the install root so install-first restarts clean.
+  local needs_clean=false
+  if [[ -e "$prefix" ]]; then
+    if [[ ! -L "$prefix" ]]; then
+      needs_clean=true
+    else
+      local target
+      target="$(readlink -f "$prefix" 2>/dev/null || true)"
+      [[ -z "$target" || ! -d "$target/.laia-core" ]] && needs_clean=true
+    fi
+  else
+    # Symlink missing — check for orphan versioned dirs (laia-v*).
+    shopt -s nullglob
+    local orphans=( "$root"/laia-v* )
+    shopt -u nullglob
+    [[ "${#orphans[@]}" -gt 0 ]] && needs_clean=true
+  fi
+
+  if [[ "$needs_clean" == true ]]; then
+    log_warn "Partial /opt/laia install detected (orphan versioned dirs or broken symlink) — cleaning up"
+    if inst_is_override_mode; then
+      rm -rf "$prefix" "$root"/laia-v*
+    else
+      sudo rm -rf "$prefix" "$root"/laia-v*
+    fi
+  elif [[ -e "$prefix" ]]; then
+    return 0
+  fi
 
   if inst_is_override_mode && [[ -z "${LAIA_INSTALL_ROOT_OVERRIDE:-}" ]]; then
     log_info "Override mode without install-root override: skipping install-first"
@@ -206,10 +248,29 @@ main() {
   if clone_is_local_source && [[ -d "$OPT_SOURCE_DIR/LAIA-ARCH" ]]; then
     clone_phase1_laia_home
   fi
-  clone_phase_h_rsync_agora_data
+
+  # --resume MVP: skip rsync agora if destination DB already has 20+ tables.
+  local skip_agora=false
+  if [[ "$OPT_RESUME" == true ]]; then
+    local dest_db tbl_count
+    dest_db="$(clone_dest_agora_dir)/agora.db"
+    if [[ -f "$dest_db" ]] && command -v sqlite3 >/dev/null 2>&1; then
+      tbl_count="$(sqlite3 "$dest_db" "select count(*) from sqlite_master where type='table';" 2>/dev/null || echo 0)"
+      if [[ "${tbl_count:-0}" -ge 20 ]]; then
+        log_info "--resume: destination agora.db has $tbl_count tables — skipping rsync agora"
+        skip_agora=true
+      fi
+    fi
+  fi
+  [[ "$skip_agora" == true ]] || clone_phase_h_rsync_agora_data
   clone_phase_h_rsync_users_data
   clone_phase_h_rsync_arch_data
   clone_phase_h_rsync_arch_creds
+
+  # Reset imported admin password BEFORE rebuilding containers — rebuild-4
+  # needs working admin credentials to call /api/login.
+  fact_reset_imported_admin_password
+
   clone_phase_h_enumerate_slugs
   clone_phase_h_rebuild_agora_container
   if [[ -n "$OPT_ONLY_AGENT" ]]; then
@@ -222,6 +283,16 @@ main() {
   fi
   clone_phase_h_fix_uid_mapping
   clone_phase4_tools
+
+  # Start laia-pathd on the host if its unit is installed — keeps Atlas
+  # snapshots regenerated as ~/.laia/config.yaml evolves on the destination.
+  if ! inst_is_override_mode && command -v systemctl >/dev/null 2>&1; then
+    if systemctl list-unit-files laia-pathd.service 2>/dev/null | grep -q laia-pathd.service; then
+      log_info "Starting laia-pathd.service on host"
+      sudo systemctl enable --now laia-pathd.service 2>/dev/null \
+        || log_warn "  enable --now laia-pathd failed (check journalctl -u laia-pathd)"
+    fi
+  fi
 
   rel_restart_active
 

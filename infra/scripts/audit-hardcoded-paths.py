@@ -34,12 +34,14 @@ from pathlib import Path
 # Configuration
 # --------------------------------------------------------------------------
 
+import os
+_home = Path(os.path.expanduser("~"))
 ROOTS_TO_SCAN = [
-    Path("/home/laia-hermes/LAIA"),
-    Path("/home/laia-hermes/bin"),
-    Path("/home/laia-hermes/.bashrc"),
-    Path("/home/laia-hermes/.zshrc"),
-    Path("/home/laia-hermes/.profile"),
+    _home / "LAIA",
+    _home / "bin",
+    _home / ".bashrc",
+    _home / ".zshrc",
+    _home / ".profile",
     Path("/etc/systemd/system"),  # readable for *.service files we own
 ]
 

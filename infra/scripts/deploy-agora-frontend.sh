@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-LAIA_ROOT="${LAIA_ROOT:-/home/laia-hermes/LAIA}"
+if [[ -z "${LAIA_ROOT:-}" ]]; then
+  _script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  LAIA_ROOT="$(git -C "$_script_dir" rev-parse --show-toplevel 2>/dev/null || cd "$_script_dir/../.." && pwd)"
+  unset _script_dir
+fi
 DIST_SRC="$LAIA_ROOT/laia-ui/packages/agora-app/dist"
 DIST_DST="${AGORA_FRONTEND_DIST:-/srv/laia/agora/frontend/dist}"
 

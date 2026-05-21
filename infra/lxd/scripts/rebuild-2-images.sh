@@ -87,29 +87,54 @@ for img in laia-agent laia-agora; do
   fi
 done
 
+# run_build <name> <script> <log>
+#   Streams output to stdout AND tee'd to log file, with a periodic heartbeat
+#   if the underlying build emits no output. Set LAIA_BUILD_QUIET=1 to fall
+#   back to silent-with-log (legacy behavior).
+run_build() {
+  local name="$1" script="$2" logf="$3"
+  local quiet="${LAIA_BUILD_QUIET:-0}"
+  log "ejecutando $(basename "$script") — log: $logf (~5-10 min)"
+  : >"$logf"
+  if [[ "$quiet" == "1" ]]; then
+    if ! LAIA_ROOT="$REPO" bash "$script" >"$logf" 2>&1; then
+      echo "--- últimas 30 líneas de $logf ---"; tail -30 "$logf"
+      die "$(basename "$script") falló — ver $logf"
+    fi
+    ok "imagen '$name' construida"
+    return 0
+  fi
+  # Heartbeat watchdog: prints a tick every 60s while parent shell is alive.
+  # Self-terminates when parent dies (kill -0 $$ fails), so no explicit reap
+  # needed if the script aborts ungracefully.
+  ( ppid=$$
+    while kill -0 "$ppid" 2>/dev/null; do
+      sleep 60
+      printf "  ${CYN}…${RST} [%s] sigue construyendo %s (log: %s)\n" \
+        "$(date +%H:%M:%S)" "$name" "$logf"
+    done
+  ) &
+  local hb=$!
+  local rc=0
+  LAIA_ROOT="$REPO" bash "$script" 2>&1 | tee "$logf" || rc=$?
+  kill "$hb" 2>/dev/null || true
+  wait "$hb" 2>/dev/null || true
+  if [[ "$rc" -ne 0 ]]; then
+    echo "--- últimas 30 líneas de $logf ---"; tail -30 "$logf"
+    die "$(basename "$script") falló — ver $logf"
+  fi
+  ok "imagen '$name' construida"
+}
+
 # ────────────────────────────────────────────────────────────────────────────
 section "3/4 Construir imagen laia-agent (executor + E1 tools)"
 # ────────────────────────────────────────────────────────────────────────────
-log "ejecutando build-base-image.sh — log: /tmp/build-base.log (~5-8 min)"
-if ! LAIA_ROOT="$REPO" bash "$REPO/infra/lxd/image-build/build-base-image.sh" >/tmp/build-base.log 2>&1; then
-  echo ""
-  echo "--- últimas 30 líneas de /tmp/build-base.log ---"
-  tail -30 /tmp/build-base.log
-  die "build-base-image.sh falló — ver /tmp/build-base.log"
-fi
-ok "imagen 'laia-agent' construida"
+run_build laia-agent "$REPO/infra/lxd/image-build/build-base-image.sh" /tmp/build-base.log
 
 # ────────────────────────────────────────────────────────────────────────────
 section "4/4 Construir imagen laia-agora (cerebro hardened)"
 # ────────────────────────────────────────────────────────────────────────────
-log "ejecutando build-agora-image.sh — log: /tmp/build-agora.log (~6-10 min)"
-if ! LAIA_ROOT="$REPO" bash "$REPO/infra/lxd/image-build/build-agora-image.sh" >/tmp/build-agora.log 2>&1; then
-  echo ""
-  echo "--- últimas 30 líneas de /tmp/build-agora.log ---"
-  tail -30 /tmp/build-agora.log
-  die "build-agora-image.sh falló — ver /tmp/build-agora.log"
-fi
-ok "imagen 'laia-agora' construida"
+run_build laia-agora "$REPO/infra/lxd/image-build/build-agora-image.sh" /tmp/build-agora.log
 
 printf "\n${BLD}Resumen — imágenes disponibles${RST}\n"
 lxc image list laia-agent laia-agora --format csv -c lnsdat 2>/dev/null | awk -F, '{printf "    %-15s size=%-10s desc=%s\n", $1, $4, $5}'

@@ -1,11 +1,24 @@
 #!/usr/bin/env bash
-# install-systemd-units.sh — sync LAIA systemd units from repo to /etc.
+# install-systemd-units.sh — DEPRECATED legacy unit installer.
 #
-# Copies the source units in infra/systemd/ to /etc/systemd/system/, reloads
-# systemd, and restarts the affected services. Requires sudo.
+# As of installer-v2 (2026-05-21) systemd units are rendered from
+# infra/installer/systemd/*.service.tmpl by `laia-install` and friends.
+# The raw infra/systemd/*.service files were archived to
+# archived/legacy-systemd-units-pre-installer-v2.20260521/.
 #
-# Run after editing any unit in infra/systemd/.
+# Use the proper flow instead:
+#     sudo -E laia-install --from-local "$PWD" [--minimal]
+# or for templates only:
+#     sudo bash -c 'source infra/installer/lib/{common,sudo,version,install,systemd}.sh; \
+#                   inst_compute_paths; systemd_install_all'
+#
+# This wrapper now refuses to run to prevent surprise regressions.
 set -euo pipefail
+
+echo "install-systemd-units.sh is DEPRECATED — use laia-install (see comment block at top of this file)." >&2
+exit 2
+
+# (Legacy logic preserved below for reference, but unreachable.)
 
 # Detect the real user home — under sudo, $HOME points to /root.
 if [ -n "${SUDO_USER:-}" ]; then

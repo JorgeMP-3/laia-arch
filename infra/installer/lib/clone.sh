@@ -44,6 +44,7 @@ readonly LAIA_AGORA_HEALTH_URL="http://127.0.0.1:8088/api/health"
 REMOTE_HOME=""
 REMOTE_LAIA_HOME=""
 REMOTE_LAIA_VER=""
+REMOTE_ARCH=""
 CLONE_SSH_USE_PASSWORD=false
 
 # ─── Path helpers (override-aware) ─────────────────────────────────────────
@@ -112,12 +113,30 @@ clone_stub_log() {
 
 clone_invoking_user_home() {
   [[ "$(id -u)" == "0" ]] || return 1
-  [[ -n "${SUDO_USER:-}" && "$SUDO_USER" != "root" ]] || return 1
+
+  local user="${SUDO_USER:-}"
+  if [[ -z "$user" || "$user" == "root" ]]; then
+    # Fallback: pick the first regular user (UID >= 1000) so SSH keys can be
+    # reused even when SUDO_USER was not preserved (e.g., bare `sudo bash` no -E).
+    user="$(getent passwd | awk -F: '$3 >= 1000 && $3 < 65534 {print $1; exit}')"
+    [[ -n "$user" ]] || return 1
+  fi
 
   local entry
-  entry="$(getent passwd "$SUDO_USER" 2>/dev/null || true)"
+  entry="$(getent passwd "$user" 2>/dev/null || true)"
   [[ -n "$entry" ]] || return 1
   printf '%s\n' "$entry" | cut -d: -f6
+}
+
+clone_invoking_user() {
+  # Symmetric to clone_invoking_user_home — returns the username (not the home).
+  [[ "$(id -u)" == "0" ]] || return 1
+  local user="${SUDO_USER:-}"
+  if [[ -z "$user" || "$user" == "root" ]]; then
+    user="$(getent passwd | awk -F: '$3 >= 1000 && $3 < 65534 {print $1; exit}')"
+  fi
+  [[ -n "$user" ]] || return 1
+  printf '%s\n' "$user"
 }
 
 clone_use_invoking_user_ssh() {
@@ -133,7 +152,9 @@ clone_ssh_transport() {
   fi
 
   if clone_use_invoking_user_ssh; then
-    printf 'sudo -H -u %s ssh -o BatchMode=yes' "$SUDO_USER"
+    local user
+    user="$(clone_invoking_user)" || user="$SUDO_USER"
+    printf 'sudo -H -u %s ssh -o BatchMode=yes' "$user"
   else
     printf 'ssh -o BatchMode=yes'
   fi
@@ -146,7 +167,9 @@ clone_ssh() {
   fi
 
   if clone_use_invoking_user_ssh; then
-    sudo -H -u "$SUDO_USER" ssh -o BatchMode=yes "$@"
+    local user
+    user="$(clone_invoking_user)" || user="$SUDO_USER"
+    sudo -H -u "$user" ssh -o BatchMode=yes "$@"
   else
     ssh -o BatchMode=yes "$@"
   fi
@@ -237,24 +260,37 @@ clone_detect_paths() {
     REMOTE_HOME="$OPT_SOURCE_DIR/home"
     REMOTE_LAIA_HOME="$OPT_SOURCE_DIR/LAIA-ARCH"
     REMOTE_LAIA_VER="(local)"
+    REMOTE_ARCH="$(dpkg --print-architecture 2>/dev/null || echo unknown)"
   else
     local out
     out="$(clone_ssh "$OPT_SOURCE" '
       printf "HOME=%s\n"      "$HOME"
       bash -lc "printf LAIA_HOME=%s\\\\n \"\${LAIA_HOME:-}\""
+      printf "ARCH=%s\n"      "$(dpkg --print-architecture 2>/dev/null || echo unknown)"
       readlink /opt/laia 2>/dev/null || true
     ' 2>/dev/null)" || die "Remote path detection failed (SSH error)"
 
     REMOTE_HOME="$(printf '%s\n' "$out" | grep '^HOME='      | head -1 | cut -d= -f2-)"
     REMOTE_LAIA_HOME="$(printf '%s\n' "$out" | grep '^LAIA_HOME=' | head -1 | cut -d= -f2-)"
+    REMOTE_ARCH="$(printf '%s\n' "$out" | grep '^ARCH='      | head -1 | cut -d= -f2-)"
     [[ -n "$REMOTE_LAIA_HOME" ]] || REMOTE_LAIA_HOME="$REMOTE_HOME/$LAIA_DATA_DIR_NAME"
     REMOTE_LAIA_VER="$(printf '%s\n' "$out" | grep '^laia-' | head -1 || true)"
     [[ -n "$REMOTE_LAIA_VER" ]] || REMOTE_LAIA_VER="<not installed>"
+    [[ -n "$REMOTE_ARCH" ]] || REMOTE_ARCH="unknown"
   fi
 
   log_info "Source HOME:       $REMOTE_HOME"
   log_info "Source LAIA_HOME:  $REMOTE_LAIA_HOME"
   log_info "Source LAIA ver:   $REMOTE_LAIA_VER"
+  log_info "Source arch:       $REMOTE_ARCH"
+  log_info "Destination arch:  ${LAIA_HOST_ARCH:-unknown}"
+
+  if [[ -n "${LAIA_HOST_ARCH:-}" && "$REMOTE_ARCH" != "unknown" && "$REMOTE_ARCH" != "$LAIA_HOST_ARCH" ]]; then
+    log_warn "Cross-arch clone detected: $REMOTE_ARCH → $LAIA_HOST_ARCH"
+    log_warn "  Containers are rebuilt locally on the destination; data is portable."
+    log_warn "  If anything fails post-clone, the most likely cause is venv/wheel mismatch;"
+    log_warn "  rerun with /opt/laia removed if needed."
+  fi
 }
 
 # ─── Excludes per phase ────────────────────────────────────────────────────
@@ -556,12 +592,39 @@ clone_phase_h_rewrite_config_paths() {
   local cfg
   cfg="$(clone_dest_arch_dir)/config.yaml"
   [[ -f "$cfg" ]] || return 0
+
+  # Atlas-aware rewrite: only the three canonical anchors need to be set;
+  # every other ${paths.X} alias derives from these. laia-pathd picks up the
+  # change on next reload.
+  #   - laia_root   → /opt/laia        (installed product tree)
+  #   - laia_home   → ${LAIA_HOME:-/srv/laia/arch}  (operational data dir)
+  #   - agora_data  → /srv/laia/agora/agora.db      (real bind-mounted DB)
+  # Additionally, sweep any leftover /home/<user>/.laia/ literals to
+  # /srv/laia/arch/ (covers other path keys the user may have customized).
+  local sed_prog
+  sed_prog='
+    s#^([[:space:]]*laia_root:[[:space:]]*).*#\1/opt/laia#
+    s#^([[:space:]]*laia_home:[[:space:]]*).*#\1${LAIA_HOME:-/srv/laia/arch}#
+    s#^([[:space:]]*agora_data:[[:space:]]*).*#\1/srv/laia/agora/agora.db#
+    s#~/\.laia/#/srv/laia/arch/#g
+    s#/home/[^/[:space:]"]+/\.laia/#/srv/laia/arch/#g
+    s#/home/[^/[:space:]"]+/\.laia([[:space:]"]|$)#/srv/laia/arch\1#g
+    s#/home/[^/[:space:]"]+/LAIA/#/opt/laia/#g
+    s#/home/[^/[:space:]"]+/LAIA([[:space:]"]|$)#/opt/laia\1#g
+  '
   if inst_is_override_mode; then
-    sed -i 's#~/.laia/#/srv/laia/arch/#g; s#'"$LAIA_USER_HOME"'/.laia/#/srv/laia/arch/#g' "$cfg"
+    sed -i -E "$sed_prog" "$cfg"
   else
-    sudo sed -i 's#~/.laia/#/srv/laia/arch/#g; s#'"$LAIA_USER_HOME"'/.laia/#/srv/laia/arch/#g' "$cfg"
+    sudo sed -i -E "$sed_prog" "$cfg"
   fi
-  log_success "Rewrote config.yaml paths to /srv/laia/arch"
+
+  # If laia-pathd is running on the destination, ask it to reload so the
+  # snapshot at ~/.laia/.env.paths picks up the new anchors.
+  if command -v laia-path >/dev/null 2>&1; then
+    laia-path reload >/dev/null 2>&1 || true
+  fi
+
+  log_success "Rewrote config.yaml paths (laia_root → /opt/laia, laia_home → /srv/laia/arch, agora_data → /srv/laia/agora/agora.db)"
 }
 
 clone_phase_h_rsync_arch_creds() {
@@ -645,7 +708,16 @@ clone_phase_h_fix_uid_mapping() {
     log_info "[stub] skipping uid mapping fix"
     return 0
   fi
-  sudo chown -R 1000000:1000000 "$(clone_dest_agora_dir)" "$(clone_dest_users_dir)" 2>/dev/null || true
+  # Probe the actual idmap base for the laia-agora container. If isolated or
+  # not yet set, fall back to the LXD default unprivileged base (1000000).
+  local base
+  base="$(lxc config get laia-agora volatile.idmap.base 2>/dev/null || true)"
+  if [[ -z "$base" || ! "$base" =~ ^[0-9]+$ ]]; then
+    base=1000000
+  fi
+  log_info "  chown base: $base (LXD idmap)"
+  sudo chown -R "$base:$base" "$(clone_dest_agora_dir)" "$(clone_dest_users_dir)" 2>/dev/null \
+    || log_warn "  chown reported partial failures (may be safe; verify with 'lxc exec laia-agora -- ls /opt/agora/data')"
 }
 
 clone_phase_h_verify() {

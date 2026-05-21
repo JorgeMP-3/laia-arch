@@ -3,7 +3,11 @@ set -euo pipefail
 # laia-deploy: desplegar componentes de LAIA
 
 BOLD="\e[1m"; GREEN="\e[32m"; RED="\e[31m"; CYAN="\e[36m"; DIM="\e[2m"; RESET="\e[0m"
-LAIA_ROOT="${LAIA_ROOT:-/home/laia-hermes/LAIA}"
+if [[ -z "${LAIA_ROOT:-}" ]]; then
+  _script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  LAIA_ROOT="$(git -C "$_script_dir" rev-parse --show-toplevel 2>/dev/null || cd "$_script_dir/../.." && pwd)"
+  unset _script_dir
+fi
 
 usage() {
     echo "uso: laia-deploy <que>"

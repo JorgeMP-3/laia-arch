@@ -51,7 +51,9 @@ ensure_root() {
 ensure_prereqs() {
   local missing=()
   local cmd
-  for cmd in git rsync python3; do
+  # sqlite3 is needed by clone-time admin reset (fact_reset_imported_admin_password)
+  # and by clone_phase_h_enumerate_slugs. python3 is needed for pbkdf2 hashing.
+  for cmd in git rsync python3 sqlite3; do
     command -v "$cmd" >/dev/null 2>&1 || missing+=("$cmd")
   done
   if [[ "${#missing[@]}" -eq 0 ]]; then

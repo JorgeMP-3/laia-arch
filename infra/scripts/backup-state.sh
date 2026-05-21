@@ -3,7 +3,11 @@
 # Run as laia-hermes or root (LXD snapshots need root).
 set -euo pipefail
 
-LAIA_ROOT="${LAIA_ROOT:-/home/laia-hermes/LAIA}"
+if [[ -z "${LAIA_ROOT:-}" ]]; then
+  _script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  LAIA_ROOT="$(git -C "$_script_dir" rev-parse --show-toplevel 2>/dev/null || cd "$_script_dir/../.." && pwd)"
+  unset _script_dir
+fi
 BACKUP_ROOT="${BACKUP_ROOT:-/srv/laia/backups}"
 TS=$(date +%Y%m%d-%H%M%S)
 STATE_SRC="${LAIA_STATE_ROOT:-${LAIA_ROOT}/.laia/state}"

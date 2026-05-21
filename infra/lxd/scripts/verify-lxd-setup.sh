@@ -1,7 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-LAIA_ROOT="${LAIA_ROOT:-/home/laia-hermes/LAIA}"
+if [[ -z "${LAIA_ROOT:-}" ]]; then
+  _script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  LAIA_ROOT="$(git -C "$_script_dir" rev-parse --show-toplevel 2>/dev/null || cd "$_script_dir/../../.." && pwd)"
+  unset _script_dir
+fi
+[[ -d "$LAIA_ROOT/infra/lxd/scripts" ]] || { echo "Cannot resolve LAIA_ROOT (pass it explicitly)" >&2; exit 1; }
 
 "$LAIA_ROOT/infra/lxd/scripts/check-host.sh"
 

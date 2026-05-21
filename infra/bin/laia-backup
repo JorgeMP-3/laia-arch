@@ -3,6 +3,11 @@ set -euo pipefail
 # laia-backup: sistema de backups del servidor LAIA
 
 BOLD="\e[1m"; GREEN="\e[32m"; RED="\e[31m"; CYAN="\e[36m"; DIM="\e[2m"; RESET="\e[0m"
+if [[ -z "${LAIA_ROOT:-}" ]]; then
+  _script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  LAIA_ROOT="$(git -C "$_script_dir" rev-parse --show-toplevel 2>/dev/null || cd "$_script_dir/../.." && pwd)"
+  unset _script_dir
+fi
 BACKUP_DIR="${LAIA_BACKUP_DIR:-/srv/laia/backups}"
 TIMESTAMP=$(date +%Y%m%d-%H%M%S)
 
@@ -34,7 +39,7 @@ backup_db() {
 
 backup_workspaces() {
     echo -e "${BOLD}Workspaces...${RESET}"
-    local ws_root="${LAIA_ROOT:-/home/laia-hermes/LAIA}/workspaces"
+    local ws_root="$LAIA_ROOT/workspaces"
     for ws_dir in "$ws_root"/*/; do
         local ws_name=$(basename "$ws_dir")
         local db="$ws_dir/workspace.db"
@@ -61,7 +66,7 @@ backup_agents() {
 
 backup_agora() {
     echo -e "${BOLD}AGORA DB...${RESET}"
-    local agora_db="${LAIA_ROOT:-/home/laia-hermes/LAIA}/services/agora-backend/data/agora.db"
+    local agora_db="${AGORA_DB:-/srv/laia/agora/agora.db}"
     if [[ -f "$agora_db" ]]; then
         cp "$agora_db" "$BACKUP_DIR/agora_${TIMESTAMP}.db" && \
             echo -e "  ${GREEN}OK${RESET} agora_${TIMESTAMP}.db ($(du -h "$BACKUP_DIR/agora_${TIMESTAMP}.db" | cut -f1))" || \

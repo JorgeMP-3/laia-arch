@@ -7,7 +7,11 @@ set -euo pipefail
 #
 #   --check   Solo verifica, no despliega
 
-LAIA_ROOT="${LAIA_ROOT:-/home/laia-hermes/LAIA}"
+if [[ -z "${LAIA_ROOT:-}" ]]; then
+  _script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  LAIA_ROOT="$(git -C "$_script_dir" rev-parse --show-toplevel 2>/dev/null || cd "$_script_dir/../.." && pwd)"
+  unset _script_dir
+fi
 INFRA_DIR="$LAIA_ROOT/infra"
 BACKEND_DIR="$LAIA_ROOT/services/agora-backend"
 FRONTEND_DIR="$LAIA_ROOT/laia-ui"

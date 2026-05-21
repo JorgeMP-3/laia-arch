@@ -15,7 +15,18 @@
 
 set -euo pipefail
 
-REPO_ROOT="${REPO_ROOT:-/home/laia-hermes/LAIA}"
+# Resolve REPO_ROOT: explicit env > git toplevel > script location (../..)
+if [[ -z "${REPO_ROOT:-}" ]]; then
+  _script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  if REPO_ROOT="$(git -C "$_script_dir" rev-parse --show-toplevel 2>/dev/null)"; then
+    :
+  else
+    REPO_ROOT="$(cd "$_script_dir/../.." && pwd)"
+  fi
+  unset _script_dir
+fi
+[[ -d "$REPO_ROOT/skills" ]] || { echo "REPO_ROOT $REPO_ROOT has no skills/ dir — pass REPO_ROOT explicitly" >&2; exit 1; }
+
 SKILLS_DIR="${SKILLS_DIR:-$REPO_ROOT/skills}"
 CLI="$REPO_ROOT/infra/dev/laia-marketplace.py"
 API="${AGORA_API:-http://127.0.0.1:8088}"
