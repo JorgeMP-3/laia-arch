@@ -1,0 +1,81 @@
+#!/usr/bin/env bash
+# ─────────────────────────────────────────────────────────────────────────────
+# laia-wizard — interactive installer / cloner / diagnoser / reset
+#
+# This is the human-friendly front door over the existing laia-install /
+# laia-clone CLI flows. It is intentionally THIN — all the logic lives in the
+# Python package ``laia_cli.install_wizard``. We just:
+#
+#   1. Make sure prereqs are installed (python3, sqlite3, rsync, openssh-client).
+#   2. Resolve LAIA_ROOT so the python module can find bin/ and infra/.
+#   3. Ensure PYTHONPATH includes .laia-core so the package imports.
+#   4. exec the python entry point.
+#
+# Power users can keep using bin/laia-install and bin/laia-clone directly with
+# flags. The wizard is a layer ON TOP, never a replacement.
+# ─────────────────────────────────────────────────────────────────────────────
+set -euo pipefail
+
+SCRIPT_PATH="$(readlink -f "${BASH_SOURCE[0]}")"
+SCRIPT_DIR="$(dirname "$SCRIPT_PATH")"
+# Try git first (handles symlinked / installed locations); fall back to script dir.
+if LAIA_ROOT_DETECTED="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>/dev/null)"; then
+  LAIA_ROOT="${LAIA_ROOT:-$LAIA_ROOT_DETECTED}"
+else
+  LAIA_ROOT="${LAIA_ROOT:-$(dirname "$SCRIPT_DIR")}"
+fi
+export LAIA_ROOT
+
+CORE_DIR="$LAIA_ROOT/.laia-core"
+if [[ ! -d "$CORE_DIR/laia_cli/install_wizard" ]]; then
+  echo "✗ install_wizard package not found at $CORE_DIR/laia_cli/install_wizard" >&2
+  echo "  set LAIA_ROOT or run from inside the repo." >&2
+  exit 1
+fi
+
+# Prereqs — python3 is the only HARD requirement of the wizard itself (it
+# runs the engine). sqlite3 / rsync / ssh are needed by individual flows;
+# each flow surfaces a friendly error when missing instead of blocking
+# `--version` / `--help` on a freshly-cloned host.
+if ! command -v python3 >/dev/null 2>&1; then
+  if [[ "${EUID:-$(id -u)}" -eq 0 ]] && command -v apt-get >/dev/null 2>&1; then
+    echo "→ Instalando python3"
+    DEBIAN_FRONTEND=noninteractive apt-get update -qq
+    DEBIAN_FRONTEND=noninteractive apt-get install -y python3
+  else
+    echo "✗ python3 no encontrado. Instálalo manualmente o relanza como root." >&2
+    exit 1
+  fi
+fi
+
+# Soft-warn (only when running interactively) about flows that won't work.
+if [[ -t 1 ]]; then
+  soft_missing=()
+  for cmd in sqlite3 rsync ssh; do
+    command -v "$cmd" >/dev/null 2>&1 || soft_missing+=("$cmd")
+  done
+  if [[ "${#soft_missing[@]}" -gt 0 ]]; then
+    printf '⚠  Comandos opcionales faltantes (necesarios para clone): %s\n' \
+      "${soft_missing[*]}" >&2
+    printf '   Instala con: sudo apt-get install -y %s\n' "${soft_missing[*]/ssh/openssh-client}" >&2
+  fi
+fi
+
+# Python venv: prefer the .laia-core install venv when it exists; otherwise
+# use system python with PYTHONPATH pointing at .laia-core.
+PY="python3"
+if [[ -x "$CORE_DIR/venv/bin/python" ]]; then
+  PY="$CORE_DIR/venv/bin/python"
+elif [[ -x "/opt/laia/.laia-core/venv/bin/python" ]]; then
+  PY="/opt/laia/.laia-core/venv/bin/python"
+fi
+
+# PYTHONPATH so the package imports without installing.
+export PYTHONPATH="$CORE_DIR${PYTHONPATH:+:$PYTHONPATH}"
+
+# Log the launch (useful for diagnose).
+LOG_DIR="${XDG_CACHE_HOME:-$HOME/.cache}"
+mkdir -p "$LOG_DIR" 2>/dev/null || true
+printf '[%s] laia-wizard %s\n' "$(date -Iseconds)" "$*" >>"$LOG_DIR/laia-wizard.log" 2>/dev/null || true
+
+exec "$PY" -m laia_cli.install_wizard "$@"
