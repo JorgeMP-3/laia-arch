@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+set -u
+
+log="${LAIA_TEST_STUB_LOG:-}"
+[[ -n "$log" ]] && printf 'snap %s\n' "$*" >>"$log"
+
+case "${1:-}" in
+  install)
+    exit 0
+    ;;
+  *)
+    exit 0
+    ;;
+esac

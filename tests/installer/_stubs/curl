@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+set -u
+
+log="${LAIA_TEST_STUB_LOG:-}"
+[[ -n "$log" ]] && printf 'curl %s\n' "$*" >>"$log"
+
+args=" $* "
+if [[ "$args" == *"/api/health"* ]]; then
+  printf '{"ok":true,"status":"healthy"}\n'
+elif [[ "$args" == *"/api/login"* ]]; then
+  printf '{"access_token":"stub-token","refresh_token":"stub-refresh","token_type":"bearer"}\n'
+elif [[ "$args" == *"/api/users"* ]]; then
+  printf '{"ok":true,"user":{"id":"user_admin","username":"admin","display_name":"admin","role":"agora_admin"}}\n'
+elif [[ "$args" == *"/api/skills/catalog"* ]]; then
+  printf '[]\n'
+else
+  printf '{"ok":true}\n'
+fi

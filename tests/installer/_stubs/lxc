@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+set -u
+
+log="${LAIA_TEST_STUB_LOG:-}"
+[[ -n "$log" ]] && printf 'lxc %s\n' "$*" >>"$log"
+
+case "${1:-}" in
+  --version)
+    printf '5.21-stub\n'
+    ;;
+  remote)
+    if [[ "${2:-}" == "list" ]]; then
+      printf '+---------+---------------+\n'
+      printf '| default | images:       |\n'
+      printf '+---------+---------------+\n'
+    fi
+    ;;
+  image)
+    case "${2:-}" in
+      list)
+        printf 'laia-agora,container,amd64,20260521\n'
+        ;;
+      info)
+        exit 0
+        ;;
+      *)
+        exit 0
+        ;;
+    esac
+    ;;
+  info)
+    if [[ "${2:-}" == "laia-agora" && "${LAIA_TEST_STUB_LAIA_AGORA_EXISTS:-0}" == "1" ]]; then
+      printf 'Name: laia-agora\nStatus: RUNNING\n'
+      exit 0
+    fi
+    exit 1
+    ;;
+  list)
+    if [[ "${*: -2}" == "--format json" || "$*" == *"--format json"* ]]; then
+      printf '[{"name":"laia-agora","status":"Running","state":{"network":{"eth0":{"addresses":[{"family":"inet","address":"10.0.3.10"}]}}}}]\n'
+    else
+      printf '+------------+---------+\n| NAME       | STATE   |\n| laia-agora | RUNNING |\n'
+    fi
+    ;;
+  config|profile|launch|exec|delete|stop|restart)
+    exit 0
+    ;;
+  *)
+    exit 0
+    ;;
+esac

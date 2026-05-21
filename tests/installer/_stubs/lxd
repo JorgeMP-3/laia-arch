@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+set -u
+
+log="${LAIA_TEST_STUB_LOG:-}"
+[[ -n "$log" ]] && printf 'lxd %s\n' "$*" >>"$log"
+
+case "${1:-}" in
+  init)
+    exit 0
+    ;;
+  --version)
+    printf '5.21-stub\n'
+    ;;
+  *)
+    exit 0
+    ;;
+esac
