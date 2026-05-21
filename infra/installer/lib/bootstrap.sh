@@ -77,6 +77,7 @@ boot_init_defaults() {
   local script
   script="$(boot_script_path init-defaults.sh)"
   [[ -x "$script" || -f "$script" ]] || die "Missing bootstrap script: $script"
+  log_info "Running: bash $script"
   bash "$script" || die "init-defaults.sh failed"
 }
 
@@ -95,6 +96,7 @@ boot_build_images() {
   local script
   script="$(boot_script_path rebuild-2-images.sh)"
   [[ -x "$script" || -f "$script" ]] || die "Missing bootstrap script: $script"
+  log_info "Running: LAIA_ROOT=$LAIA_ROOT bash $script"
   LAIA_ROOT="$LAIA_ROOT" bash "$script" || die "rebuild-2-images.sh failed"
 }
 
@@ -119,6 +121,7 @@ boot_provision_agora() {
   local script
   script="$(boot_script_path rebuild-3-provision-agora.sh)"
   [[ -x "$script" || -f "$script" ]] || die "Missing bootstrap script: $script"
+  log_info "Running: LAIA_ROOT=$LAIA_ROOT bash $script"
   LAIA_ROOT="$LAIA_ROOT" bash "$script" || die "rebuild-3-provision-agora.sh failed"
 }
 

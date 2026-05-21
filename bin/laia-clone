@@ -160,6 +160,8 @@ clone_install_first_if_needed() {
     --skip-frontend \
     --yes || die "install-first laia-install --minimal failed"
 
+  boot_detect_arch
+  boot_check_lxd_installed
   boot_init_defaults
   boot_build_images
 }
