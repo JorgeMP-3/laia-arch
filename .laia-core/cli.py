@@ -1673,8 +1673,8 @@ def _build_compact_banner() -> str:
     dim_color = _skin.get_color("banner_dim", "#B8860B") if _skin else "#B8860B"
 
     if skin_name == "default":
-        line1 = "⚕ NOUS LAIA - AI Agent Framework"
-        tiny_line = "⚕ NOUS LAIA"
+        line1 = "⚕ LAIA ECOSYSTEM - AI Agent Framework"
+        tiny_line = "⚕ LAIA ECOSYSTEM"
     else:
         agent_name = _skin.get_branding("agent_name", "LAIA Agent") if _skin else "LAIA Agent"
         line1 = f"{agent_name} - AI Agent Framework"
@@ -1684,7 +1684,7 @@ def _build_compact_banner() -> str:
 
     w = min(shutil.get_terminal_size().columns - 2, 88)
     if w < 30:
-        return f"\n[{title_color}]{tiny_line}[/] [dim {dim_color}]- Nous Research[/]\n"
+        return f"\n[{title_color}]{tiny_line}[/] [dim {dim_color}]- LAIA Ecosystem[/]\n"
 
     inner = w - 2  # inside the box border
     bar = "═" * w
@@ -3578,7 +3578,7 @@ class LAIACLI:
         if is_nous_laia_non_agentic(model_name):
             self._console_print()
             self._console_print(
-                "[bold yellow]⚠  Nous Research LAIA 3 & 4 models are NOT agentic and are not "
+                "[bold yellow]⚠  Legacy LAIA 3 & 4 models are NOT agentic and are not "
                 "designed for use with LAIA Agent.[/]"
             )
             self._console_print(

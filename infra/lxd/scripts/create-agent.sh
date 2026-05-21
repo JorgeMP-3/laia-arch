@@ -34,7 +34,7 @@ fi
 
 SLUG="$1"
 IMAGE="${2:-laia-agent}"
-CONTAINER="laia-${SLUG}"
+CONTAINER="${AGENT_CONTAINER_PREFIX:-agent-}${SLUG}"
 PROFILE="${PROFILE:-laia-employee}"
 API_PORT="${API_PORT:-9091}"
 HOST_USER_ROOT="${HOST_USER_ROOT:-/srv/laia/users}"

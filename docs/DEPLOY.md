@@ -1,5 +1,7 @@
 # Deployment Guide
 
+> 📅 Actualizado: 2026-05-19
+
 ## Quick Deploy (AGORA)
 
 ```bash
@@ -10,7 +12,7 @@ make deploy-agora
 laia deploy agora-all
 ```
 
-## Quick Deploy (ARCH)
+## Quick Deploy (LAIA-ARCH)
 
 ```bash
 make deploy-arch
@@ -25,7 +27,7 @@ make deploy-arch
 sudo mkdir -p /srv/laia/agora/frontend/dist /srv/laia/state /srv/laia/backups
 sudo chown -R laia-hermes:laia-hermes /srv/laia/
 
-# AGORA backend
+# LAIA-AGORA Backend
 cd ~/LAIA/services/agora-backend
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
@@ -90,7 +92,7 @@ cd ~/LAIA/services/agora-backend && .venv/bin/python -m pytest tests/ -q
 
 **Default login:** `jorge` / `dev-admin`
 
-## ARCH Web Access
+## LAIA-ARCH Web Access
 
 - **Tailscale:** `http://100.73.36.92:8077`
 - **Local:** `http://localhost:8077`

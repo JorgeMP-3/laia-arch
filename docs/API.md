@@ -1,4 +1,6 @@
-# AGORA Backend API Reference
+# LAIA-AGORA Backend API Reference
+
+> 📅 Actualizado: 2026-05-19
 
 ## Base URL
 

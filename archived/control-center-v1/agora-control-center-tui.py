@@ -11,7 +11,6 @@ import argparse
 import curses
 import json
 import os
-import signal
 import textwrap
 import time
 from dataclasses import dataclass
@@ -125,6 +124,41 @@ class AgoraAdminClient:
     def restart_backend(self) -> dict[str, Any]:
         return self.request("POST", "/api/admin/system/restart-backend")
 
+    # ── Marketplace (marketplace-v0.1) ─────────────────────────────────────
+
+    def marketplace_pending(self) -> dict[str, Any]:
+        return self.request("GET", "/api/admin/marketplace/pending")
+
+    def agent_area_for_user(self, user_id: str) -> dict[str, Any]:
+        return self.request("GET", f"/api/admin/users/{user_id}/agent-area")
+
+    def marketplace_catalog(self) -> dict[str, Any]:
+        # Catalog is a plain list — wrap so callers always get a dict.
+        out = self.request("GET", "/api/plugins/catalog")
+        return out if isinstance(out, dict) else {"data": out}
+
+    def marketplace_skill_catalog(self) -> dict[str, Any]:
+        out = self.request("GET", "/api/skills/catalog")
+        return out if isinstance(out, dict) else {"data": out}
+
+    def approve_plugin(self, plugin_id: str) -> dict[str, Any]:
+        return self.request("POST", f"/api/admin/plugins/{plugin_id}/approve")
+
+    def reject_plugin(self, plugin_id: str, reason: str) -> dict[str, Any]:
+        return self.request("POST", f"/api/admin/plugins/{plugin_id}/reject",
+                            {"reason": reason})
+
+    def revoke_plugin(self, plugin_id: str, reason: str) -> dict[str, Any]:
+        return self.request("POST", f"/api/admin/plugins/{plugin_id}/revoke",
+                            {"reason": reason})
+
+    def approve_skill(self, skill_id: str) -> dict[str, Any]:
+        return self.request("POST", f"/api/admin/skills/{skill_id}/approve")
+
+    def reject_skill(self, skill_id: str, reason: str) -> dict[str, Any]:
+        return self.request("POST", f"/api/admin/skills/{skill_id}/reject",
+                            {"reason": reason})
+
     def restart_container(self, name: str) -> dict[str, Any]:
         return self.request("POST", f"/api/admin/containers/{name}/restart")
 
@@ -137,6 +171,54 @@ class AgoraAdminClient:
     def errors(self, limit: int = 100) -> dict[str, Any]:
         return self.request("GET", f"/api/admin/errors?limit={limit}")
 
+    def usage(self, *, user_id: str | None = None, window: str = "day") -> dict[str, Any]:
+        suffix = f"?window={window}"
+        if user_id:
+            suffix += f"&user_id={_url_quote(user_id)}"
+        return self.request("GET", f"/api/admin/usage{suffix}")
+
+    def user_budget(self, user_id: str) -> dict[str, Any]:
+        return self.request("GET", f"/api/admin/users/{user_id}/budget")
+
+    def laia_inbox_count(self) -> dict[str, Any]:
+        return self.request("GET", "/api/laia/inbox-count")
+
+    def laia_chat_collect(self, message: str, *, timeout: float = 60.0) -> str:
+        """Drive the LAIA SSE endpoint and collect the final response.
+
+        Streams via urllib so we don't depend on httpx in the TUI. Returns
+        the concatenated reply text or any error payload encountered.
+        """
+        body = json.dumps({"message": message}).encode("utf-8")
+        headers = {"Accept": "text/event-stream", "Content-Type": "application/json"}
+        if self.token:
+            headers["Authorization"] = f"Bearer {self.token}"
+        req = Request(f"{self.api_url}/api/laia/chat", data=body,
+                      headers=headers, method="POST")
+        out_parts: list[str] = []
+        try:
+            with urlopen(req, timeout=timeout) as resp:
+                for raw in resp:
+                    line = raw.decode("utf-8", errors="replace").strip()
+                    if not line.startswith("data:"):
+                        continue
+                    try:
+                        evt = json.loads(line[5:].strip())
+                    except Exception:
+                        continue
+                    if evt.get("type") == "token":
+                        out_parts.append(str(evt.get("value", "")))
+                    elif evt.get("type") == "done":
+                        if not out_parts and evt.get("response"):
+                            out_parts.append(str(evt.get("response")))
+                    elif evt.get("type") == "error":
+                        return f"[error] {evt.get('message')}"
+        except HTTPError as exc:
+            return f"[http {exc.code}] {exc.read().decode('utf-8', 'replace')[:200]}"
+        except URLError as exc:
+            return f"[url] {exc.reason}"
+        return "".join(out_parts) or "(LAIA respondió vacío)"
+
     def fixes(self) -> dict[str, Any]:
         return self.request("GET", "/api/admin/fixes")
 
@@ -148,6 +230,9 @@ class AgoraAdminClient:
 
     def tests_run(self) -> dict[str, Any]:
         return self.request("POST", "/api/admin/tests/run")
+
+    def image_freshness(self) -> dict[str, Any]:
+        return self.request("GET", "/api/admin/image/freshness")
 
 
 def _load_session_token() -> str | None:
@@ -243,6 +328,10 @@ SCREENS = [
     Screen("audit", "Audit"),
     Screen("errors", "Errores"),
     Screen("system", "Sistema"),
+    Screen("marketplace", "Marketplace"),
+    Screen("areas", "Areas"),
+    Screen("cost", "Coste"),
+    Screen("laia", "LAIA"),
 ]
 
 
@@ -255,6 +344,10 @@ SCREEN_HINTS: dict[str, str] = {
     "audit": "u filtrar user_id  r refrescar",
     "errors": "r refrescar  Enter detalle",
     "system": "a refresh OAuth  B restart backend  T run tests  F aplicar fix  r refrescar",
+    "marketplace": "a aprobar  x rechazar  v revocar (catálogo)  r refrescar",
+    "areas": "r refrescar (read-only — usa laia-marketplace.py agent-area para editar)",
+    "cost": "w day|week|month  r refrescar  (read-only — edita caps con laia-marketplace.py budget)",
+    "laia": "c chat con LAIA  r refrescar",
 }
 
 
@@ -276,6 +369,24 @@ class ControlCenterTUI:
         self.audit_user_filter = ""
         self.audit_calls: list[dict[str, Any]] = []
         self.errors_list: list[dict[str, Any]] = []
+        # marketplace state — combined list of (kind, row) so the user
+        # navigates a single cursor across plugins+skills pending review,
+        # then the approved catalog underneath.
+        self.marketplace_pending: list[dict[str, Any]] = []
+        self.marketplace_catalog: list[dict[str, Any]] = []
+        self.marketplace_skills_catalog: list[dict[str, Any]] = []
+        # ``areas`` tab — per-user identity area (soul/instructions/prefs)
+        # fetched lazily as the admin browses the user list.
+        self.areas_by_user: dict[str, dict[str, Any]] = {}
+        # ``cost`` tab — per-user usage totals for the selected window and
+        # the budget cap row. Read-only; editing caps lives in the CLI.
+        self.cost_window: str = "day"
+        self.cost_rows: list[dict[str, Any]] = []
+        self.cost_budgets: dict[str, dict[str, Any]] = {}
+        # ``laia`` tab — inbox roll-up + transient last chat history.
+        self.laia_unread: list[dict[str, Any]] = []
+        self.laia_last_prompt: str = ""
+        self.laia_last_reply: str = ""
         self._shutdown_requested = False
 
     @property
@@ -295,29 +406,22 @@ class ControlCenterTUI:
             curses.init_pair(4, curses.COLOR_RED, -1)
             curses.init_pair(5, curses.COLOR_BLACK, curses.COLOR_CYAN)
 
-        def _on_sigint(signum: int, frame: Any) -> None:
-            self._shutdown_requested = True
-
-        prev_sigint = signal.signal(signal.SIGINT, _on_sigint)
-        try:
-            if not self.client.token:
+        if not self.client.token:
+            try:
                 self.login_wizard()
-            self.refresh(force=True)
-            while True:
-                if self._shutdown_requested:
-                    break
-                self.draw()
-                try:
-                    key = self.stdscr.getch()
-                except KeyboardInterrupt:
-                    self._shutdown_requested = True
-                    continue
-                if key == -1:
-                    continue
-                if self.handle_key(key):
-                    break
-        finally:
-            signal.signal(signal.SIGINT, prev_sigint)
+            except KeyboardInterrupt:
+                return
+        self.refresh(force=True)
+        while True:
+            self.draw()
+            try:
+                key = self.stdscr.getch()
+            except KeyboardInterrupt:
+                return
+            if key == -1:
+                continue
+            if self.handle_key(key):
+                break
 
     def login_wizard(self) -> None:
         while not self.client.token:
@@ -334,7 +438,7 @@ class ControlCenterTUI:
 
     def handle_key(self, key: int) -> bool:
         if key in (ord("q"), ord("Q")):
-            return self.confirm("Salir del Centro de Control?")
+            return True
         if key in (ord("?"), ord("h")):
             self.show_help()
             return False
@@ -413,6 +517,28 @@ class ControlCenterTUI:
                 self.run_tests()
             elif key == ord("F"):
                 self.apply_fix_wizard()
+        elif name == "marketplace":
+            if key == ord("a"):
+                self.marketplace_approve_selected()
+            elif key == ord("x"):
+                self.marketplace_reject_selected()
+            elif key == ord("v"):
+                self.marketplace_revoke_from_catalog()
+        elif name == "cost":
+            if key == ord("w"):
+                nxt = {"day": "week", "week": "month", "month": "day"}
+                self.cost_window = nxt.get(self.cost_window, "day")
+                self.refresh(force=True)
+        elif name == "laia":
+            if key == ord("c"):
+                prompt = self.prompt("Mensaje a LAIA", "")
+                if prompt:
+                    self.laia_last_prompt = prompt
+                    try:
+                        self.laia_last_reply = self.client.laia_chat_collect(prompt)
+                    except Exception as exc:
+                        self.laia_last_reply = f"[exc] {exc}"
+                    self.refresh(force=True)
         return False
 
     def move_selection(self, delta: int) -> None:
@@ -422,6 +548,8 @@ class ControlCenterTUI:
             "jobs": len(self.jobs),
             "audit": len(self.audit_calls),
             "errors": len(self.errors_list),
+            "marketplace": len(self.marketplace_pending) + len(self.marketplace_catalog),
+            "areas": len(self.users),
         }.get(self.screen.key, 0)
         if max_items:
             self.selected = max(0, min(max_items - 1, self.selected + delta))
@@ -454,6 +582,18 @@ class ControlCenterTUI:
             elif self.screen.key == "system":
                 self.status = self.client.status().get("status", {})
                 self.jobs = self.client.jobs().get("jobs", [])
+            elif self.screen.key == "marketplace":
+                self.refresh_marketplace()
+                self.status = self.client.status().get("status", {})
+            elif self.screen.key == "areas":
+                self.refresh_areas()
+                self.status = self.client.status().get("status", {})
+            elif self.screen.key == "cost":
+                self.refresh_cost()
+                self.status = self.client.status().get("status", {})
+            elif self.screen.key == "laia":
+                self.refresh_laia()
+                self.status = self.client.status().get("status", {})
             self.last_refresh = time.time()
         except ApiError as exc:
             self.error = f"API: {exc}"
@@ -468,6 +608,107 @@ class ControlCenterTUI:
 
     def refresh_errors(self) -> None:
         self.errors_list = self.client.errors().get("errors", [])
+
+    def refresh_areas(self) -> None:
+        """Fetch the user list and the agent_area for each active user.
+
+        Read-only by design: edits go through the CLI / API so the TUI stays
+        a single-pane operational view.
+        """
+        try:
+            self.users = self.client.users().get("users", [])
+        except ApiError as exc:
+            self.error = f"areas users: {exc}"
+            self.users = []
+            return
+        self.areas_by_user = {}
+        for u in self.users:
+            uid = u.get("id")
+            if not uid:
+                continue
+            try:
+                view = self.client.agent_area_for_user(uid)
+            except ApiError as exc:
+                self.areas_by_user[uid] = {"_error": str(exc)}
+                continue
+            self.areas_by_user[uid] = view
+
+    def refresh_cost(self) -> None:
+        """Pull aggregate usage for every active user + their budget caps.
+
+        Read-only by design: caps editing goes through the CLI so the TUI
+        stays a single-pane operational view.
+        """
+        try:
+            data = self.client.usage(window=self.cost_window)
+        except ApiError as exc:
+            self.error = f"cost usage: {exc}"
+            self.cost_rows = []
+            return
+        users_rows = data.get("users") or []
+        try:
+            users = self.client.users().get("users", [])
+        except ApiError:
+            users = []
+        users_by_id = {u.get("id"): u for u in users if u.get("id")}
+        # Merge users that have no usage so the operator sees the full roster
+        # (status ✓ even when zero spend).
+        seen_ids = {r.get("user_id") for r in users_rows}
+        merged: list[dict[str, Any]] = list(users_rows)
+        for uid, u in users_by_id.items():
+            if uid not in seen_ids:
+                merged.append({
+                    "user_id": uid, "username": u.get("username"),
+                    "totals": {"tokens_input": 0, "tokens_output": 0,
+                               "cost_usd": 0.0, "calls": 0},
+                })
+        self.cost_rows = merged
+
+        # Fetch caps best-effort. 404s mean uncapped — already the default.
+        self.cost_budgets = {}
+        for row in self.cost_rows:
+            uid = row.get("user_id")
+            if not uid:
+                continue
+            try:
+                br = self.client.user_budget(uid)
+            except ApiError:
+                continue
+            self.cost_budgets[uid] = br.get("budget") or {}
+
+    def refresh_laia(self) -> None:
+        try:
+            data = self.client.laia_inbox_count()
+        except ApiError as exc:
+            self.error = f"laia inbox: {exc}"
+            self.laia_unread = []
+            return
+        self.laia_unread = data.get("unread_by_user") or []
+
+    def refresh_marketplace(self) -> None:
+        try:
+            pending = self.client.marketplace_pending()
+            self.marketplace_pending = []
+            for p in pending.get("plugins", []) or []:
+                self.marketplace_pending.append({"kind": "plugin", **p})
+            for s in pending.get("skills", []) or []:
+                self.marketplace_pending.append({"kind": "skill", **s})
+        except ApiError as exc:
+            self.error = f"marketplace pending: {exc}"
+            self.marketplace_pending = []
+        try:
+            cat = self.client.marketplace_catalog()
+            # Catalog endpoint returns a raw list, wrapped under "data" by request().
+            self.marketplace_catalog = cat.get("data") or []
+        except ApiError as exc:
+            self.error = f"marketplace catalog: {exc}"
+            self.marketplace_catalog = []
+        try:
+            cat = self.client.marketplace_skill_catalog()
+            self.marketplace_skills_catalog = cat.get("data") or []
+        except ApiError as exc:
+            self.error = f"marketplace skill catalog: {exc}"
+            self.marketplace_skills_catalog = []
 
     def provision_wizard(self) -> None:
         slug = self.prompt("Slug nuevo usuario (a-z, 0-9, guion)", "")
@@ -670,6 +911,77 @@ class ControlCenterTUI:
         except ApiError as exc:
             self.error = f"restart-backend fallo: {exc}"
 
+    # ── Marketplace actions ─────────────────────────────────────────────
+
+    def _selected_marketplace_item(self) -> dict[str, Any] | None:
+        items = list(self.marketplace_pending) + list(self.marketplace_catalog)
+        if not items:
+            self.error = "Marketplace vacio"
+            return None
+        idx = max(0, min(self.selected, len(items) - 1))
+        item = items[idx]
+        if idx >= len(self.marketplace_pending):
+            item = {**item, "_section": "catalog"}
+        else:
+            item = {**item, "_section": "pending"}
+        return item
+
+    def marketplace_approve_selected(self) -> None:
+        item = self._selected_marketplace_item()
+        if not item or item.get("_section") != "pending":
+            self.error = "Selecciona un item en 'Pending review'"
+            return
+        kind = item.get("kind")
+        rid = item.get("id")
+        label = f"{kind} {item.get('slug')} v{item.get('version', '')}".strip()
+        if not self.confirm(f"Aprobar {label}?"):
+            return
+        try:
+            if kind == "plugin":
+                self.client.approve_plugin(rid)
+            else:
+                self.client.approve_skill(rid)
+            self.message = f"Aprobado {label}"
+            self.refresh(force=True)
+        except ApiError as exc:
+            self.error = f"approve fallo: {exc}"
+
+    def marketplace_reject_selected(self) -> None:
+        item = self._selected_marketplace_item()
+        if not item or item.get("_section") != "pending":
+            self.error = "Selecciona un item en 'Pending review'"
+            return
+        reason = self.prompt(f"Razón rechazo de {item.get('slug')}", "")
+        if reason is None:
+            return
+        try:
+            if item.get("kind") == "plugin":
+                self.client.reject_plugin(item["id"], reason)
+            else:
+                self.client.reject_skill(item["id"], reason)
+            self.message = f"Rechazado {item.get('slug')}"
+            self.refresh(force=True)
+        except ApiError as exc:
+            self.error = f"reject fallo: {exc}"
+
+    def marketplace_revoke_from_catalog(self) -> None:
+        item = self._selected_marketplace_item()
+        if not item or item.get("_section") != "catalog":
+            self.error = "Selecciona un item en 'Catalog'"
+            return
+        if item.get("kind") and item.get("kind") != "plugin":
+            self.error = "Solo plugins son revocables hoy"
+            return
+        reason = self.prompt(f"Razón revoke {item.get('slug')}", "")
+        if reason is None:
+            return
+        try:
+            self.client.revoke_plugin(item["id"], reason)
+            self.message = f"Revocado {item.get('slug')}"
+            self.refresh(force=True)
+        except ApiError as exc:
+            self.error = f"revoke fallo: {exc}"
+
     def draw(self) -> None:
         self.stdscr.erase()
         height, width = self.stdscr.getmaxyx()
@@ -696,6 +1008,14 @@ class ControlCenterTUI:
             self.draw_errors(content_top, height, width)
         elif self.screen.key == "system":
             self.draw_system(content_top, height, width)
+        elif self.screen.key == "marketplace":
+            self.draw_marketplace(content_top, height, width)
+        elif self.screen.key == "areas":
+            self.draw_areas(content_top, height, width)
+        elif self.screen.key == "cost":
+            self.draw_cost(content_top, height, width)
+        elif self.screen.key == "laia":
+            self.draw_laia(content_top, height, width)
         self.draw_footer(height, width)
         self.stdscr.refresh()
 
@@ -722,6 +1042,10 @@ class ControlCenterTUI:
                 badge = f"({running_jobs})"
             elif screen.key == "errors" and recent_errors:
                 badge = f"({recent_errors})"
+            elif screen.key == "system":
+                image = self.status.get("image") if isinstance(self.status, dict) else None
+                if isinstance(image, dict) and image.get("stale"):
+                    badge = "(!)"
             label = f" {idx + 1}:{screen.title}{badge} "
             attr = curses.A_REVERSE | curses.A_BOLD if idx == self.screen_idx else curses.A_NORMAL
             if badge and idx != self.screen_idx:
@@ -823,17 +1147,186 @@ class ControlCenterTUI:
         self.add(top, 2, "a refresh OAuth  B restart backend  T run tests  F aplicar fix  r refrescar", curses.color_pair(1))
         auth = self.status.get("auth", {})
         health = self.status.get("health", {})
-        self.panel(top + 2, 2, 9, width - 4, "Sistema")
+        image = self.status.get("image", {})
+        self.panel(top + 2, 2, 11, width - 4, "Sistema")
         self.kv(top + 4, 4, "API", self.client.api_url)
         self.kv(top + 5, 4, "Data dir", health.get("data_dir"))
         self.kv(top + 6, 4, "Auth JSON", f"{auth.get('path')} status={auth.get('status')} ready={auth.get('ready')}")
         self.kv(top + 7, 4, "Default LLM", health.get("default_llm_provider"))
         self.kv(top + 8, 4, "LXD disponible", health.get("lxd_available"))
+        stale_label = "vieja" if image.get("stale") else "ok"
+        drift = image.get("drift_seconds")
+        self.kv(top + 9, 4, "Imagen", f"{stale_label} drift={drift if drift is not None else '-'}s")
         recent = self.jobs[: min(5, len(self.jobs))]
-        self.add(top + 12, 2, "Ultimos jobs", curses.A_BOLD)
-        self.table(top + 14, 2, height - top - 17, width - 4, ["ID", "Kind", "Status", "Age"], [
+        self.add(top + 14, 2, "Ultimos jobs", curses.A_BOLD)
+        self.table(top + 16, 2, height - top - 19, width - 4, ["ID", "Kind", "Status", "Age"], [
             [j.get("id"), j.get("kind"), _status_text(j), _format_age(j.get("created_at"))] for j in recent
         ])
+
+    def draw_marketplace(self, top: int, height: int, width: int) -> None:
+        self.add(top, 2,
+                 "a aprobar  x rechazar  v revocar  r refrescar  Tab cambia vista",
+                 curses.color_pair(1))
+        pending_count = len(self.marketplace_pending)
+        catalog_count = len(self.marketplace_catalog)
+        skill_count = len(self.marketplace_skills_catalog)
+        self.add(top + 2, 2,
+                 f"Pending review: {pending_count}    Catalog plugins: {catalog_count}    "
+                 f"Skills catalog: {skill_count}",
+                 curses.A_BOLD)
+
+        items = list(self.marketplace_pending) + list(self.marketplace_catalog)
+        rows: list[list[Any]] = []
+        for idx, it in enumerate(items):
+            kind = it.get("kind", "plugin")
+            section = "review" if idx < pending_count else "catalog"
+            label = it.get("slug", "?")
+            version = it.get("version", "")
+            owner = it.get("owner_user_id", "")
+            status = it.get("status", "")
+            visibility = it.get("visibility", "")
+            rows.append([
+                f"{section:<8}",
+                f"{kind:<6}",
+                label,
+                version,
+                owner,
+                f"{visibility}/{status}",
+            ])
+        if not rows:
+            self.add(top + 4, 4, "No hay items en marketplace todavía.", curses.A_DIM)
+        else:
+            self.table(top + 4, 2, height - top - 7, width - 4,
+                       ["Section", "Kind", "Slug", "Version", "Owner", "Vis/Status"],
+                       rows)
+
+        # Skills catalog footer (informational, not selectable in this version).
+        bottom = max(top + 4, height - 4)
+        self.add(bottom, 2, "Skills catalog:", curses.A_BOLD)
+        if not self.marketplace_skills_catalog:
+            self.add(bottom + 1, 4, "—", curses.A_DIM)
+        else:
+            blurb = ", ".join(
+                f"{s.get('slug')}({s.get('owner_user_id', '?')})"
+                for s in self.marketplace_skills_catalog[:6]
+            )
+            self.add(bottom + 1, 4, blurb[: width - 6])
+
+    def draw_areas(self, top: int, height: int, width: int) -> None:
+        self.add(top, 2,
+                 "Lista de usuarios y su agent area (read-only). Editar: "
+                 "laia-marketplace.py --slug <user> agent-area set-soul ...",
+                 curses.color_pair(1))
+        rows: list[list[Any]] = []
+        for u in self.users:
+            uid = u.get("id", "")
+            view = self.areas_by_user.get(uid, {})
+            if "_error" in view:
+                rows.append([
+                    u.get("username", "?"),
+                    u.get("display_name", ""),
+                    "(error)",
+                    view["_error"][:40],
+                    "",
+                ])
+                continue
+            area = view.get("area") or {}
+            plugins = view.get("plugins") or []
+            skills = view.get("skills") or []
+            soul = (area.get("soul_md") or "").replace("\n", " ")
+            truncated = soul[:80] + ("…" if len(soul) > 80 else "")
+            rows.append([
+                u.get("username", "?"),
+                area.get("agent_display_name") or u.get("display_name", ""),
+                f"plg:{len(plugins)} skl:{len(skills)}",
+                truncated,
+                _format_age(area.get("updated_at") or area.get("created_at")),
+            ])
+        if not rows:
+            self.add(top + 2, 4, "Sin usuarios o sin datos cargados. Pulsa r.",
+                     curses.A_DIM)
+            return
+        self.table(top + 2, 2, height - top - 5, width - 4,
+                   ["User", "Display", "Counts", "Soul (truncado)", "Updated"],
+                   rows)
+
+    def draw_cost(self, top: int, height: int, width: int) -> None:
+        self.add(top, 2,
+                 f"Ventana: {self.cost_window}   (w para alternar day→week→month)",
+                 curses.color_pair(1))
+        if not self.cost_rows:
+            self.add(top + 2, 4, "Sin datos. Pulsa r.", curses.A_DIM)
+            return
+        rows: list[list[Any]] = []
+        for r in self.cost_rows:
+            uid = r.get("user_id") or ""
+            uname = r.get("username") or uid
+            totals = r.get("totals") or {}
+            tin = int(totals.get("tokens_input") or 0)
+            tout = int(totals.get("tokens_output") or 0)
+            cost = float(totals.get("cost_usd") or 0.0)
+            calls = int(totals.get("calls") or 0)
+            caps = self.cost_budgets.get(uid) or {}
+            daily_cap = caps.get("daily_usd")
+            monthly_cap = caps.get("monthly_usd")
+            tokens_cap = caps.get("tokens_daily")
+            cap_str_parts: list[str] = []
+            if daily_cap is not None:
+                cap_str_parts.append(f"D≤${float(daily_cap):.2f}")
+            if monthly_cap is not None:
+                cap_str_parts.append(f"M≤${float(monthly_cap):.2f}")
+            if tokens_cap is not None:
+                cap_str_parts.append(f"T≤{int(tokens_cap)}")
+            caps_str = " ".join(cap_str_parts) or "—"
+            # Status indicator.
+            status = "✓"
+            if daily_cap is not None and self.cost_window == "day":
+                if cost >= float(daily_cap):
+                    status = "✗"
+                elif cost >= 0.8 * float(daily_cap):
+                    status = "⚠"
+            elif monthly_cap is not None and self.cost_window == "month":
+                if cost >= float(monthly_cap):
+                    status = "✗"
+                elif cost >= 0.8 * float(monthly_cap):
+                    status = "⚠"
+            rows.append([
+                uname,
+                str(calls),
+                f"{tin}/{tout}",
+                f"${cost:.4f}",
+                caps_str,
+                status,
+            ])
+        self.table(top + 2, 2, height - top - 5, width - 4,
+                   ["User", "Calls", "Tok in/out", "Coste USD", "Caps", "Estado"],
+                   rows)
+
+    def draw_laia(self, top: int, height: int, width: int) -> None:
+        self.add(top, 2, "LAIA — coordinadora del ecosistema", curses.A_BOLD)
+        self.add(top + 1, 2,
+                 "Inbox (usuarios con mensajes pendientes que LAIA les ha enviado)",
+                 curses.color_pair(1))
+        if not self.laia_unread:
+            self.add(top + 3, 4, "Nadie tiene mensajes pendientes.", curses.A_DIM)
+        else:
+            rows = [[r.get("username", r.get("user_id", "?")),
+                     str(r.get("unread", 0))] for r in self.laia_unread]
+            self.table(top + 3, 2, max(5, (height - top) // 2 - 4),
+                       width - 4, ["Usuario", "Unread"], rows)
+
+        chat_top = top + max(5, (height - top) // 2 - 1)
+        self.add(chat_top, 2, "Última conversación con LAIA (pulsa c para hablar):",
+                 curses.A_BOLD)
+        if self.laia_last_prompt:
+            self.add(chat_top + 1, 4, f"Tú: {self.laia_last_prompt[:width - 12]}")
+        if self.laia_last_reply:
+            wrapped = textwrap.wrap(self.laia_last_reply,
+                                    width=max(20, width - 12)) or [""]
+            line = chat_top + 2
+            for ln in wrapped[: max(2, height - chat_top - 4)]:
+                self.add(line, 4, f"LAIA: {ln}" if line == chat_top + 2 else f"      {ln}")
+                line += 1
 
     def draw_footer(self, height: int, width: int) -> None:
         hint = SCREEN_HINTS.get(self.screen.key, "Tab/flechas cambia vista. ? ayuda. q salir.")
@@ -874,7 +1367,7 @@ class ControlCenterTUI:
             "  a refresh OAuth auth.json",
             "  B restart agora-backend",
             "  T run pytest agora-backend",
-            "  F aplicar fix curado (auth-json-push, pip-install-laia-core, ...)",
+            "  F aplicar fix curado (auth-json-push, pip-reinstall-laia-core, ...)",
             "",
             "Sesion:",
             "  El token se guarda en " + str(SESSION_PATH) + " (modo 600)",
@@ -909,6 +1402,7 @@ class ControlCenterTUI:
         prompt += ": "
         self.add(height - 2, 0, " " * (width - 1))
         self.add(height - 2, 0, prompt[: width - 1], curses.A_BOLD)
+        self.stdscr.timeout(-1)
         curses.echo()
         curses.curs_set(1)
         try:
@@ -916,6 +1410,7 @@ class ControlCenterTUI:
         finally:
             curses.noecho()
             curses.curs_set(0)
+            self.stdscr.timeout(1000)
         value = raw.decode("utf-8", errors="replace").strip()
         return value or default
 
@@ -924,12 +1419,14 @@ class ControlCenterTUI:
         prompt = f"{label}: "
         self.add(height - 2, 0, " " * (width - 1))
         self.add(height - 2, 0, prompt[: width - 1], curses.A_BOLD)
+        self.stdscr.timeout(-1)
         curses.noecho()
         curses.curs_set(1)
         try:
             raw = self.stdscr.getstr(height - 2, min(len(prompt), width - 2), max(1, width - len(prompt) - 2))
         finally:
             curses.curs_set(0)
+            self.stdscr.timeout(1000)
         return raw.decode("utf-8", errors="replace").strip()
 
     def confirm(self, question: str) -> bool:

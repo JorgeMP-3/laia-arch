@@ -5,6 +5,8 @@ import threading
 import time
 from typing import Any
 
+from .agent_identity import canonical_container_name, slug_from_container
+
 from .config import settings
 from .models import Agent, Event, Task, now_iso
 
@@ -80,7 +82,7 @@ class Coordinator:
 
         for lxd in lxd_agents:
             slug = lxd.get("slug", "")
-            container = f"laia-{slug}"
+            container = lxd.get("container") or canonical_container_name(slug)
             state = (lxd.get("lxd_state") or "").upper()
             registered_agent = agent_map.get(container)
 
@@ -107,7 +109,7 @@ class Coordinator:
                 agent_map[agent.container_name] = agent
             found = any(
                 a for a in lxd_agents
-                if a.get("slug") == agent.container_name.removeprefix("laia-")
+                if a.get("slug") == slug_from_container(agent.container_name)
             )
             if not found and agent.status == "running":
                 alerts.append({

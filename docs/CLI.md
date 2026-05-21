@@ -1,5 +1,7 @@
 # LAIA CLI Tools Reference
 
+> 📅 Actualizado: 2026-05-19
+
 ## Terminal Toolkit (`laia`)
 
 All tools live in `infra/bin/`. Add to PATH: `export PATH="$HOME/LAIA/infra/bin:$PATH"`
@@ -19,9 +21,9 @@ All tools live in `infra/bin/`. Add to PATH: `export PATH="$HOME/LAIA/infra/bin:
 | Command | Description |
 |---|---|
 | `laia deploy agora-frontend` | Build and deploy AGORA frontend to `/srv/laia/agora/frontend/dist` |
-| `laia deploy agora-backend` | Restart AGORA backend service |
+| `laia deploy agora-backend` | Restart LAIA-AGORA Backend service |
 | `laia deploy agora-all` | Frontend + backend together |
-| `laia deploy arch-frontend` | Build and deploy ARCH admin UI |
+| `laia deploy arch-frontend` | Build and deploy LAIA-ARCH admin UI |
 | `laia deploy runtime` | Upgrade runtime on all LXD agents |
 | `laia deploy status` | Show deployment state |
 
@@ -110,7 +112,7 @@ Run from `~/LAIA/`:
 | `make install` | Install all dependencies (AGORA venv + UI pnpm) |
 | `make test` | Run backend tests + TypeScript check |
 | `make deploy-agora` | Build + deploy AGORA (frontend + backend) |
-| `make deploy-arch` | Build + deploy ARCH admin UI |
+| `make deploy-arch` | Build + deploy LAIA-ARCH admin UI |
 | `make backup` | Full backup (workspaces, config, DB) |
 | `make clean` | Clean build artifacts and caches |
 | `make status` | Show system status |

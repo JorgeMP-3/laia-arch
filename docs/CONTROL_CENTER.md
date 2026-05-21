@@ -111,9 +111,9 @@ Todas las mutaciones pasan por:
 | Nombre                    | Qué resuelve                                                     |
 |---------------------------|------------------------------------------------------------------|
 | `auth-json-push`          | Re-pushea `~/.laia/auth.json` al container `laia-agora` con permisos correctos (workaround del bind mount sobre directorio nested). |
-| `pip-install-laia-core`   | Reinstala `.laia-core` (pyproject.toml) en el venv de `laia-agora`. Útil cuando el build script anterior usaba `requirements.txt` inexistente. |
+| `pip-reinstall-laia-core` | Reinstala `.laia-core` desde `pyproject.toml` en el venv de `laia-agora`. Las imágenes nuevas ya lo instalan durante build; este fix queda para upgrades/venvs dañados. |
 | `pm2-stop-respawner`      | Detiene cualquier proceso pm2 que esté respawneando uvicorn viejo. |
-| `chmod-laia-dir`          | Re-aplica `chmod 755 ~/.laia` cuando ARCH vuelve a fijarlo a 700 y rompe el bind mount.       |
+| `chmod-laia-dir`          | Re-aplica `chmod 755 ~/.laia` cuando LAIA-ARCH vuelve a fijarlo a 700 y rompe el bind mount.       |
 
 Desde la TUI: vista Sistema → `F` → se elige el fix por nombre.
 
@@ -154,6 +154,8 @@ Resumen, todos prefijados con `/api/admin`:
   atrás en el tiempo.
 - `GET  /errors?limit=N` — errores recientes del logger.
 - `GET  /fixes`, `POST /fix/{name}`.
+- `GET  /image/freshness` — compara timestamp de imagen `laia-agora`
+  contra el último commit que toca `services/agora-backend` o `.laia-core`.
 - `GET  /tests/status`, `POST /tests/run`.
 - `POST /system/refresh-oauth`, `POST /system/restart-backend`.
 
@@ -187,6 +189,10 @@ Resumen, todos prefijados con `/api/admin`:
   agora-backend -f` y `GET /api/admin/jobs/{id}` para ver `log_tail`.
   Si el backend reinició a mitad del job, el estado quedará
   inconsistente; restart-backend + relanzar la acción.
+- **Badge Sistema `(!)` / imagen vieja** — `GET
+  /api/admin/image/freshness` detectó que el repo tiene cambios más
+  nuevos que la imagen `laia-agora`. Ejecutar `rebuild-2-images.sh`
+  antes de reprovisionar.
 - **Vista Errores siempre vacía** — el logger solo captura errores
   emitidos desde `agora.admin`. Logs ad-hoc con `print(...)` o
   excepciones no capturadas por el handler no aparecen aquí; usar la
@@ -198,5 +204,5 @@ Resumen, todos prefijados con `/api/admin`:
 cd ~/LAIA/services/agora-backend
 PYTHONPATH=/home/laia-hermes/LAIA/.laia-core .venv/bin/pytest \
   tests/test_admin_control_center.py -q
-# 25 tests específicos del control center, 193 totales en el backend.
+# tests específicos del control center + suite completa del backend.
 ```

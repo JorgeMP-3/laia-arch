@@ -15,26 +15,12 @@ _VALID_MODAL_MODES = {"auto", "direct", "managed"}
 
 
 def managed_nous_tools_enabled() -> bool:
-    """Return True when the user has an active paid Nous subscription.
+    """Return whether legacy managed Nous gateways are enabled.
 
-    The Tool Gateway is available to any Nous subscriber who is NOT on
-    the free tier.  We intentionally catch all exceptions and return
-    False — never block the agent startup path.
+    LAIA Ecosystem runtime must not depend on legacy portal auth or make
+    subscription/network checks during tool discovery or startup.
     """
-    try:
-        from laia_cli.auth import get_nous_auth_status
-
-        status = get_nous_auth_status()
-        if not status.get("logged_in"):
-            return False
-
-        from laia_cli.models import check_nous_free_tier
-
-        if check_nous_free_tier():
-            return False  # free-tier users don't get gateway access
-        return True
-    except Exception:
-        return False
+    return False
 
 
 def normalize_browser_cloud_provider(value: object | None) -> str:

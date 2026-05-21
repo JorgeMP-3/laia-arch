@@ -443,7 +443,7 @@ def cmd_verify(_args: argparse.Namespace, paths: config.Paths) -> int:
         return setup.returncode
     failed = 0
     for row in lxd.list_agent_containers():
-        slug = row["name"].removeprefix("laia-")
+        slug = row["name"].removeprefix("agent-") if row["name"].startswith("agent-") else row["name"].removeprefix("laia-")
         print(f"\nVerifying {row['name']}...")
         result = lxd.verify_agent(slug)
         print_result(result)

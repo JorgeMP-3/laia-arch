@@ -1,0 +1,7 @@
+slug: marketplace-hello
+name: marketplace-hello
+version: 0.1.2
+kind: standalone
+description: |
+  Plugin de prueba del marketplace AGORA. Expone una tool `say_hello`
+  que devuelve un saludo personalizado.

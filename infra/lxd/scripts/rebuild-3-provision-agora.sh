@@ -30,6 +30,10 @@ fi
 ORIG_USER="${SUDO_USER:-laia-hermes}"
 ORIG_HOME=$(getent passwd "$ORIG_USER" | cut -d: -f6)
 REPO="${LAIA_ROOT:-$ORIG_HOME/LAIA}"
+PREFLIGHT="$REPO/infra/dev/preflight.sh"
+STATE_DIR="${LAIA_STATE_DIR:-$ORIG_HOME/.laia/state}"
+STATE_FILE="$STATE_DIR/laia-agora-state.json"
+LEGACY_STATE_FILE="/tmp/laia-agora-state.json"
 
 CONTAINER="${CONTAINER:-laia-agora}"
 IMAGE="${IMAGE:-laia-agora}"
@@ -51,6 +55,22 @@ section() { printf "\n${BLD}== %s ==${RST}\n" "$*"; }
 
 command -v lxc >/dev/null || die "lxc no encontrado"
 command -v jq  >/dev/null || die "jq no encontrado"
+
+if [[ -x "$PREFLIGHT" ]]; then
+  section "0/7 Preflight operativo"
+  bash "$PREFLIGHT"
+  rc=$?
+  [[ "$rc" -eq 2 ]] && die "preflight encontró blockers; corrige antes de provisionar"
+else
+  warn "preflight no encontrado en $PREFLIGHT"
+fi
+
+mkdir -p "$STATE_DIR"
+chmod 700 "$STATE_DIR" 2>/dev/null || true
+if [[ -f "$LEGACY_STATE_FILE" && ! -f "$STATE_FILE" ]]; then
+  mv "$LEGACY_STATE_FILE" "$STATE_FILE" 2>/dev/null && \
+    warn "migrado state legacy $LEGACY_STATE_FILE → $STATE_FILE"
+fi
 
 # ────────────────────────────────────────────────────────────────────────────
 section "1/7 Pre-flight"
@@ -167,8 +187,6 @@ else
   warn "proxy host:$HOST_PORT no responde (el container sí). Revisa lxc network."
 fi
 
-# Guarda el state para el script siguiente.
-STATE_FILE="/tmp/laia-agora-state.json"
 cat > "$STATE_FILE" <<EOF
 {
   "container": "$CONTAINER",
@@ -185,6 +203,32 @@ chmod 0644 "$STATE_FILE"
 chown "$ORIG_USER:$(id -gn "$ORIG_USER")" "$STATE_FILE" 2>/dev/null || true
 
 # ────────────────────────────────────────────────────────────────────────────
+# Refresh agora_api_url in every existing per-user state file. rebuild-3
+# almost always gives laia-agora a new container IP, which silently
+# invalidates ``laia-state-<slug>.json`` files written by rebuild-4 for
+# previous incarnations. Without this, ``chat-with-deployed.sh`` and
+# anything else that reads those files keeps hitting a stale IP and
+# fails with "container no responde".
+NEW_AGORA_URL="http://${CONTAINER_IP}:${CONTAINER_PORT}"
+shopt -s nullglob
+USER_STATE_FILES=( "$STATE_DIR"/laia-state-*.json )
+shopt -u nullglob
+if (( ${#USER_STATE_FILES[@]} > 0 )); then
+  log "actualizando agora_api_url en ${#USER_STATE_FILES[@]} state file(s) de usuarios"
+  for f in "${USER_STATE_FILES[@]}"; do
+    [[ -f "$f" ]] || continue
+    tmp="$f.tmp.$$"
+    if jq --arg url "$NEW_AGORA_URL" '.agora_api_url = $url' "$f" > "$tmp" 2>/dev/null; then
+      mv "$tmp" "$f"
+      chown "$ORIG_USER:$(id -gn "$ORIG_USER")" "$f" 2>/dev/null || true
+      ok "$(basename "$f") → $NEW_AGORA_URL"
+    else
+      rm -f "$tmp"
+      warn "$(basename "$f"): jq falló, dejando intacto"
+    fi
+  done
+fi
+
 printf "\n${BLD}=== AGORA Arquitectura provisionada ===${RST}\n"
 echo "Container:    $CONTAINER ($CONTAINER_IP)"
 echo "API URL:      http://${CONTAINER_IP}:${CONTAINER_PORT}"

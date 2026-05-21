@@ -669,10 +669,10 @@ def handle_function_call(
         # checked — e.g. run_agent._invoke_tool passes skip=True to
         # avoid double-firing the hook).
         if not skip_pre_tool_call_hook:
-            block_message: Optional[str] = None
+            directive: Optional[Dict[str, Any]] = None
             try:
-                from laia_cli.plugins import get_pre_tool_call_block_message
-                block_message = get_pre_tool_call_block_message(
+                from laia_cli.plugins import get_pre_tool_call_directive
+                directive = get_pre_tool_call_directive(
                     function_name,
                     function_args,
                     task_id=task_id or "",
@@ -682,8 +682,13 @@ def handle_function_call(
             except Exception:
                 pass
 
-            if block_message is not None:
-                return json.dumps({"error": block_message}, ensure_ascii=False)
+            if directive is not None:
+                _action = directive.get("action")
+                _message = directive.get("message", "")
+                if _action == "replace":
+                    return _message
+                if _action == "block":
+                    return json.dumps({"error": _message}, ensure_ascii=False)
         else:
             # Still fire the hook for observers — just don't check for blocking
             # (the caller already did that).

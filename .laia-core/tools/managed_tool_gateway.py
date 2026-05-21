@@ -1,22 +1,21 @@
-"""Generic managed-tool gateway helpers for Nous-hosted vendor passthroughs."""
+"""Legacy managed-tool gateway helpers.
+
+LAIA Ecosystem disables the former Nous-hosted passthroughs at runtime.
+The public functions are kept so existing tool modules can import them
+without triggering network/auth side effects.
+"""
 
 from __future__ import annotations
 
-import json
 import logging
 import os
-from datetime import datetime, timezone
 from dataclasses import dataclass
 from typing import Callable, Optional
 
 logger = logging.getLogger(__name__)
 
-from laia_constants import get_laia_home
-from tools.tool_backend_helpers import managed_nous_tools_enabled
-
-_DEFAULT_TOOL_GATEWAY_DOMAIN = "nousresearch.com"
+_DEFAULT_TOOL_GATEWAY_DOMAIN = "laia-ecosystem.local"
 _DEFAULT_TOOL_GATEWAY_SCHEME = "https"
-_NOUS_ACCESS_TOKEN_REFRESH_SKEW_SECONDS = 120
 
 
 @dataclass(frozen=True)
@@ -29,77 +28,26 @@ class ManagedToolGatewayConfig:
 
 def auth_json_path():
     """Return the LAIA auth store path, respecting LAIA_HOME overrides."""
+    from laia_constants import get_laia_home
+
     return get_laia_home() / "auth.json"
 
 
 def _read_nous_provider_state() -> Optional[dict]:
-    try:
-        path = auth_json_path()
-        if not path.is_file():
-            return None
-        data = json.loads(path.read_text())
-        providers = data.get("providers", {})
-        if not isinstance(providers, dict):
-            return None
-        nous_provider = providers.get("nous", {})
-        if isinstance(nous_provider, dict):
-            return nous_provider
-    except Exception:
-        pass
     return None
 
 
 def _parse_timestamp(value: object) -> Optional[datetime]:
-    if not isinstance(value, str) or not value.strip():
-        return None
-    normalized = value.strip()
-    if normalized.endswith("Z"):
-        normalized = normalized[:-1] + "+00:00"
-    try:
-        parsed = datetime.fromisoformat(normalized)
-    except ValueError:
-        return None
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
-    return parsed.astimezone(timezone.utc)
+    return None
 
 
 def _access_token_is_expiring(expires_at: object, skew_seconds: int) -> bool:
-    expires = _parse_timestamp(expires_at)
-    if expires is None:
-        return True
-    remaining = (expires - datetime.now(timezone.utc)).total_seconds()
-    return remaining <= max(0, int(skew_seconds))
+    return True
 
 
 def read_nous_access_token() -> Optional[str]:
-    """Read a Nous Subscriber OAuth access token from auth store or env override."""
-    explicit = os.getenv("TOOL_GATEWAY_USER_TOKEN")
-    if isinstance(explicit, str) and explicit.strip():
-        return explicit.strip()
-
-    nous_provider = _read_nous_provider_state() or {}
-    access_token = nous_provider.get("access_token")
-    cached_token = access_token.strip() if isinstance(access_token, str) and access_token.strip() else None
-
-    if cached_token and not _access_token_is_expiring(
-        nous_provider.get("expires_at"),
-        _NOUS_ACCESS_TOKEN_REFRESH_SKEW_SECONDS,
-    ):
-        return cached_token
-
-    try:
-        from laia_cli.auth import resolve_nous_access_token
-
-        refreshed_token = resolve_nous_access_token(
-            refresh_skew_seconds=_NOUS_ACCESS_TOKEN_REFRESH_SKEW_SECONDS,
-        )
-        if isinstance(refreshed_token, str) and refreshed_token.strip():
-            return refreshed_token.strip()
-    except Exception as exc:
-        logger.debug("Nous access token refresh failed: %s", exc)
-
-    return cached_token
+    """Legacy token reader retained for API compatibility."""
+    return None
 
 
 def get_tool_gateway_scheme() -> str:
@@ -134,24 +82,8 @@ def resolve_managed_tool_gateway(
     gateway_builder: Optional[Callable[[str], str]] = None,
     token_reader: Optional[Callable[[], Optional[str]]] = None,
 ) -> Optional[ManagedToolGatewayConfig]:
-    """Resolve shared managed-tool gateway config for a vendor."""
-    if not managed_nous_tools_enabled():
-        return None
-
-    resolved_gateway_builder = gateway_builder or build_vendor_gateway_url
-    resolved_token_reader = token_reader or read_nous_access_token
-
-    gateway_origin = resolved_gateway_builder(vendor)
-    nous_user_token = resolved_token_reader()
-    if not gateway_origin or not nous_user_token:
-        return None
-
-    return ManagedToolGatewayConfig(
-        vendor=vendor,
-        gateway_origin=gateway_origin,
-        nous_user_token=nous_user_token,
-        managed_mode=True,
-    )
+    """Managed gateways are disabled in LAIA Ecosystem runtime."""
+    return None
 
 
 def is_managed_tool_gateway_ready(

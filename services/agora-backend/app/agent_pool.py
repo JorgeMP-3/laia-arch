@@ -295,6 +295,104 @@ class LLMSessionConfig:
     extras: dict[str, Any] = field(default_factory=dict)
 
 
+def _extract_tokens(run_output: Any) -> tuple[int, int, bool]:
+    """Best-effort extraction of (tokens_in, tokens_out, estimated).
+
+    Tries the common provider shapes; falls back to a coarse length-based
+    estimate (4 chars ≈ 1 token) so usage tracking is *never* a silent zero
+    when the provider doesn't expose a usage block.
+    """
+    usage = None
+    if isinstance(run_output, dict):
+        usage = run_output.get("usage")
+        if usage is None:
+            # Some providers nest under "response" or similar.
+            for k in ("response", "result", "data"):
+                v = run_output.get(k)
+                if isinstance(v, dict) and isinstance(v.get("usage"), dict):
+                    usage = v["usage"]
+                    break
+    if isinstance(usage, dict):
+        # Anthropic style
+        if "input_tokens" in usage or "output_tokens" in usage:
+            return (
+                int(usage.get("input_tokens") or 0),
+                int(usage.get("output_tokens") or 0),
+                False,
+            )
+        # OpenAI style
+        if "prompt_tokens" in usage or "completion_tokens" in usage:
+            return (
+                int(usage.get("prompt_tokens") or 0),
+                int(usage.get("completion_tokens") or 0),
+                False,
+            )
+        # Generic "tokens_input"/"tokens_output"
+        if "tokens_input" in usage or "tokens_output" in usage:
+            return (
+                int(usage.get("tokens_input") or 0),
+                int(usage.get("tokens_output") or 0),
+                False,
+            )
+    # Fallback: estimate from response length. Better than dropping the call.
+    text = ""
+    if isinstance(run_output, dict):
+        text = str(
+            run_output.get("response")
+            or run_output.get("final_response")
+            or run_output.get("text")
+            or ""
+        )
+    elif run_output is not None:
+        text = str(run_output)
+    # 4 chars ≈ 1 token heuristic. Input is unknown → 0; only output is
+    # estimable from what we have. The :est suffix on kind warns callers.
+    return (0, max(1, len(text) // 4) if text else 0, True)
+
+
+def record_usage_for_session(
+    *,
+    user_id: str,
+    session_id: str | None,
+    llm_config: "LLMSessionConfig",
+    run_output: Any,
+    kind: str = "chat",
+) -> None:
+    """Best-effort: extract token counts from ``run_output`` and persist a row.
+
+    Never raises — usage tracking must never break a chat. Estimated rows get
+    a ``:est`` suffix on ``kind`` so budget reconciliation knows the figure
+    is heuristic.
+    """
+    try:
+        from .storage import store
+        from .pricing import cost_for
+    except Exception as exc:  # pragma: no cover — defensive
+        logger.debug("record_usage_for_session: imports failed: %s", exc)
+        return
+    try:
+        tokens_in, tokens_out, estimated = _extract_tokens(run_output)
+        if tokens_in == 0 and tokens_out == 0 and not estimated:
+            # Nothing to record (provider exposed an explicit zero — odd, but skip).
+            return
+        provider = (llm_config.provider or "") if llm_config else ""
+        model = (llm_config.model or "") if llm_config else ""
+        cost = cost_for(provider, model, tokens_in, tokens_out)
+        actual_kind = f"{kind}:est" if estimated else kind
+        store.record_usage(
+            user_id=user_id,
+            session_id=session_id,
+            provider=provider,
+            model=model,
+            tokens_input=tokens_in,
+            tokens_output=tokens_out,
+            cost_usd=cost,
+            kind=actual_kind,
+        )
+    except Exception as exc:
+        logger.warning("record_usage_for_session: failed for user=%s: %s", user_id, exc)
+
+
 @dataclass
 class AgentSession:
     user_id: str
@@ -372,22 +470,51 @@ AGORA_ENABLED_TOOLSETS: list[str] = [
     # forwarder plugin in this toolset. They are forwarded to the user's
     # executor, never run locally in laia-agora.
     "user_runtime",
+    # Self-edit + learning tools (plugin .laia-core/plugins/agent-self-edit).
+    # Run locally in laia-agora — they need direct access to agora.db.
+    "agent_self",
+    # Read-only secondary workspaces (plugin .laia-core/plugins/secondary-workspaces).
+    "secondary_workspace",
+    # Scheduling + webhooks (plugin .laia-core/plugins/agent-scheduler).
+    "agent_scheduler",
+    # Multi-agent delegation (plugin .laia-core/plugins/agent-delegation).
+    "agent_delegation",
 ]
 
 
-def _build_aiagent(cfg: LLMSessionConfig, *, session_metadata: dict[str, Any]) -> Any:
+def _build_aiagent(
+    cfg: LLMSessionConfig,
+    *,
+    session_metadata: dict[str, Any],
+    extra_toolsets: list[str] | None = None,
+    ephemeral_system_prompt: str | None = None,
+) -> Any:
     """Build a real AIAgent if available; otherwise a placeholder.
 
     ``session_metadata`` is a dict with keys ``user_id``, ``session_id``,
     ``agent_slug`` — we unpack the parts AIAgent actually accepts as
     individual kwargs (``user_id``, ``session_id``, ``platform``). The full
     dict is also retained on the placeholder for test introspection.
+
+    ``extra_toolsets`` (marketplace-v0.1): toolsets contributed by the
+    user's installed plugins. Appended to ``AGORA_ENABLED_TOOLSETS`` so
+    the AIAgent's toolset filter doesn't strip out marketplace tools.
     """
+    enabled = list(AGORA_ENABLED_TOOLSETS)
+    if extra_toolsets:
+        for ts in extra_toolsets:
+            if ts and ts not in enabled:
+                enabled.append(ts)
+
     try:
         from run_agent import AIAgent  # type: ignore[import-not-found]
     except Exception as exc:
         logger.warning("AIAgent unavailable, using placeholder: %s", exc)
-        return _PlaceholderAgent(llm_config=cfg, session_metadata=session_metadata)
+        return _PlaceholderAgent(
+            llm_config=cfg,
+            session_metadata=session_metadata,
+            ephemeral_system_prompt=ephemeral_system_prompt,
+        )
 
     # Real AIAgent — match the constructor surface used by ARCH.
     return AIAgent(
@@ -399,12 +526,228 @@ def _build_aiagent(cfg: LLMSessionConfig, *, session_metadata: dict[str, Any]) -
         session_id=session_metadata.get("session_id"),
         user_id=session_metadata.get("user_id"),
         platform="agora",
+        ephemeral_system_prompt=ephemeral_system_prompt,
         skip_context_files=True,
         # Restrict the tool surface — see AGORA_ENABLED_TOOLSETS above.
         # The plugin agora-executor-forwarder routes filesystem/bash to the
         # user's executor; what remains here MUST be safe to run locally.
-        enabled_toolsets=AGORA_ENABLED_TOOLSETS,
+        enabled_toolsets=enabled,
     )
+
+
+def _build_agent_area_prompt(user_id: str) -> str | None:
+    try:
+        from .storage import store  # local import — avoid cycle
+    except Exception:
+        return None
+    user = store.user_by_id(user_id)
+    if user is None:
+        return None
+    area = store.agent_area_for_user(user, create=True)
+    if area is None:
+        return None
+
+    blocks: list[str] = []
+    if area.agent_display_name:
+        blocks.append(f"Nombre visible del agente: {area.agent_display_name}")
+    if area.soul_md.strip():
+        blocks.append("Soul/persona del agente:\n" + area.soul_md.strip())
+    if area.instructions_md.strip():
+        blocks.append("Instrucciones persistentes del usuario:\n" + area.instructions_md.strip())
+    if area.behavior_preferences:
+        import json as _json
+        blocks.append(
+            "Preferencias de comportamiento:\n"
+            + _json.dumps(area.behavior_preferences, ensure_ascii=False, indent=2)
+        )
+    if area.memory_preferences:
+        import json as _json
+        blocks.append(
+            "Preferencias de memoria:\n"
+            + _json.dumps(area.memory_preferences, ensure_ascii=False, indent=2)
+        )
+
+    # Coordinator inbox (Fase 1.4): if LAIA pushed messages for this user
+    # we inject them here and mark them read so we don't repeat on the
+    # next session. Best-effort — never blocks the build.
+    try:
+        inbox = store.list_inbox(user_id, only_unread=True, limit=10)
+    except Exception as exc:
+        logger.debug("agent_pool: list_inbox unavailable: %s", exc)
+        inbox = []
+    if inbox:
+        lines = [
+            f"Mensajes de LAIA pendientes ({len(inbox)} sin leer):"
+        ]
+        for m in inbox:
+            lines.append(f"  - [{m.severity}] {m.text}")
+        blocks.append("\n".join(lines))
+        try:
+            store.mark_inbox_read(user_id, [m.id for m in inbox])
+        except Exception as exc:
+            logger.debug("agent_pool: mark_inbox_read failed: %s", exc)
+
+    # Organic learnings (Fase 3): inject the top-N most relevant learnings so
+    # the agent recalls past errors/insights without needing an explicit tool
+    # call on every turn. Best-effort — never blocks agent construction.
+    try:
+        recent = store.recent_learnings_for_user(user_id, limit=8)
+    except Exception as exc:
+        logger.debug("agent_pool: recent_learnings unavailable: %s", exc)
+        recent = []
+    if recent:
+        bullets = []
+        for L in recent:
+            head = L.title[:80]
+            body = (L.content_md or "").strip().replace("\n", " ")
+            if len(body) > 240:
+                body = body[:240].rstrip() + "…"
+            bullets.append(f"- [{L.kind}] {head}: {body}")
+        blocks.append(
+            "Aprendizajes recientes del agente "
+            f"(top {len(recent)}, ordenados por relevancia):\n"
+            + "\n".join(bullets)
+        )
+
+    return "\n\n".join(blocks) if blocks else None
+
+
+def _bind_self_edit_session(user_id: str, session_id: str = "") -> None:
+    """Bind plugin threading.locals for the current AIAgent thread.
+
+    The agent-self-edit / agent-scheduler / agent-delegation plugins keep a
+    threading.local of the active ``user_id`` (and, for delegation,
+    ``session_id``) so their tools mutate the right rows. Best-effort: if
+    a plugin isn't loaded (unit tests that skip discovery), we silently
+    skip. In production the plugins are bundled in the image so these
+    imports succeed.
+    """
+    for module_path in (
+        "laia_plugins.agent_self_edit",
+        "laia_plugins.agent_scheduler",
+        "laia_plugins.laia_coordinator",
+    ):
+        try:
+            mod = __import__(module_path, fromlist=["set_session_context"])
+            set_ctx = getattr(mod, "set_session_context", None)
+        except Exception:
+            continue
+        if set_ctx is None:
+            continue
+        try:
+            set_ctx(user_id)
+        except Exception as exc:
+            logger.debug("agent_pool: bind %s session failed: %s", module_path, exc)
+
+    # agent-delegation needs the session_id too (to scope children).
+    try:
+        mod = __import__("laia_plugins.agent_delegation",
+                         fromlist=["set_session_context"])
+        set_ctx = getattr(mod, "set_session_context", None)
+        if set_ctx is not None:
+            set_ctx(user_id, session_id)
+    except Exception as exc:
+        logger.debug("agent_pool: bind agent_delegation failed: %s", exc)
+
+
+def _bind_laia_chat_mode(actor_role: str | None) -> None:
+    """Mark the current thread as inside a LAIA chat for the plugin.
+
+    The laia-coordinator plugin keeps a ``threading.local`` flag (``_chat``)
+    so its tool handlers can refuse to act outside LAIA chat mode, and so
+    admin tools can additionally check the actor's role. Best-effort: if
+    the plugin isn't loaded (unit tests that skip discovery), we silently
+    skip.
+    """
+    try:
+        mod = __import__("laia_plugins.laia_coordinator",
+                         fromlist=["set_laia_chat_mode"])
+        setter = getattr(mod, "set_laia_chat_mode", None)
+        if setter is not None:
+            setter(actor_role or "employee")
+    except Exception as exc:
+        logger.debug("agent_pool: bind laia_chat mode failed: %s", exc)
+
+
+def _materialize_marketplace_for(user_id: str, user_slug: str) -> list[str]:
+    """Set LAIA_EXTRA_PLUGIN_DIRS + LAIA_FORWARDED_TOOLS_EXTRA for this user.
+
+    Best-effort: failures are logged but never block agent creation. The
+    storage layer materialises the per-user dir on disk; the env vars wire
+    the LAIA plugin loader (Fase D) and the forwarder plugin (Fase F).
+
+    Returns the list of *extra toolsets* declared by the user's installed
+    plugins — the caller (``get_or_create``) appends them to
+    ``AGORA_ENABLED_TOOLSETS`` so the AIAgent's tool filter doesn't strip
+    out marketplace tools. Empty list if no installs / errors.
+
+    NOTE: env vars are *process-global*. This is OK only because AgentPool
+    serialises session creation under its lock — concurrent users still
+    create their AIAgents one at a time. The discovered plugin set lives
+    on the global PluginManager, so two consecutive users with different
+    install sets will each see their own set at agent-build time.
+    """
+    try:
+        from .storage import store  # local import — avoid cycle
+        from . import marketplace_storage as ms
+    except Exception as exc:
+        logger.debug("agent_pool: marketplace storage unavailable: %s", exc)
+        return []
+
+    try:
+        plugin_dir = ms.materialize_installed_plugins(store, user_id=user_id, user_slug=user_slug)
+        forward_tools = ms.collect_forward_tools_for_user(store, user_id)
+    except Exception as exc:
+        logger.warning("agent_pool: failed to materialise marketplace for %s: %s", user_slug, exc)
+        return []
+
+    os.environ["LAIA_EXTRA_PLUGIN_DIRS"] = str(plugin_dir)
+    os.environ["LAIA_FORWARDED_TOOLS_EXTRA"] = ",".join(forward_tools)
+
+    # Also materialise personal skills so the .laia-core skill discovery
+    # picks them up (best-effort).
+    try:
+        ms.materialize_installed_skills(store, user_id=user_id, user_slug=user_slug)
+    except Exception as exc:
+        logger.debug("agent_pool: skill materialisation failed: %s", exc)
+
+    # Force re-discovery so the new env takes effect for this build.
+    extra_toolsets: list[str] = []
+    try:
+        from laia_cli.plugins import discover_plugins, get_plugin_manager  # type: ignore[import-not-found]
+        discover_plugins(force=True)
+        # Inspect the registry for toolsets owned by tools registered via
+        # the LAIA plugin manager. We union them with AGORA_ENABLED_TOOLSETS
+        # at AIAgent build time. Without this, marketplace tools get
+        # filtered out by the toolset gate even though they're loaded.
+        try:
+            from tools.registry import registry  # type: ignore[import-not-found]
+            mgr = get_plugin_manager()
+            plugin_tool_names = set(getattr(mgr, "_plugin_tool_names", set()))
+            for tool_name in plugin_tool_names:
+                entry = registry.get_entry(tool_name)
+                ts = getattr(entry, "toolset", None) if entry else None
+                # The ``laia_coordinator_*`` toolsets are reserved for
+                # LAIA chat mode. The plugin is bundled in the global
+                # .laia-core/plugins directory so its tools register on
+                # every backend discovery, but we MUST NOT expose them
+                # via the marketplace path — ``get_or_create`` re-adds
+                # them only when ``mode='laia'``. Keep the legacy name
+                # too for any older build that still tags tools with it.
+                if ts in {
+                    "laia_coordinator",
+                    "laia_coordinator_base",
+                    "laia_coordinator_admin",
+                }:
+                    continue
+                if ts and ts not in extra_toolsets:
+                    extra_toolsets.append(ts)
+        except Exception as exc:
+            logger.debug("agent_pool: toolset introspection failed: %s", exc)
+    except Exception as exc:
+        logger.debug("agent_pool: rediscover after marketplace materialise failed: %s", exc)
+
+    return extra_toolsets
 
 
 class AgentPool:
@@ -414,6 +757,11 @@ class AgentPool:
     background tasks; call `evict_idle()` periodically or schedule a janitor
     via `asyncio.create_task(pool.background_janitor())`.
     """
+
+    # Class-level reference to the most recently constructed pool, used by
+    # marketplace endpoints to invalidate sessions on install/uninstall
+    # without holding the pool object directly.
+    _active_instance: "AgentPool | None" = None
 
     def __init__(
         self,
@@ -425,6 +773,7 @@ class AgentPool:
         self.max_sessions = max_sessions
         self._sessions: dict[str, AgentSession] = {}
         self._lock = threading.RLock()
+        AgentPool._active_instance = self
 
     def _key(self, user_id: str, session_id: str) -> str:
         return f"{user_id}::{session_id}"
@@ -435,13 +784,35 @@ class AgentPool:
         session_id: str,
         agent_slug: str,
         llm_config: LLMSessionConfig,
+        *,
+        mode: str | None = None,
+        actor_role: str | None = None,
     ) -> AgentSession:
+        """Get or build an AgentSession.
+
+        ``mode='laia'`` switches the build to the coordinator path:
+          - skip ``_materialize_marketplace_for`` (LAIA does not load the
+            actor's marketplace plugins)
+          - skip ``_bind_self_edit_session`` (rule ⑪: LAIA does not
+            self-edit, schedule, or delegate)
+          - system prompt comes from ``agent_areas[user_laia]`` regardless
+            of which user_id is keyed
+          - toolsets are restricted to ``laia_coordinator_base`` plus
+            ``laia_coordinator_admin`` when ``actor_role == 'agora_admin'``
+          - the laia-coordinator plugin's chat-mode flag is set so handler
+            checks pass (and admin tools see the right role)
+        """
         _ensure_collective_workspace_env()
         key = self._key(user_id, session_id)
         with self._lock:
             existing = self._sessions.get(key)
             if existing is not None:
                 existing.touch()
+                # For LAIA sessions re-bind the chat-mode flag every turn —
+                # threading.local is per-thread and the AIAgent may run on a
+                # different worker than the one that built the session.
+                if mode == "laia":
+                    _bind_laia_chat_mode(actor_role)
                 return existing
             if len(self._sessions) >= self.max_sessions:
                 self._evict_lru_locked()
@@ -450,7 +821,37 @@ class AgentPool:
                 "session_id": session_id,
                 "agent_slug": agent_slug,
             }
-            aiagent = _build_aiagent(llm_config, session_metadata=metadata)
+            if mode == "laia":
+                # Rule ⑨/⑩/⑪ aligned: LAIA chat builds a coordinator
+                # AIAgent that uses the actor's executor binding (the
+                # forwarder will route any executor-bound tool to
+                # actor's container — but the coordinator toolset has
+                # none of those: all are local DB/workspace reads).
+                extra_toolsets = ["laia_coordinator_base"]
+                if actor_role == "agora_admin":
+                    extra_toolsets.append("laia_coordinator_admin")
+                area_prompt = _build_agent_area_prompt("user_laia")
+                _bind_laia_chat_mode(actor_role)
+            else:
+                # marketplace-v0.1: materialise per-user plugin/skill
+                # installs and wire the env vars before AIAgent
+                # construction. The AgentPool lock guarantees serial
+                # execution so env-var races between users are avoided.
+                extra_toolsets = _materialize_marketplace_for(user_id, agent_slug)
+                area_prompt = _build_agent_area_prompt(user_id)
+                # agent-self-edit (and learning) tools need to know the
+                # active user_id. We expose it via threading.local in the
+                # plugin module. The AgentPool lock + AIAgent's
+                # single-thread execution mean this binding is stable
+                # for the lifetime of the session's run_conversation
+                # calls.
+                _bind_self_edit_session(user_id, session_id)
+            aiagent = _build_aiagent(
+                llm_config,
+                session_metadata=metadata,
+                extra_toolsets=extra_toolsets,
+                ephemeral_system_prompt=area_prompt,
+            )
             now = time.time()
             session = AgentSession(
                 user_id=user_id,
@@ -463,6 +864,28 @@ class AgentPool:
             )
             self._sessions[key] = session
             return session
+
+    def invalidate_user(self, user_id: str) -> int:
+        """Drop every session for `user_id`. Next chat rebuilds with current installs.
+
+        Returns the number of sessions evicted.
+        """
+        prefix = f"{user_id}::"
+        with self._lock:
+            keys = [k for k in self._sessions if k.startswith(prefix)]
+            for k in keys:
+                self._sessions.pop(k, None)
+        if keys:
+            logger.info("agent_pool: invalidated %d session(s) for user %s", len(keys), user_id)
+        return len(keys)
+
+    @staticmethod
+    def invalidate_user_static(user_id: str) -> int:
+        """Class-level shortcut so callers don't need a pool reference."""
+        pool = AgentPool._active_instance
+        if pool is None:
+            return 0
+        return pool.invalidate_user(user_id)
 
     def get(self, user_id: str, session_id: str) -> AgentSession | None:
         with self._lock:

@@ -84,7 +84,7 @@ def test_collective_workspace_bootstrap_on_get_or_create(monkeypatch):
     # Skip the real AIAgent build — we're only exercising the bootstrap
     # side-effect, and a real AIAgent without a DEEPSEEK_API_KEY in the
     # env would raise.
-    monkeypatch.setattr(ap, "_build_aiagent", lambda cfg, *, session_metadata: object())
+    monkeypatch.setattr(ap, "_build_aiagent", lambda cfg, **kwargs: object())
 
     pool = AgentPool()
     pool.get_or_create("u-ws", "s-ws", "jorge", _cfg())
@@ -105,3 +105,41 @@ def test_collective_workspace_bootstrap_on_get_or_create(monkeypatch):
     cfg_text = cfg.read_text()
     assert "workspace: collective" in cfg_text
     assert "provider: workspace-context" in cfg_text
+
+
+def test_agent_area_prompt_is_passed_to_aiagent(monkeypatch):
+    from app.storage import store
+    from app.models import User
+    from app import agent_pool as ap
+
+    user = User(
+        id="u-area-pool",
+        username="areapool",
+        display_name="Area Pool",
+        password="pw",
+        active=True,
+    )
+    store.save_user(user)
+    store.update_agent_area(
+        user.id,
+        agent_display_name="PoolBot",
+        soul_md="Soy PoolBot.",
+        instructions_md="Habla claro.",
+        behavior_preferences={"tone": "directo"},
+    )
+
+    captured = {}
+    monkeypatch.setattr(
+        ap,
+        "_build_aiagent",
+        lambda cfg, **kwargs: captured.update(kwargs) or object(),
+    )
+
+    pool = AgentPool()
+    pool.get_or_create(user.id, "s-area", "areapool", _cfg())
+
+    prompt = captured["ephemeral_system_prompt"]
+    assert "PoolBot" in prompt
+    assert "Soy PoolBot." in prompt
+    assert "Habla claro." in prompt
+    assert "directo" in prompt

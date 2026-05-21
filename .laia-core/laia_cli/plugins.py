@@ -37,6 +37,8 @@ import importlib
 import importlib.metadata
 import importlib.util
 import logging
+import os
+import re
 import sys
 import types
 from dataclasses import dataclass, field
@@ -585,6 +587,24 @@ class PluginManager:
             project_dir = Path.cwd() / ".laia" / "plugins"
             manifests.extend(self._scan_directory(project_dir, source="project"))
 
+        # 3.5. Extra plugin dirs from env (LAIA_EXTRA_PLUGIN_DIRS).
+        #
+        # Comma- or os.pathsep-separated list of directories scanned in
+        # addition to the built-in sources. Used by AGORA's AgentPool to
+        # materialise a per-user installed-plugins dir for each session
+        # (marketplace-v0.1). Anything found here overrides bundled but is
+        # itself overridden by user/project plugins on key collision.
+        extra_raw = os.environ.get("LAIA_EXTRA_PLUGIN_DIRS", "").strip()
+        if extra_raw:
+            # Accept both "," and os.pathsep (":" on POSIX). Empty entries dropped.
+            split_sep = re.compile(rf"[,{re.escape(os.pathsep)}]")
+            for entry in split_sep.split(extra_raw):
+                entry = entry.strip()
+                if not entry:
+                    continue
+                extra_dir = Path(entry).expanduser()
+                manifests.extend(self._scan_directory(extra_dir, source="extra"))
+
         # 4. Pip / entry-point plugins
         manifests.extend(self._scan_entry_points())
 
@@ -639,9 +659,17 @@ class PluginManager:
             # entry-point plugins) is opt-in via plugins.enabled.
             # Accept both the path-derived key and the legacy bare name
             # so existing configs keep working.
+            #
+            # Exception: plugins discovered from LAIA_EXTRA_PLUGIN_DIRS
+            # (source="extra") are auto-enabled — the caller (e.g. AGORA's
+            # AgentPool) has already gated installation, and the env var
+            # itself acts as the active-set contract for this process.
             is_enabled = (
-                enabled is not None
-                and (lookup_key in enabled or manifest.name in enabled)
+                manifest.source == "extra"
+                or (
+                    enabled is not None
+                    and (lookup_key in enabled or manifest.name in enabled)
+                )
             )
             if not is_enabled:
                 loaded = LoadedPlugin(manifest=manifest, enabled=False)
@@ -859,7 +887,7 @@ class PluginManager:
         loaded = LoadedPlugin(manifest=manifest)
 
         try:
-            if manifest.source in ("user", "project", "bundled"):
+            if manifest.source in ("user", "project", "bundled", "extra"):
                 module = self._load_directory_module(manifest)
             else:
                 module = self._load_entrypoint_module(manifest)

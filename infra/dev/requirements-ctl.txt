@@ -1,0 +1,8 @@
+# AGORA Control Center v2 — async TUI built on Textual.
+#
+# Lives in its own venv (infra/dev/.ctl-venv) created by setup-ctl-venv.sh.
+# Do NOT install into the agora-backend venv — keep the surface narrow so
+# the backend image build doesn't inherit GUI deps.
+textual>=0.80,<2
+httpx>=0.27,<1
+PyYAML>=6

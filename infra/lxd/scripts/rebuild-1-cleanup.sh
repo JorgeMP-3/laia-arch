@@ -17,7 +17,7 @@
 #   - Todos los users de agora.db excepto jorge
 #   - Todos los agents excepto agent_jorge
 #   - /tmp/laia-*.json
-#   - PM2 entry de agora-backend (si existe)
+#   - PM2 agora-backend detenido si existe (no borra entries)
 #   - Cualquier uvicorn app.main:app vivo en host
 #
 # Idempotente. Lánzalo varias veces sin problema.
@@ -32,6 +32,7 @@ fi
 ORIG_USER="${SUDO_USER:-laia-hermes}"
 ORIG_HOME=$(getent passwd "$ORIG_USER" | cut -d: -f6)
 REPO="${LAIA_ROOT:-$ORIG_HOME/LAIA}"
+PREFLIGHT="$REPO/infra/dev/preflight.sh"
 
 if [[ -t 1 ]]; then
   GRN='\033[1;32m'; YEL='\033[1;33m'; RED='\033[1;31m'; CYN='\033[1;36m'; BLD='\033[1m'; RST='\033[0m'
@@ -41,6 +42,17 @@ ok()   { printf "  ${GRN}✓${RST} %s\n" "$*"; }
 warn() { printf "  ${YEL}⚠${RST} %s\n" "$*"; }
 die()  { printf "  ${RED}✗${RST} %s\n" "$*" >&2; exit 1; }
 section() { printf "\n${BLD}== %s ==${RST}\n" "$*"; }
+
+# ────────────────────────────────────────────────────────────────────────────
+section "0/6 Preflight operativo"
+# ────────────────────────────────────────────────────────────────────────────
+if [[ -x "$PREFLIGHT" ]]; then
+  bash "$PREFLIGHT"
+  rc=$?
+  [[ "$rc" -eq 2 ]] && die "preflight encontró blockers; corrige antes de cleanup"
+else
+  warn "preflight no encontrado en $PREFLIGHT"
+fi
 
 # ────────────────────────────────────────────────────────────────────────────
 section "1/6 Detener procesos host"
@@ -58,14 +70,13 @@ else
   ok "procesos host detenidos"
 fi
 
-# PM2 entry: si tiene "agora-backend", quítalo de la persistencia.
+# PM2 entry: si tiene "agora-backend", deténlo. No lo borramos ni tocamos
+# persistencia; eso queda como decisión explícita del operador.
 if sudo -u "$ORIG_USER" command -v pm2 >/dev/null 2>&1; then
   if sudo -u "$ORIG_USER" pm2 jlist 2>/dev/null | grep -q '"name":"agora-backend"'; then
-    log "borrando entry pm2 'agora-backend' (no respawneará más)"
+    log "deteniendo entry pm2 'agora-backend'"
     sudo -u "$ORIG_USER" pm2 stop agora-backend 2>/dev/null || true
-    sudo -u "$ORIG_USER" pm2 delete agora-backend 2>/dev/null || true
-    sudo -u "$ORIG_USER" pm2 save 2>/dev/null || true
-    ok "pm2 agora-backend eliminado"
+    ok "pm2 agora-backend detenido"
   else
     ok "pm2 sin entry 'agora-backend'"
   fi
@@ -88,10 +99,11 @@ for c in "${TEST_CONTAINERS[@]}"; do
   fi
 done
 
-# También cualquier laia-* que NO sea jorge ni laia-agora ni de la lista
-# anterior (residuos de runs experimentales).
+# También cualquier laia-* o agent-* que NO sea jorge ni laia-agora ni de la
+# lista anterior (residuos de runs experimentales o de la migración de
+# naming agent-*). laia-jorge y laia-agora son intocables.
 mapfile -t STRAY < <(lxc list -c n --format csv 2>/dev/null \
-  | grep '^laia-' \
+  | grep -E '^(laia-|agent-)' \
   | grep -vE '^(laia-jorge|laia-agora)$' || true)
 for s in "${STRAY[@]}"; do
   if [[ " ${TEST_CONTAINERS[*]} " != *" $s "* ]]; then
@@ -137,7 +149,7 @@ else
   log "limpiando $DB"
   # Backup defensivo del .db antes de tocar.
   cp -a "$DB" "${DB}.bak-pre-cleanup-$(date +%Y%m%d-%H%M%S)" 2>/dev/null || true
-  sudo -u "$ORIG_USER" python3 <<PY || warn "DB cleanup falló (continúo)"
+  python3 <<PY || warn "DB cleanup falló (continúo)"
 import sqlite3, sys
 db = sqlite3.connect("$DB")
 db.execute("PRAGMA foreign_keys=OFF")
@@ -189,7 +201,7 @@ lxc list -c n,s --format csv 2>/dev/null | awk -F, '{printf "    %-25s %s\n", $1
 echo ""
 if [[ -n "$DB" ]]; then
   echo "▸ agora.db users:"
-  sudo -u "$ORIG_USER" sqlite3 "$DB" 'SELECT username, role FROM users' 2>/dev/null | awk -F'|' '{printf "    %-20s %s\n", $1, $2}'
+  sqlite3 "$DB" 'SELECT username, role FROM users' 2>/dev/null | awk -F'|' '{printf "    %-20s %s\n", $1, $2}'
   echo ""
 fi
 printf "${GRN}✓ Cleanup completado.${RST} Siguiente paso:\n"

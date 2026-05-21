@@ -312,11 +312,22 @@ Type these during an interactive chat session.
 ~/.laia/config.yaml       Main configuration
 ~/.laia/.env              API keys and secrets
 $LAIA_HOME/skills/        Installed skills
-~/.laia/sessions/         Session transcripts
-~/.laia/logs/             Gateway and error logs
-~/.laia/auth.json         OAuth tokens and credential pools
-~/.laia/laia-agent/     Source code (if git-installed)
-```
+| `~/.laia/sessions/`         | Session transcripts |
+| `~/.laia/logs/`             | Gateway and error logs |
+| `~/.laia/auth.json`         | OAuth tokens and credential pools |
+| `~/.laia/laia-agent/`     | Source code (if git-installed)
+
+### Workspace layout in this environment
+
+When the user asks where the loaded workspaces live, use the real workspace root and confirm the active set via `workspace_list_workspaces`:
+
+- Workspace root: `/home/laia-hermes/LAIA/workspaces/`
+- Per-workspace DB: `/home/laia-hermes/LAIA/workspaces/<workspace>/workspace.db`
+- Per-workspace code root: `/home/laia-hermes/LAIA/workspaces/<workspace>/code/`
+- AGORA backend DB is separate: `/home/laia-hermes/LAIA/services/agora-backend/data/workspace/workspace.db`
+
+See `references/workspace-layout.md` for the concise runtime-specific path map.
+
 
 Profiles use `~/.laia/profiles/<name>/` with the same layout.
 

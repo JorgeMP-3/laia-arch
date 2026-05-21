@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import threading
 from typing import Any, Dict, Optional
 
@@ -101,6 +102,23 @@ AGORA_LOCAL_DENY: frozenset[str] = frozenset({
     "delegate_task",       # spawn subagents in laia-agora
     "mixture_of_agents",   # recursive agent invocation
 })
+
+
+def _extra_forwarded_tools() -> frozenset[str]:
+    """Tools added at runtime via env (marketplace-v0.1).
+
+    AGORA's AgentPool populates LAIA_FORWARDED_TOOLS_EXTRA with a
+    comma-separated list of tool names declared by *installed* user
+    plugins that should be routed to the user's executor (typical for
+    plugins that wrap shell-side tooling). Empty/missing → no extras.
+
+    Read on every call so install/uninstall takes effect without process
+    restart.
+    """
+    raw = os.environ.get("LAIA_FORWARDED_TOOLS_EXTRA", "")
+    if not raw:
+        return frozenset()
+    return frozenset(t.strip() for t in raw.split(",") if t.strip())
 
 
 # When the LLM's tool name differs from the executor's, translate the
@@ -370,7 +388,7 @@ def _on_pre_tool_call(
             "policy": "agora_local_deny",
         })}
 
-    if tool_name not in EXECUTOR_TOOLS:
+    if tool_name not in EXECUTOR_TOOLS and tool_name not in _extra_forwarded_tools():
         return None
 
     logger.debug(

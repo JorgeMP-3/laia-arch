@@ -5,6 +5,7 @@ batch_runner.py
 cli.py
 laia_constants.py
 laia_logging.py
+laia_paths.py
 laia_state.py
 laia_time.py
 model_tools.py
@@ -202,6 +203,9 @@ laia_cli/voice.py
 laia_cli/web_server.py
 laia_cli/webhook.py
 plugins/__init__.py
+plugins/agora-executor-forwarder/__init__.py
+plugins/agora-executor-forwarder/tests/__init__.py
+plugins/agora-executor-forwarder/tests/test_forwarder.py
 plugins/context_engine/__init__.py
 plugins/disk-cleanup/__init__.py
 plugins/disk-cleanup/disk_cleanup.py
@@ -238,6 +242,7 @@ plugins/memory/mem0/__init__.py
 plugins/memory/openviking/__init__.py
 plugins/memory/retaindb/__init__.py
 plugins/memory/supermemory/__init__.py
+plugins/memory/workspace-context/__init__.py
 plugins/observability/langfuse/__init__.py
 plugins/spotify/__init__.py
 plugins/spotify/client.py
@@ -769,6 +774,7 @@ tests/test_install_sh_setup_wizard_tty_probe.py
 tests/test_ipv4_preference.py
 tests/test_laia_constants.py
 tests/test_laia_logging.py
+tests/test_laia_paths.py
 tests/test_laia_state.py
 tests/test_mcp_serve.py
 tests/test_mini_swe_runner.py

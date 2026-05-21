@@ -3,7 +3,9 @@ from __future__ import annotations
 import logging
 import os
 import re
+import subprocess
 import uuid
+from typing import Any
 
 from fastapi import Depends, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -14,6 +16,8 @@ from .config import settings
 from .auth import authenticate, can_access_user_scope, current_user, issue_tokens, public_user, require_roles
 from .models import (
     Agent,
+    AgentAreaUpdate,
+    AgentAreaView,
     AgentProfile,
     AgentProfileUpdate,
     AgentStatus,
@@ -44,9 +48,16 @@ from .models import (
     UserCreateResponse,
     UserUpdateRequest,
     UserResetPasswordResponse,
+    UserResetPasswordRequest,
     WorkspaceNodeCreate,
     new_id,
     now_iso,
+)
+from .agent_identity import (
+    canonical_container_name,
+    candidate_container_names,
+    normalize_container_name,
+    slug_from_container,
 )
 from .llm_config import (
     determine_api_mode as llm_determine_api_mode,
@@ -67,14 +78,106 @@ from .websocket import ws_manager
 
 def _resolve_agent_slug(user: User) -> str:
     """Given a user, find the slug of their personal agent container."""
+    agent = _resolve_agent_for_user(user)
+    return slug_from_container(agent.container_name)
+
+
+def _resolve_agent_for_user(user: User) -> Agent:
     agents = store.agents()
     for a in agents:
         if a.user_id == user.id or a.id == user.agent_id:
-            return a.container_name.removeprefix("laia-")
+            return a
     for a in agents:
         if a.user_id == user.id:
-            return a.container_name.removeprefix("laia-")
+            return a
     raise HTTPException(status_code=404, detail="no agent assigned to this user")
+
+
+def _find_agent_by_slug(slug: str) -> Agent | None:
+    candidates = set(candidate_container_names(slug))
+    candidates.add(slug)
+    return next((a for a in store.agents() if a.container_name in candidates or a.id == slug), None)
+
+
+def _invalidate_agent_pool(user_id: str) -> None:
+    try:
+        from .agent_pool import AgentPool
+        AgentPool.invalidate_user_static(user_id)
+    except Exception:
+        logging.getLogger(__name__).debug("agent pool invalidation skipped", exc_info=True)
+
+
+def _memory_status_for_user(user: User, area) -> dict[str, Any]:
+    return {
+        "private": {
+            "owner_user_id": user.id,
+            "mode": area.memory_preferences.get("private_mode", "executor-private"),
+            "workspace_path": "/var/lib/laia/workspace/workspaces/private/workspace.db",
+        },
+        "collective": {
+            "workspace": settings.collective_workspace_name,
+            "path": str(settings.workspace_root),
+        },
+        "preferences": area.memory_preferences,
+    }
+
+
+def _agent_profile_from_area(user: User) -> AgentProfile:
+    area = store.agent_area_for_user(user)
+    if area is None:
+        raise HTTPException(status_code=404, detail="agent area not found")
+    return AgentProfile(
+        path="agora:agent_areas",
+        persona=area.soul_md,
+        instructions=area.instructions_md,
+        skills={"enabled": [s.get("slug") for s in _skill_installs(user.id) if s.get("slug")]},
+        preferences=area.behavior_preferences,
+        status="ready",
+    )
+
+
+def _plugin_installs(user_id: str) -> list[dict[str, Any]]:
+    try:
+        from . import marketplace_storage as ms
+        return ms.list_user_installs(store, user_id)
+    except Exception:
+        return []
+
+
+def _skill_installs(user_id: str) -> list[dict[str, Any]]:
+    try:
+        from . import marketplace_storage as ms
+        return ms.list_user_skill_installs(store, user_id)
+    except Exception:
+        return []
+
+
+def _agent_area_view(user: User) -> AgentAreaView:
+    area = store.agent_area_for_user(user)
+    if area is None:
+        raise HTTPException(status_code=404, detail="agent area not found")
+    try:
+        agent = _resolve_agent_for_user(user)
+    except HTTPException:
+        agent = None
+    llm = LLMConfigView(
+        provider=user.llm_provider,
+        base_url=user.llm_base_url,
+        model=user.llm_model,
+        api_mode=user.llm_api_mode,
+        api_key_masked=llm_mask_api_key(user.llm_api_key),
+        has_key=bool(user.llm_api_key),
+        mcp_servers=_parse_mcp_servers(user.mcp_servers_json),
+    )
+    return AgentAreaView(
+        user=public_user(user),
+        agent=agent,
+        area=area,
+        llm=llm,
+        plugins=_plugin_installs(user.id),
+        skills=_skill_installs(user.id),
+        memory=_memory_status_for_user(user, area),
+    )
 
 from contextlib import asynccontextmanager
 from .telegram_gateway import TelegramGateway, build_gateway_from_env
@@ -141,6 +244,15 @@ async def lifespan(app: FastAPI):
     except Exception as _e:
         logging.getLogger(__name__).warning("plugin discovery skipped: %s", _e)
 
+    # AGORA scheduler (Fase A) — background tick loop for scheduled_jobs +
+    # learning decay. Disabled in tests via AGORA_DISABLE_SCHEDULER=1.
+    try:
+        if not os.environ.get("AGORA_DISABLE_SCHEDULER"):
+            from .scheduler import get_scheduler
+            get_scheduler().start()
+    except Exception:
+        logging.getLogger(__name__).exception("scheduler failed to start")
+
     # Optional Telegram bot: starts only when AGORA_TELEGRAM_TOKEN is set.
     gw: TelegramGateway | None = build_gateway_from_env()
     if gw is not None:
@@ -164,6 +276,11 @@ async def lifespan(app: FastAPI):
                 logging.getLogger(__name__).exception("telegram gateway failed to stop cleanly")
         coordinator.stop()
         monitor.stop()
+        try:
+            from .scheduler import get_scheduler
+            await get_scheduler().stop()
+        except Exception:
+            logging.getLogger(__name__).exception("scheduler failed to stop cleanly")
         store.db.close()
 
 
@@ -183,8 +300,14 @@ app.add_middleware(
 )
 
 from .admin import router as admin_router
+from .marketplace import router as marketplace_router
+from .webhooks import router as webhooks_router
+from .laia_chat import router as laia_chat_router
 
 app.include_router(admin_router)
+app.include_router(marketplace_router)
+app.include_router(webhooks_router)
+app.include_router(laia_chat_router)
 
 
 @app.middleware("http")
@@ -271,9 +394,28 @@ def refresh_token(payload: TokenRefreshRequest):
     user = store.user_by_id(data["sub"])
     if not user:
         raise HTTPException(status_code=401, detail="user not found")
+    # Honour the revocation cut-off so a logged-out refresh token cannot
+    # mint fresh access tokens.
+    cutoff = store.tokens_valid_since(user.id)
+    if cutoff and int(data.get("iat", 0)) <= cutoff:
+        raise HTTPException(status_code=401, detail="token revoked")
     tokens = issue_tokens(user)
     store.record_event(Event(event_type="auth_refresh", actor_id=user.id, summary=f"{user.username} token refresh"))
     return tokens
+
+
+@app.post("/api/logout")
+def logout(user: User = Depends(current_user)):
+    """Revoke every access/refresh token issued before "now" for this user.
+
+    Implements logout / "sign out everywhere" without a JTI denylist. The
+    next call with any pre-existing token returns 401 ``token revoked``;
+    the user must re-authenticate to obtain a new token pair.
+    """
+    store.revoke_user_tokens(user.id)
+    store.record_event(Event(event_type="auth_logout", actor_id=user.id,
+                             summary=f"{user.username} logout"))
+    return {"ok": True}
 
 
 @app.get("/api/me")
@@ -298,6 +440,17 @@ def list_llm_provider_models(provider_id: str):
     return {"provider": provider_id, "models": p.default_models}
 
 
+def _parse_mcp_servers(raw: str | None) -> list[dict[str, Any]]:
+    if not raw:
+        return []
+    try:
+        import json as _json
+        data = _json.loads(raw)
+        return [d for d in data if isinstance(d, dict)] if isinstance(data, list) else []
+    except Exception:
+        return []
+
+
 @app.get("/api/user/llm-config", response_model=LLMConfigView)
 def get_llm_config(user: User = Depends(current_user)):
     return LLMConfigView(
@@ -307,6 +460,7 @@ def get_llm_config(user: User = Depends(current_user)):
         api_mode=user.llm_api_mode,
         api_key_masked=llm_mask_api_key(user.llm_api_key),
         has_key=bool(user.llm_api_key),
+        mcp_servers=_parse_mcp_servers(user.mcp_servers_json),
     )
 
 
@@ -316,6 +470,14 @@ def patch_llm_config(payload: LLMConfigUpdate, user: User = Depends(current_user
         raise HTTPException(status_code=400, detail=f"unknown provider: {payload.provider}")
     import json as _json
     extras_json = _json.dumps(payload.extras) if payload.extras is not None else None
+    # mcp_servers: None → unchanged, [] → clear (empty string sentinel),
+    # [...] → JSON-encode and store.
+    if payload.mcp_servers is None:
+        mcp_json: str | None = None
+    elif payload.mcp_servers == []:
+        mcp_json = ""  # sentinel: storage layer treats "" as explicit-clear
+    else:
+        mcp_json = _json.dumps(payload.mcp_servers)
     updated = store.update_user_llm_config(
         user.id,
         provider=payload.provider,
@@ -324,6 +486,7 @@ def patch_llm_config(payload: LLMConfigUpdate, user: User = Depends(current_user
         model=payload.model,
         api_mode=payload.api_mode,
         extras_json=extras_json,
+        mcp_servers_json=mcp_json,
     )
     if updated is None:
         raise HTTPException(status_code=404, detail="user not found")
@@ -339,6 +502,7 @@ def patch_llm_config(payload: LLMConfigUpdate, user: User = Depends(current_user
         api_mode=updated.llm_api_mode,
         api_key_masked=llm_mask_api_key(updated.llm_api_key),
         has_key=bool(updated.llm_api_key),
+        mcp_servers=_parse_mcp_servers(updated.mcp_servers_json),
     )
 
 
@@ -388,6 +552,51 @@ def delete_telegram_link(user: User = Depends(current_user)) -> dict:
             summary=f"{user.username} unlinked Telegram ({dropped} binding(s))",
         ))
     return {"ok": True, "dropped": dropped}
+
+
+@app.get("/api/me/agent-area", response_model=AgentAreaView)
+def get_my_agent_area(user: User = Depends(current_user)):
+    return _agent_area_view(user)
+
+
+@app.patch("/api/me/agent-area", response_model=AgentAreaView)
+def patch_my_agent_area(payload: AgentAreaUpdate, user: User = Depends(current_user)):
+    changes = payload.model_dump(exclude_unset=True)
+    if not changes:
+        raise HTTPException(status_code=400, detail="nothing to update")
+    area = store.update_agent_area(user.id, **changes)
+    if area is None:
+        raise HTTPException(status_code=404, detail="user not found")
+    if payload.agent_display_name is not None:
+        user.display_name = payload.agent_display_name
+        store.save_user(user)
+    _invalidate_agent_pool(user.id)
+    store.record_event(Event(
+        event_type="agent_area_updated",
+        actor_id=user.id,
+        summary=f"{user.username} updated agent area",
+        payload={"fields": list(changes.keys())},
+    ))
+    refreshed = store.user_by_id(user.id) or user
+    return _agent_area_view(refreshed)
+
+
+@app.get("/api/me/agent-area/plugins")
+def get_my_agent_area_plugins(user: User = Depends(current_user)):
+    return {"plugins": _plugin_installs(user.id)}
+
+
+@app.get("/api/me/agent-area/skills")
+def get_my_agent_area_skills(user: User = Depends(current_user)):
+    return {"skills": _skill_installs(user.id)}
+
+
+@app.get("/api/me/agent-area/memory")
+def get_my_agent_area_memory(user: User = Depends(current_user)):
+    area = store.agent_area_for_user(user)
+    if area is None:
+        raise HTTPException(status_code=404, detail="agent area not found")
+    return _memory_status_for_user(user, area)
 
 
 @app.post("/api/me/password")
@@ -481,7 +690,7 @@ def create_user(payload: UserCreateRequest, actor: User = Depends(require_roles(
         agent = Agent(
             id=f"agent_{payload.username}",
             user_id=user.id,
-            container_name=f"laia-{payload.username}",
+            container_name=canonical_container_name(payload.username),
             status="planned",
             workspace_path="/opt/laia/workspaces/personal/workspace.db",
         )
@@ -502,6 +711,43 @@ def get_user(user_id: str, _: User = Depends(require_roles("agora_admin"))):
         raise HTTPException(status_code=404, detail="user not found")
     agents = [a for a in store.agents() if a.user_id == user_id]
     return {"user": public_user(user), "agents": agents}
+
+
+@app.get("/api/admin/users/{user_id}/agent-area", response_model=AgentAreaView)
+def admin_get_user_agent_area(user_id: str, _: User = Depends(require_roles("agora_admin"))):
+    user = store.user_by_id(user_id)
+    if not user or not user.active:
+        raise HTTPException(status_code=404, detail="user not found")
+    return _agent_area_view(user)
+
+
+@app.patch("/api/admin/users/{user_id}/agent-area", response_model=AgentAreaView)
+def admin_patch_user_agent_area(
+    user_id: str,
+    payload: AgentAreaUpdate,
+    actor: User = Depends(require_roles("agora_admin")),
+):
+    user = store.user_by_id(user_id)
+    if not user or not user.active:
+        raise HTTPException(status_code=404, detail="user not found")
+    changes = payload.model_dump(exclude_unset=True)
+    if not changes:
+        raise HTTPException(status_code=400, detail="nothing to update")
+    area = store.update_agent_area(user.id, **changes)
+    if area is None:
+        raise HTTPException(status_code=404, detail="agent area not found")
+    if payload.agent_display_name is not None:
+        user.display_name = payload.agent_display_name
+        store.save_user(user)
+    _invalidate_agent_pool(user.id)
+    store.record_event(Event(
+        event_type="admin_agent_area_updated",
+        actor_id=actor.id,
+        summary=f"{user.username} agent area updated",
+        payload={"user_id": user.id, "fields": list(changes.keys())},
+    ))
+    refreshed = store.user_by_id(user.id) or user
+    return _agent_area_view(refreshed)
 
 
 @app.patch("/api/users/{user_id}")
@@ -535,11 +781,15 @@ def delete_user(user_id: str, actor: User = Depends(require_roles("agora_admin")
 
 
 @app.post("/api/users/{user_id}/reset-password", response_model=UserResetPasswordResponse)
-def reset_user_password(user_id: str, actor: User = Depends(require_roles("agora_admin"))):
+def reset_user_password(
+    user_id: str,
+    payload: UserResetPasswordRequest | None = None,
+    actor: User = Depends(require_roles("agora_admin")),
+):
     user = store.user_by_id(user_id)
     if not user or not user.active:
         raise HTTPException(status_code=404, detail="user not found")
-    new_pass = f"laia-{now_iso()[:19]}"
+    new_pass = payload.new_password if payload and payload.new_password else f"laia-{now_iso()[:19]}"
     user.password = hash_password(new_pass)
     store.save_user(user)
     store.record_event(Event(event_type="user_password_reset", actor_id=actor.id,
@@ -667,11 +917,11 @@ def coordinator_report(_: User = Depends(require_roles("agora_admin"))):
                 "user_id": a.user_id,
                 "container": a.container_name,
                 "status": a.status,
-                "lxd_state": next((la.get("lxd_state", "unknown") for la in lxd_agents if la.get("slug") == a.container_name.removeprefix("laia-")), "unknown"),
+                "lxd_state": next((la.get("lxd_state", "unknown") for la in lxd_agents if la.get("slug") == slug_from_container(a.container_name)), "unknown"),
             } for a in agents_list],
         },
         "alerts": [
-            f"Agente {a.container_name} con estado LXD '{(next((la.get('lxd_state','unknown') for la in lxd_agents if la.get('slug')==a.container_name.removeprefix('laia-')), 'unknown'))}' y status '{a.status}'"
+            f"Agente {a.container_name} con estado LXD '{(next((la.get('lxd_state','unknown') for la in lxd_agents if la.get('slug')==slug_from_container(a.container_name)), 'unknown'))}' y status '{a.status}'"
             for a in agents_list
             if a.status != "running"
         ] if any(a.status != "running" for a in agents_list) else [],
@@ -744,33 +994,43 @@ def monitor_force_check(_: User = Depends(require_roles("agora_admin"))):
 
 @app.get("/api/agent/profile", response_model=AgentProfile)
 def get_my_agent_profile(user: User = Depends(current_user)):
-    slug = _resolve_agent_slug(user)
-    try:
-        result = orchestrator.get_agent_profile(slug)
-    except OrchestratorError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-    if not result["ok"]:
-        raise HTTPException(status_code=500, detail=result.get("stderr", "unknown error"))
-    data = result["data"] or {}
-    store.record_event(Event(event_type="agent_profile_read", actor_id=user.id, summary=f"{slug} profile read"))
-    return AgentProfile(**data)
+    store.record_event(Event(event_type="agent_profile_read", actor_id=user.id, summary=f"{user.username} profile read"))
+    return _agent_profile_from_area(user)
 
 
 @app.patch("/api/agent/profile", response_model=AgentProfile)
 def update_my_agent_profile(payload: AgentProfileUpdate, user: User = Depends(current_user)):
-    slug = _resolve_agent_slug(user)
     update_data = payload.model_dump(exclude_unset=True)
     if not update_data:
         raise HTTPException(status_code=400, detail="nothing to update")
-    try:
-        result = orchestrator.update_agent_profile(slug, update_data)
-    except OrchestratorError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-    if not result["ok"]:
-        raise HTTPException(status_code=500, detail=result.get("stderr", "unknown error"))
-    data = result["data"] or {}
-    store.record_event(Event(event_type="agent_profile_updated", actor_id=user.id, summary=f"{slug} profile updated", payload={"fields": list(update_data.keys())}))
-    return AgentProfile(**data)
+    changes: dict[str, Any] = {}
+    behavior_preferences = None
+    if "persona" in update_data:
+        changes["soul_md"] = update_data["persona"]
+    if "instructions" in update_data:
+        changes["instructions_md"] = update_data["instructions"]
+    if "preferences" in update_data:
+        behavior_preferences = update_data["preferences"] or {}
+    if "skills" in update_data:
+        current = store.agent_area_for_user(user)
+        prefs = dict(behavior_preferences if behavior_preferences is not None else (current.behavior_preferences if current else {}))
+        prefs["skills"] = update_data["skills"] or {}
+        behavior_preferences = prefs
+    if behavior_preferences is not None:
+        changes["behavior_preferences"] = behavior_preferences
+    if not changes:
+        raise HTTPException(status_code=400, detail="nothing to update")
+    if store.update_agent_area(user.id, **changes) is None:
+        raise HTTPException(status_code=404, detail="user not found")
+    _invalidate_agent_pool(user.id)
+    store.record_event(Event(
+        event_type="agent_profile_updated",
+        actor_id=user.id,
+        summary=f"{user.username} profile updated",
+        payload={"fields": list(update_data.keys())},
+    ))
+    refreshed = store.user_by_id(user.id) or user
+    return _agent_profile_from_area(refreshed)
 
 
 @app.get("/api/agent/status", response_model=AgentStatus)
@@ -779,14 +1039,18 @@ def get_my_agent_status(user: User = Depends(current_user)):
     try:
         result = orchestrator.get_agent_status(slug)
     except OrchestratorError as exc:
-        return AgentStatus(ok=False, slug=slug, container=f"laia-{slug}", runtime="error", healthcheck=str(exc))
+        try:
+            container = _resolve_agent_for_user(user).container_name
+        except HTTPException:
+            container = canonical_container_name(slug)
+        return AgentStatus(ok=False, slug=slug, container=container, runtime="error", healthcheck=str(exc))
     return AgentStatus(**result)
 
 
 @app.get("/api/agent/tasks")
 def list_my_agent_tasks(user: User = Depends(current_user)):
     slug = _resolve_agent_slug(user)
-    container = f"laia-{slug}"
+    container = _resolve_agent_for_user(user).container_name
     import subprocess
     result = subprocess.run(
         ["lxc", "exec", container, "--",
@@ -835,7 +1099,7 @@ def list_agents(user: User = Depends(current_user)):
         if meu is None:
             return {"agents": []}
         my_container = meu.container_name
-        my_slug = my_container.removeprefix("laia-")
+        my_slug = slug_from_container(my_container)
         lxd_agents = [a for a in lxd_agents if a.get("slug") == my_slug]
         if not lxd_agents:
             lxd_agents = [{"slug": my_slug, "container": my_container, "lxd_state": "unknown"}]
@@ -870,20 +1134,39 @@ def register_provisioned_agent(payload: RegisterAgentRequest, user: User = Depen
     target_user = next((u for u in store.users() if u.id == payload.user_id), None)
     if target_user is None:
         raise HTTPException(status_code=404, detail=f"user not found: {payload.user_id}")
-    if target_user.agent_id:
-        raise HTTPException(
-            status_code=409,
-            detail=(
-                f"user {target_user.username!r} already has agent "
-                f"{target_user.agent_id!r}. Unlink first with "
-                f"PATCH /api/users/{target_user.id} (set agent_id=null) "
-                f"or DELETE /api/agents/{target_user.agent_id} before re-registering."
-            ),
-        )
+    existing_agents = store.agents()
+    candidate_names = set(candidate_container_names(payload.slug))
+    existing = next(
+        (
+            a for a in existing_agents
+            if a.id == target_user.agent_id
+            or a.user_id == target_user.id
+            or a.container_name in candidate_names
+        ),
+        None,
+    )
+    if existing is not None:
+        if existing.user_id != target_user.id:
+            raise HTTPException(status_code=409, detail="agent/container already belongs to another user")
+        existing.container_name = canonical_container_name(payload.slug)
+        existing.status = "running"
+        existing.workspace_path = "/opt/laia/workspaces/personal/workspace.db"
+        existing.container_ip = payload.container_ip
+        existing.api_token = payload.api_token
+        store.save_agent(existing)
+        target_user.agent_id = existing.id
+        store.save_user(target_user)
+        store.record_event(Event(
+            event_type="agent_reregistered",
+            actor_id=user.id,
+            summary=payload.slug,
+            payload={"agent_id": existing.id, "user_id": payload.user_id, "ip": payload.container_ip},
+        ))
+        return {"ok": True, "agent": existing, "updated": True}
     agent = Agent(
         id=new_id("agent"),
         user_id=payload.user_id,
-        container_name=f"laia-{payload.slug}",
+        container_name=canonical_container_name(payload.slug),
         status="running",
         workspace_path="/opt/laia/workspaces/personal/workspace.db",
         container_ip=payload.container_ip,
@@ -912,11 +1195,7 @@ def fetch_agent_secrets(slug: str, payload: SecretsFetchRequest):
     if not re.fullmatch(r"[a-z0-9][a-z0-9-]{1,30}", slug):
         raise HTTPException(status_code=400, detail="invalid slug")
 
-    container_name = f"laia-{slug}"
-    target = next(
-        (a for a in store.agents() if a.container_name == container_name),
-        None,
-    )
+    target = _find_agent_by_slug(slug)
     if target is None:
         # Don't reveal whether the agent exists — same response as bad token.
         raise HTTPException(status_code=401, detail="invalid bootstrap token")
@@ -1008,8 +1287,7 @@ class ChatProxyRequest(BaseModel):
 def _agent_client_for_slug(slug: str):
     """Locate the Agent record for slug and build an AgentClient (HTTPS to child)."""
     from .agent_client import AgentClient
-    container = f"laia-{slug}"
-    target = next((a for a in store.agents() if a.container_name == container), None)
+    target = _find_agent_by_slug(slug)
     if target is None:
         raise HTTPException(status_code=404, detail=f"agent {slug!r} not registered")
     if not target.container_ip or not target.api_token:
@@ -1037,6 +1315,15 @@ async def chat_with_my_agent(payload: ChatProxyRequest, user: User = Depends(cur
     if agent is None:
         raise HTTPException(status_code=404, detail="agent record missing")
 
+    # Budget cap pre-check (v0.4 Fase 0.2). 429 with reason; the SSE path
+    # also re-checks defensively (chat_engine.chat_stream).
+    exceeded, reason = store.budget_exceeded(user.id)
+    if exceeded:
+        raise HTTPException(
+            status_code=429,
+            detail={"error": "budget exceeded", "reason": reason},
+        )
+
     from .chat_engine import chat_stream
     return StreamingResponse(
         chat_stream(user=user, agent=agent, message=payload.message, session_id=payload.session_id),
@@ -1056,8 +1343,7 @@ async def chat_with_agent_admin(
     target user's executor, so the admin can debug a user's agent without
     touching the user's password.
     """
-    container = f"laia-{slug}"
-    agent = next((a for a in store.agents() if a.container_name == container), None)
+    agent = _find_agent_by_slug(slug)
     if agent is None:
         raise HTTPException(status_code=404, detail=f"agent {slug!r} not registered")
     target_user = store.user_by_id(agent.user_id) if agent.user_id else user
@@ -1082,7 +1368,8 @@ def snapshot_agent(slug: str, payload: SnapshotRequest, _: User = Depends(requir
 @app.get("/api/agents/{slug}/snapshots")
 def list_snapshots(slug: str, _: User = Depends(require_roles("agora_admin"))):
     import subprocess, re
-    container = f"laia-{slug}"
+    agent = _find_agent_by_slug(slug)
+    container = agent.container_name if agent else normalize_container_name(slug)
     try:
         r = subprocess.run(["lxc", "info", container], capture_output=True, text=True, timeout=10)
         snapshots = []
@@ -1100,7 +1387,8 @@ def list_snapshots(slug: str, _: User = Depends(require_roles("agora_admin"))):
 @app.post("/api/agents/{slug}/restore")
 def restore_snapshot(slug: str, payload: SnapshotRequest, _: User = Depends(require_roles("agora_admin"))):
     import subprocess
-    container = f"laia-{slug}"
+    agent = _find_agent_by_slug(slug)
+    container = agent.container_name if agent else normalize_container_name(slug)
     try:
         r = subprocess.run(
             ["lxc", "restore", container, payload.name],
@@ -1152,10 +1440,77 @@ def install_agent_runtime(slug: str, _: User = Depends(require_roles("agora_admi
 
 @app.delete("/api/agents/{slug}")
 def delete_agent(slug: str, _: User = Depends(require_roles("agora_admin"))):
+    """Unlink an agent record and best-effort delete its LXD container.
+
+    The previous implementation delegated to ``laiactl``. That binary is not
+    guaranteed to exist inside the ``laia-agora`` image, while rebuild scripts
+    only need the DB unlink to re-register a fresh executor. Keep the container
+    cleanup best-effort and direct via ``lxc`` so missing tooling does not
+    break the control path.
+    """
+    if not re.fullmatch(r"[a-z0-9_][a-z0-9_-]{0,40}|agent_[a-zA-Z0-9_-]{1,64}|(?:agent|laia)-[a-z0-9][a-z0-9_-]{1,40}", slug):
+        raise HTTPException(status_code=422, detail="invalid agent slug/id")
+    agents = store.agents()
+    candidate_names = set()
+    if slug.startswith(("agent-", "laia-")):
+        candidate_names.add(slug)
+    elif not slug.startswith("agent_"):
+        candidate_names.update(candidate_container_names(slug))
+    target = next(
+        (
+            a for a in agents
+            if a.id == slug
+            or a.container_name == slug
+            or a.container_name in candidate_names
+        ),
+        None,
+    )
+    if target is None and slug.startswith("agent_"):
+        raise HTTPException(status_code=404, detail="agent not found")
     try:
-        return orchestrator.delete_agent(slug)
-    except OrchestratorError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+        container = target.container_name if target else normalize_container_name(slug)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if container == "laia-jorge":
+        raise HTTPException(status_code=400, detail="refusing to delete protected sprint2 container laia-jorge")
+
+    db_unlinked = False
+    if target is not None:
+        linked_user = store.user_by_id(target.user_id) if target.user_id else None
+        if linked_user and linked_user.agent_id == target.id:
+            linked_user.agent_id = None
+            store.save_user(linked_user)
+        db_unlinked = store.delete_agent(target.id)
+        store.record_event(Event(
+            event_type="agent_deleted",
+            actor_id=None,
+            summary=container,
+            payload={"agent_id": target.id, "db_unlinked": db_unlinked},
+        ))
+
+    container_deleted = False
+    container_error = None
+    try:
+        result = subprocess.run(
+            ["lxc", "delete", "--force", container],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        container_deleted = result.returncode == 0
+        if not container_deleted:
+            container_error = result.stderr or result.stdout
+    except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
+        container_error = str(exc)
+
+    return {
+        "ok": db_unlinked or container_deleted,
+        "agent_id": target.id if target else None,
+        "container": container,
+        "db_unlinked": db_unlinked,
+        "container_deleted": container_deleted,
+        "container_error": container_error,
+    }
 
 
 @app.get("/api/fleet/status")
@@ -1167,7 +1522,7 @@ def fleet_status_endpoint(_: User = Depends(require_roles("agora_admin"))):
         lxd_agents = []
     result = []
     for a in agents_list:
-        slug = a.container_name.removeprefix("laia-")
+        slug = slug_from_container(a.container_name)
         lxd = next((la for la in lxd_agents if la.get("slug") == slug), {})
         result.append({
             "slug": slug,

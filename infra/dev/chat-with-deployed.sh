@@ -4,7 +4,7 @@
 # A diferencia de chat-with-agent.sh (que arranca un uvicorn en host),
 # este script asume que el backend YA está corriendo dentro del container
 # `laia-agora`. Solo se ocupa de:
-#   1. Leer /tmp/laia-state-<slug>.json (creado por rebuild-4-first-user.sh)
+#   1. Leer ~/.laia/state/laia-state-<slug>.json (creado por rebuild-4-first-user.sh)
 #   2. Login como el user del state
 #   3. Abrir un REPL streaming sobre /api/agents/me/chat
 #
@@ -34,7 +34,9 @@ while [[ $# -gt 0 ]]; do
 done
 [[ -z "$SLUG" ]] && { echo "Uso: $0 --slug <name> [single_shot_msg]" >&2; exit 2; }
 
-STATE_FILE="/tmp/laia-state-${SLUG}.json"
+STATE_DIR="${LAIA_STATE_DIR:-$HOME/.laia/state}"
+STATE_FILE="$STATE_DIR/laia-state-${SLUG}.json"
+[[ -f "$STATE_FILE" ]] || STATE_FILE="/tmp/laia-state-${SLUG}.json"
 [[ -f "$STATE_FILE" ]] || { echo "No encuentro $STATE_FILE. Provisiona el user primero:" >&2;
                             echo "  sudo bash infra/lxd/scripts/rebuild-4-first-user.sh --slug $SLUG" >&2;
                             exit 1; }
@@ -54,10 +56,11 @@ PASSWORD=$(jq -r .password "$STATE_FILE")
 API_URL=$(jq -r .agora_api_url "$STATE_FILE")
 EXEC_IP=$(jq -r .container_ip "$STATE_FILE")
 EXEC_PORT=$(jq -r .api_port "$STATE_FILE")
+EXEC_CONTAINER=$(jq -r ".container // \"agent-${SLUG}\"" "$STATE_FILE")
 
 log "AGORA API: $API_URL"
 log "User:      $USERNAME"
-log "Executor:  laia-${SLUG} @ ${EXEC_IP}:${EXEC_PORT}"
+log "Executor:  ${EXEC_CONTAINER} @ ${EXEC_IP}:${EXEC_PORT}"
 
 # Verificar que el backend responde.
 if ! curl -fsS "$API_URL/api/health" >/dev/null 2>&1; then

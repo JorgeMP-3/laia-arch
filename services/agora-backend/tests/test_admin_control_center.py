@@ -74,6 +74,46 @@ def test_admin_status_and_containers_are_enriched():
     assert "laia-jorge-dev" in names
 
 
+def test_admin_status_falls_back_to_db_when_lxd_unavailable():
+    r_user = client.post(
+        "/api/users",
+        headers=ADMIN_HEADERS,
+        json={"username": "fallback-dev", "display_name": "Fallback", "password": "pass1234"},
+    )
+    assert r_user.status_code == 201, r_user.text
+    user_id = r_user.json()["user"]["id"]
+    r_agent = client.post(
+        "/api/agents/register",
+        headers=ADMIN_HEADERS,
+        json={
+            "slug": "fallback-dev",
+            "user_id": user_id,
+            "container_ip": "10.99.0.77",
+            "api_token": "fallback-token",
+        },
+    )
+    assert r_agent.status_code == 201, r_agent.text
+
+    def fake_run(args, **_kwargs):
+        if args[:2] == ["lxc", "list"]:
+            return _cmd_result("", "lxd unavailable", ok=False)
+        if args[:2] == ["lxc", "version"]:
+            return _cmd_result("", "lxd unavailable", ok=False)
+        if args and args[0] == "journalctl":
+            return _cmd_result("")
+        return _cmd_result("")
+
+    with patch("app.admin._run_command", side_effect=fake_run):
+        r = client.get("/api/admin/status", headers=ADMIN_HEADERS)
+
+    assert r.status_code == 200, r.text
+    containers = r.json()["status"]["containers"]
+    assert containers["error"] == "lxd unavailable"
+    assert containers["running"] >= 2
+    names = {item["name"] for item in containers["items"]}
+    assert {"laia-agora", "agent-fallback-dev"}.issubset(names)
+
+
 def test_admin_logs_reads_journal_lines():
     with patch("app.admin._run_command", return_value=_cmd_result("line 1\nline 2\n")):
         r = client.get("/api/admin/logs/agora-backend?lines=2", headers=ADMIN_HEADERS)
@@ -126,6 +166,32 @@ def test_container_restart_job_persists_status(monkeypatch):
     assert body["log_tail"]
 
 
+def test_host_op_emits_rule6_audit_event(monkeypatch):
+    """Regla ⑥ del Documento Definitivo: cuando un ``agora_admin`` ejecuta
+    una operación host (LXD/systemd/etc), debe quedar audit trail
+    ``rule_6_host_op_via_agora_admin`` para detectarlo cuando se haga la
+    migración a ``host_admin``.
+    """
+    from app.storage import store as _store
+
+    # snapshot del count actual de eventos rule_6_…
+    before = sum(1 for ev in _store.events()
+                 if ev.event_type == "rule_6_host_op_via_agora_admin")
+
+    monkeypatch.setenv("AGORA_ADMIN_JOBS_INLINE", "1")
+    with patch("app.admin._run_command", return_value=_cmd_result("ok\n")):
+        client.post("/api/admin/containers/jorge-dev/restart", headers=ADMIN_HEADERS)
+        client.post("/api/admin/containers/jorge-dev/snapshot",
+                    headers=ADMIN_HEADERS, json={"name": "snap"})
+        client.post("/api/admin/system/restart-backend", headers=ADMIN_HEADERS)
+
+    after = [ev for ev in _store.events()
+             if ev.event_type == "rule_6_host_op_via_agora_admin"]
+    assert len(after) - before == 3
+    actions = {ev.payload.get("action") for ev in after[-3:]}
+    assert {"container-restart", "container-snapshot", "restart-backend"} <= actions
+
+
 def test_provision_user_job_creates_user_and_agent(monkeypatch):
     monkeypatch.setenv("AGORA_ADMIN_JOBS_INLINE", "1")
     slug = f"ccprov-{uuid.uuid4().hex[:6]}"
@@ -133,7 +199,7 @@ def test_provision_user_job_creates_user_and_agent(monkeypatch):
         "Provisioned container\n"
         + json.dumps({
             "slug": slug,
-            "container": f"laia-{slug}",
+            "container": f"agent-{slug}",
             "ipv4": "10.99.0.50",
             "api_token": "token-123456789012345678901234567890",
             "api_port": 9091,
@@ -158,7 +224,7 @@ def test_provision_user_job_creates_user_and_agent(monkeypatch):
 
     assert job["status"] == "done", job
     assert job["result"]["user"]["username"] == slug
-    assert job["result"]["agent"]["container_name"] == f"laia-{slug}"
+    assert job["result"]["agent"]["container_name"] == f"agent-{slug}"
     assert job["result"]["agent"]["container_ip"] == "10.99.0.50"
 
 
@@ -354,10 +420,33 @@ def test_list_fixes_returns_curated_registry():
     assert r.status_code == 200
     fixes = r.json()["fixes"]
     names = {f["name"] for f in fixes}
-    assert {"auth-json-push", "pip-install-laia-core", "pm2-stop-respawner",
+    assert {"auth-json-push", "pip-reinstall-laia-core", "pm2-stop-respawner",
             "chmod-laia-dir"}.issubset(names)
     # Each fix has a description
     assert all(f["description"] for f in fixes)
+
+
+def test_image_freshness_computes_repo_drift():
+    def fake_run(args, **_kwargs):
+        if args[:3] == ["lxc", "image", "info"]:
+            return _cmd_result(
+                "Timestamps:\n"
+                "    Created: 2026/05/17 15:00 UTC\n"
+                "    Uploaded: 2026/05/17 15:00 UTC\n"
+            )
+        if args[:3] == ["git", "-C", str(settings.laia_root)]:
+            return _cmd_result("1779086994\n")
+        return _cmd_result("")
+
+    with patch("app.admin._run_command", side_effect=fake_run):
+        r = client.get("/api/admin/image/freshness", headers=ADMIN_HEADERS)
+
+    assert r.status_code == 200, r.text
+    image = r.json()["image"]
+    assert image["built_at"].startswith("2026-05-17T15:00")
+    assert image["last_commit_touching_backend"].startswith("2026-05-18")
+    assert image["drift_seconds"] > 0
+    assert image["stale"] is True
 
 
 def test_run_fix_unknown_returns_404():

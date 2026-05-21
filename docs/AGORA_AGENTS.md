@@ -1,8 +1,11 @@
 # AGORA Agents — Cerebro Centralizado + Executors Libres
 
-> **Estado**: rediseño en curso (branch `feat/agora-redesign-centralized-brain`).
-> Reemplaza al sprint 2 (commit `36f7263`), cuya documentación se conserva
-> en `archived/sprint2-agora-agents-20260516/AGORA_AGENTS.sprint2.md`.
+> &#x1F4C5; v2.5 — 2026-05-19 | 342 backend tests + 53 executor tests
+>
+> Branch `feat/agora-redesign-centralized-brain`. 15 commits (36f7263 → e2b8ea5).
+> 10 tags: sprint2-snapshot, sprint2-final, redesign-v1-functional, redesign-v1.1-functional,
+> redesign-v1.2-secure, redesign-v1.3-user-runtime, redesign-v2.0-deployed,
+> control-center-v0.1, control-center-v0.2-polished.
 
 ## Resumen ejecutivo
 
@@ -21,7 +24,7 @@ fino** (`laia-executor`) donde el usuario es root y manda él.
 ```
 ┌─────────────── HOST (Linux, dev ARM aarch64 7.2 GB) ──────────────────────┐
 │                                                                            │
-│  ARCH (en host)         /srv/laia/                                         │
+│  LAIA-ARCH (en host)         /srv/laia/                                         │
 │  ~/.laia-core/          ├── agora/                                         │
 │  (intacto)              │   ├── agora.db          (users, agents, ...)     │
 │                         │   └── workspaces/                                │
@@ -57,9 +60,9 @@ fino** (`laia-executor`) donde el usuario es root y manda él.
 
 | Componente | Ubicación | Función |
 |------------|-----------|---------|
-| AGORA Backend | `services/agora-backend/`, corre en container `laia-agora` :8000 | API FastAPI: auth, users, agents, chat, LLM config, Telegram |
+| LAIA-AGORA Backend | `services/agora-backend/`, corre en container `laia-agora` :8000 | API FastAPI: auth, users, agents, chat, LLM config, Telegram |
 | AIAgent pool | `services/agora-backend/app/agent_pool.py` | Una instancia de AIAgent por sesión activa, TTL 60 min, LRU evict |
-| LLM config | `services/agora-backend/app/llm_config.py` | Catálogo de 30+ providers (paridad con LAIA ARCH) |
+| LLM config | `services/agora-backend/app/llm_config.py` | Catálogo de 30+ providers (paridad con LAIA-ARCH) |
 | Tool forwarder | `.laia-core/plugins/agora-executor-forwarder/` | Plugin pre_tool_call que redirige filesystem/bash a HTTP |
 | laia-executor | `services/laia-executor/` | FastAPI fino dentro de cada container de usuario |
 | Workspace colectivo | en `laia-agora`: `/opt/agora/data/workspaces/collective/workspace.db` | Memoria compartida entre todos los agentes |
@@ -107,7 +110,7 @@ Usuario → AGORA UI → POST /api/agents/me/chat {message, session_id}
 | Workspace dual | Colectivo en AGORA (acceso directo), privado en executor (forwardeado vía `private_workspace_*`) | Una fuente de verdad por workspace, namespacing claro para el LLM |
 | Persistencia | Bind mounts host `/srv/laia/users/{slug}/` → container | Si el container muere, los datos sobreviven; backup simple |
 | Sandbox | Eliminado en el executor (usuario root); auth solo a nivel API bearer token | El usuario es dueño de su container, no se le quita libertad |
-| LLM providers | Paridad con LAIA ARCH (30+ providers) | UX consistente; el usuario elige (DeepSeek, Anthropic, OpenAI, Bedrock, ...) |
+| LLM providers | Paridad con LAIA-ARCH (30+ providers) | UX consistente; el usuario elige (DeepSeek, Anthropic, OpenAI, Bedrock, ...) |
 | Telegram | Aprovechar gateway existente de `.laia-core/`, multi-tenant via `telegram_links` table | El motor ya soporta multi-tenancy via session keys |
 
 ## API del executor (interfaz HTTP)
@@ -154,10 +157,10 @@ Frontend / clientes nuevos deben asumir el primer formato salvo que el endpoint 
 
 ### auth.json: writer ↔ reader
 
-- **Writer canónico**: ARCH (`~/.laia/auth.json`). El comando `laia auth` y los refresh OAuth son los únicos que lo escriben.
+- **Writer canónico**: LAIA-ARCH (`~/.laia/auth.json`). El comando `laia auth` y los refresh OAuth son los únicos que lo escriben.
 - **Reader**: AGORA. Al arrancar, `agent_pool._ensure_collective_workspace_env` simlinkea `$LAIA_HOME/auth.json` → `~/.laia/auth.json` (override con `AGORA_ARCH_AUTH_JSON`).
 - Si tu default provider es OAuth (`openai-codex`, `qwen-oauth`, `google-gemini-cli`, `copilot-acp`, `nous`) y `~/.laia/auth.json` no existe, `/api/health` reportará `"auth_json_ready": false`. Soluciona corriendo `laia auth` antes del primer chat.
-- AGORA NO refresca tokens. Esa decisión evita carreras con ARCH; si hay que cambiarla, hay que añadir `flock` en el wrapper.
+- AGORA NO refresca tokens. Esa decisión evita carreras con LAIA-ARCH; si hay que cambiarla, hay que añadir `flock` en el wrapper.
 
 ### task_id como identificador de turno
 
@@ -269,19 +272,26 @@ por usuario) habrá que volver a multi-bot — ver `[PENDIENTE]` en
 
 ## Tests
 
-| Suite | Cobertura | Ubicación |
-|-------|-----------|-----------|
-| Executor | 19 tests (endpoints, tools, auth, private_workspace_*) | `services/laia-executor/tests/` |
-| AGORA backend | 140 tests (auth, storage, agents, LLM, pool, workspace bootstrap, telegram links + gateway) | `services/agora-backend/tests/` |
-| Plugin forwarder | 11 tests (passthrough, forward, errors, thread isolation, private_workspace_* schemas + routing) | `.laia-core/plugins/agora-executor-forwarder/tests/` |
-| Hook system (.laia-core) | Tests de pre_tool_call directive (block + replace) | `.laia-core/tests/` |
-
-**Total automatizado:** 170 tests verde a 16 de mayo de 2026.
+| Suite | Count | Path |
+|-------|-------|------|
+| LAIA-AGORA Backend | 342 tests (auth, storage, agents, LLM, pool, marketplace, agent-area, secrets, scheduler, webhooks, delegation, usage, admin) | `services/agora-backend/tests/` |
+| Executor | 53 tests (endpoints, tools, auth, private_workspace_*) | `services/laia-executor/tests/` |
+| Plugin forwarder | 25 tests (passthrough, forward, errors, thread isolation, private_workspace_* schemas + routing) | `.laia-core/plugins/agora-executor-forwarder/tests/` |
+| Shell scripts | 11 tests (preflight, smoke, marketplace CLI, rebuild state, create agent naming) | `tests/test_*.sh` |
+| **Total** | **431 tests** verde a 19 de mayo de 2026 |
 
 ## Tags y branches
 
-- `sprint2-snapshot` → commit `36f7263` (estado funcional del sprint 2)
-- `pre-redesign-backup` → mismo commit (alias semántico)
+- `sprint2-snapshot` → commit `36f7263` (sprint 2 funcional)
+- `sprint2-final` → commit `36f7263` (alias)
+- `pre-redesign-backup` → backup pre-rediseño
+- `redesign-v1-functional` → commit `64ba0c2` (cerebro centralizado + executors)
+- `redesign-v1.1-functional` → commit `0e6eb34` (fix cross-thread)
+- `redesign-v1.2-secure` → commit `ec2140f` (security hardening)
+- `redesign-v1.3-user-runtime` → commit `53e9072` (safe equivalents)
+- `redesign-v2.0-deployed` → commit `2878dad` (rebuild scripts + arquitectura desplegada)
+- `control-center-v0.1` → control center v0.1
+- `control-center-v0.2-polished` → commit `e2b8ea5` (polish backend + TUI)
 - `sprint2-final` → mismo commit (marca el fin del sprint 2, post-rediseño)
 - `feat/agora-redesign-centralized-brain` → branch del rediseño
 
@@ -301,4 +311,4 @@ link, aislamiento multi-usuario, concurrencia, TTL del pool.
 
 - **No tocar la UI `laia-ui/packages/agora-app/`** — el usuario la rehará desde cero. Los nuevos endpoints backend que la UI futura necesita ya están listos (LLM config, Telegram link, etc.) — solo falta el frontend.
 - **No borrar código** — cualquier módulo retirado va a `archived/sprint2-agora-agents-20260516/` con `git mv` (no `git rm`), preservando historia.
-- **Paridad LLM con ARCH** — cualquier nuevo agente debe soportar los mismos providers que `.laia-core/laia_cli/providers.py:LAIA_OVERLAYS`.
+- **Paridad LLM con LAIA-ARCH** — cualquier nuevo agente debe soportar los mismos providers que `.laia-core/laia_cli/providers.py:LAIA_OVERLAYS`.

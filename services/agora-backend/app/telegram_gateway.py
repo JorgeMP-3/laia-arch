@@ -132,11 +132,16 @@ async def _agent_pool_turn(agora_user_id: str, message: str) -> str:
     """
     from .storage import store
     from .agent_pool import AgentPool, LLMSessionConfig
+    from .agent_identity import slug_from_container
+    from .chat_engine import provider_uses_oauth
 
     user = store.user_by_id(agora_user_id)
     if user is None:
         return "⚠ Usuario AGORA no encontrado."
-    if not user.llm_api_key:
+    # OAuth providers (openai-codex, qwen-oauth, google-gemini-cli, …)
+    # don't use a per-user api_key — credentials live in the shared
+    # auth.json. Only reject when the configured provider *needs* a key.
+    if not provider_uses_oauth(user.llm_provider) and not user.llm_api_key:
         return (
             "⚠ Aún no has configurado tu API key del LLM. "
             "Abre la web AGORA y rellena `LLM config` antes de chatear."
@@ -146,7 +151,7 @@ async def _agent_pool_turn(agora_user_id: str, message: str) -> str:
     agent_slug = "unknown"
     for a in store.agents():
         if a.user_id == user.id:
-            agent_slug = a.container_name.removeprefix("laia-")
+            agent_slug = slug_from_container(a.container_name)
             break
 
     pool = _shared_pool()
@@ -169,10 +174,40 @@ async def _agent_pool_turn(agora_user_id: str, message: str) -> str:
         if run is None:
             return "⚠ AIAgent no disponible en este entorno (placeholder)."
         try:
-            return run(message)
+            result = run(message)
         except Exception as exc:
             logger.exception("telegram_gateway: run_conversation failed")
             return f"⚠ Error procesando el mensaje: {exc}"
+
+        # Token tracking (parity with chat_engine / scheduler / webhooks).
+        try:
+            from .agent_pool import record_usage_for_session
+            record_usage_for_session(
+                user_id=user.id, session_id=f"telegram:{user.id}",
+                llm_config=cfg, run_output=result, kind="telegram",
+            )
+        except Exception:
+            logger.debug("telegram_gateway: usage hook failed", exc_info=True)
+
+        # Extract the user-facing text. AIAgent returns a dict; the
+        # canonical reply lives in ``final_response`` (preferred) or
+        # ``response``. Falling back to ``str(result)`` would dump the
+        # entire run-trace dict to the chat — unreadable.
+        if isinstance(result, dict):
+            text = (result.get("final_response")
+                    or result.get("response")
+                    or "")
+            if not text:
+                # Last-resort: pick out the last assistant message in the
+                # transcript. Keeps us robust if the agent shape changes.
+                msgs = result.get("messages") or []
+                for m in reversed(msgs):
+                    if isinstance(m, dict) and m.get("role") == "assistant":
+                        text = m.get("content") or ""
+                        if text:
+                            break
+            return text or "(respuesta vacía del agente)"
+        return str(result) if result is not None else "(respuesta vacía del agente)"
 
     return await asyncio.to_thread(_run_sync)
 

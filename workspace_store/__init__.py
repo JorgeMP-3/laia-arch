@@ -186,18 +186,36 @@ def _is_legacy_source(source_kind: str) -> bool:
 
 
 class WorkspaceStore:
-    def __init__(self, workspace_root: Path | str):
+    def __init__(self, workspace_root: Path | str, *, read_only: bool = False):
         self.root = Path(workspace_root)
         self.workspace = self.root.name
         self.db_path = self.root / "workspace.db"
+        # When ``read_only=True``, ``connect()`` opens the SQLite file via
+        # ``mode=ro`` URI + ``PRAGMA query_only=1`` and every mutating
+        # method raises ``PermissionError`` before touching the DB. Used
+        # by AGORA to expose secondary workspaces (e.g. ``doyouwin``) as
+        # reference material without giving the agents write access.
+        self.read_only = bool(read_only)
 
     # -- Low-level ---------------------------------------------------------
 
     def connect(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.db_path)
+        if self.read_only:
+            uri = f"file:{self.db_path}?mode=ro"
+            conn = sqlite3.connect(uri, uri=True)
+        else:
+            conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA foreign_keys = ON")
+        if self.read_only:
+            conn.execute("PRAGMA query_only = 1")
         return conn
+
+    def _require_writable(self) -> None:
+        if self.read_only:
+            raise PermissionError(
+                f"workspace '{self.workspace}' is read-only; mutating operations are blocked"
+            )
 
     def exists(self) -> bool:
         return self.db_path.exists()
@@ -217,6 +235,15 @@ class WorkspaceStore:
         return created
 
     def ensure_schema(self) -> None:
+        # For read-only stores we don't create/alter anything; just verify
+        # the DB exists. Callers that import a foreign workspace should
+        # have copied the .db before mounting it.
+        if self.read_only:
+            if not self.db_path.exists():
+                raise FileNotFoundError(
+                    f"read-only workspace expected at {self.db_path} but file is missing"
+                )
+            return
         self.root.mkdir(parents=True, exist_ok=True)
         self.ensure_workspace_layout()
         with self.connect() as conn:
@@ -390,6 +417,7 @@ class WorkspaceStore:
         filename: str | None = None,
         ensure_taxonomy: bool = True,
     ) -> dict[str, Any]:
+        self._require_writable()
         self.ensure_schema()
         slug = _slugify(slug)
         kind = self._normalize_kind(kind, source_kind=source_kind)
@@ -748,6 +776,7 @@ class WorkspaceStore:
         *,
         weight: float = 1.0,
     ) -> dict[str, Any]:
+        self._require_writable()
         if edge_type not in EDGE_TYPES:
             raise ValueError(f"edge_type inválido: {edge_type}")
         self.ensure_schema()
@@ -2098,6 +2127,7 @@ Convenciones:
         return str(path.relative_to(self.root))
 
     def claim_task(self, agent_id: str, description: str) -> dict[str, Any]:
+        self._require_writable()
         self.ensure_schema()
         payload = {"agent": agent_id, "task": description, "started_at": _now()}
         with self.connect() as conn:
@@ -2106,6 +2136,7 @@ Convenciones:
         return {"event_id": event_id, **payload}
 
     def complete_task(self, event_id: int, agent_id: str, result: str) -> dict[str, Any]:
+        self._require_writable()
         self.ensure_schema()
         payload = {"agent": agent_id, "start_event_id": event_id, "result": result, "completed_at": _now()}
         with self.connect() as conn:

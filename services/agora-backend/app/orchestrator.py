@@ -19,6 +19,12 @@ from .agent_client import (
     AgentNotFoundError,
     AgentUnreachableError,
 )
+from .agent_identity import (
+    candidate_container_names,
+    canonical_container_name,
+    is_user_agent_container,
+    slug_from_container,
+)
 from .config import settings
 
 logger = logging.getLogger(__name__)
@@ -85,6 +91,23 @@ class AgentOrchestrator:
         except OrchestratorError:
             return {}
 
+    def _container_for_slug(self, slug: str) -> str:
+        try:
+            from .storage import store
+            candidates = set(candidate_container_names(slug))
+            for agent in store.agents():
+                if agent.container_name in candidates or slug_from_container(agent.container_name) == slug:
+                    return agent.container_name
+        except ImportError:
+            pass
+        return canonical_container_name(slug)
+
+    def _live_for_slug(self, slug: str, lxd: dict[str, dict]) -> dict:
+        for name in candidate_container_names(slug):
+            if name in lxd:
+                return lxd[name]
+        return {}
+
     # ── public API ────────────────────────────────────────────────────────────
 
     def list_agents(self) -> list[dict]:
@@ -93,7 +116,7 @@ class AgentOrchestrator:
         result = []
         for slug, data in agents.items():
             row = dict(data)
-            live = lxd.get(f"laia-{slug}", {})
+            live = self._live_for_slug(slug, lxd)
             row["lxd_state"] = live.get("state", "unknown")
             row["ipv4"] = live.get("ipv4", "")
             row["lxd_snapshots"] = live.get("snapshots", "0")
@@ -114,7 +137,7 @@ class AgentOrchestrator:
             data["status_output"] = str(exc)
             data["status_ok"] = False
         lxd = self._lxd_live()
-        live = lxd.get(f"laia-{slug}", {})
+        live = self._live_for_slug(slug, lxd)
         data["lxd_state"] = live.get("state", "unknown")
         data["ipv4"] = live.get("ipv4", "")
         data["lxd_snapshots"] = live.get("snapshots", "0")
@@ -178,9 +201,10 @@ class AgentOrchestrator:
             from .storage import store
         except ImportError:
             return None
-        slug_norm = slug.removeprefix("laia-")
+        slug_norm = slug_from_container(slug)
+        candidates = set(candidate_container_names(slug_norm))
         for agent in store.agents():
-            if agent.container_name == f"laia-{slug_norm}" or agent.container_name == slug_norm:
+            if agent.container_name in candidates or agent.container_name == slug_norm:
                 return agent.model_dump()
         return None
 
@@ -218,7 +242,7 @@ class AgentOrchestrator:
     def _exec_python(self, slug: str, script: str, timeout: int = 15) -> dict:
         """Run a Python script inside the agent container as laia-agent user."""
         self._validate_slug(slug)
-        container = f"laia-{slug}"
+        container = self._container_for_slug(slug)
         result = subprocess.run(
             ["lxc", "exec", container, "--",
              "runuser", "-u", "laia-agent", "--",
@@ -287,7 +311,7 @@ class AgentOrchestrator:
     def get_agent_status(self, slug: str) -> dict:
         """Get agent runtime status from inside the container."""
         self._validate_slug(slug)
-        container = f"laia-{slug}"
+        container = self._container_for_slug(slug)
         health = subprocess.run(
             ["lxc", "exec", container, "--", "/opt/laia/healthcheck.sh"],
             capture_output=True, text=True, timeout=15,
@@ -343,7 +367,7 @@ class AgentOrchestrator:
             "payload": payload,
             "created_at": int(time.time()),
         })
-        container = f"laia-{slug}"
+        container = self._container_for_slug(slug)
         result = subprocess.run(
             ["lxc", "exec", container, "--",
              "sh", "-c",
@@ -373,7 +397,7 @@ class AgentOrchestrator:
         # Legacy fallback (lxc exec — direct file read)
         if not re.match(r"^task_[a-f0-9]{12}$", task_id):
             raise OrchestratorError(f"invalid task_id: {task_id!r}")
-        container = f"laia-{slug}"
+        container = self._container_for_slug(slug)
         for folder in ("done", "failed"):
             result = subprocess.run(
                 ["lxc", "exec", container, "--",
@@ -399,7 +423,7 @@ def _result(rc: int, out: str, err: str) -> dict:
 def _parse_lxd_list(output: str) -> dict[str, dict]:
     rows: dict[str, dict] = {}
     for row in csv.reader(io.StringIO(output)):
-        if row and row[0].startswith("laia-"):
+        if row and is_user_agent_container(row[0]):
             rows[row[0]] = {
                 "name": row[0],
                 "state": row[1] if len(row) > 1 else "",

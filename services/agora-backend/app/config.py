@@ -35,6 +35,32 @@ class Settings:
         self.users_path = self.data_dir / "users.json"
         self.agents_path = self.data_dir / "agents.json"
 
+        # ── Marketplace storage (marketplace-v0.1) ────────────────────────────
+        # Publicly-served blobs (plugin tarballs, skill markdowns) and the
+        # per-user extraction area used by the AgentPool to build
+        # `LAIA_EXTRA_PLUGIN_DIRS` for each session.
+        self.plugin_store_dir = self.data_dir / "plugin-store"
+        self.skill_store_dir = self.data_dir / "skill-store"
+        self.installed_plugins_root = self.data_dir / "installed-plugins"
+        self.installed_skills_root = self.data_dir / "installed-skills"
+        # Hard cap on the size of a single uploaded plugin tarball (bytes).
+        self.plugin_upload_max_bytes = int(os.environ.get("AGORA_PLUGIN_MAX_BYTES", str(5 * 1024 * 1024)))
+        # Hard cap on the size of a single uploaded skill markdown.
+        self.skill_upload_max_bytes = int(os.environ.get("AGORA_SKILL_MAX_BYTES", str(256 * 1024)))
+
+        # ── Secondary read-only workspaces ──────────────────────────────────
+        # AGORA can mount additional read-only workspaces alongside the
+        # collective one. Each entry is loaded into ``store.secondary_workspaces``
+        # at boot if the .db file is present. Today: ``doyouwin`` (the ARCH
+        # operational workspace, exposed read-only to agents).
+        self.secondary_workspaces: list[dict] = [
+            {
+                "slug": "doyouwin",
+                "root": self.workspaces_root / "doyouwin",
+                "read_only": True,
+            },
+        ]
+
         # ── Auth ──────────────────────────────────────────────────────────────
         self.jwt_secret = os.environ.get("AGORA_JWT_SECRET", secrets.token_hex(32))
         self.access_token_minutes = int(os.environ.get("AGORA_ACCESS_MINUTES", "30"))
@@ -55,6 +81,10 @@ class Settings:
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.workspaces_root.mkdir(parents=True, exist_ok=True)
         self.workspace_root.mkdir(parents=True, exist_ok=True)
+        self.plugin_store_dir.mkdir(parents=True, exist_ok=True)
+        self.skill_store_dir.mkdir(parents=True, exist_ok=True)
+        self.installed_plugins_root.mkdir(parents=True, exist_ok=True)
+        self.installed_skills_root.mkdir(parents=True, exist_ok=True)
 
 
 settings = Settings()

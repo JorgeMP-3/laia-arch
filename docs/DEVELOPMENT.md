@@ -1,5 +1,7 @@
 # Development Guide
 
+> 📅 Actualizado: 2026-05-19
+
 ## Setup
 
 ```bash
@@ -7,7 +9,7 @@
 git clone <repo-url> ~/LAIA
 cd ~/LAIA
 
-# AGORA backend
+# LAIA-AGORA Backend
 cd services/agora-backend
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
@@ -31,7 +33,7 @@ pnpm dev  # starts dev servers
 ~/LAIA/
 ├── .laia-core/          AI Engine (agent loop, tools, gateway, memory)
 ├── laia-ui/             Frontend monorepo (pnpm workspaces)
-│   ├── packages/arch-app/    ARCH admin dashboard
+│   ├── packages/arch-app/    LAIA-ARCH admin dashboard
 │   ├── packages/agora-app/   AGORA user platform
 │   ├── packages/ui/          Shared design system
 │   └── packages/shared/      Shared API types

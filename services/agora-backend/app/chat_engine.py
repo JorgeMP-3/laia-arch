@@ -27,7 +27,8 @@ import threading
 from pathlib import Path
 from typing import Any, AsyncIterator
 
-from .agent_pool import AgentPool, LLMSessionConfig
+from .agent_pool import AgentPool, LLMSessionConfig, record_usage_for_session
+from .agent_identity import slug_from_container
 from .models import Agent, User
 
 
@@ -201,6 +202,19 @@ async def chat_stream(
     if not agent.container_ip or not agent.api_token:
         yield _sse({"type": "error", "message": "agent not provisioned (no container_ip / api_token)"})
         return
+    # Budget pre-check (v0.4 Fase 0.2). Single source of truth lives in
+    # ``store.budget_exceeded``; if any cap is hit the turn is rejected with
+    # an SSE error event of type "budget_exceeded". HTTP 429 on the chat
+    # endpoint also surfaces this — see main.py:chat_with_my_agent.
+    try:
+        from .storage import store as _store
+        exceeded, reason = _store.budget_exceeded(user.id)
+    except Exception:
+        exceeded, reason = False, None
+    if exceeded:
+        yield _sse({"type": "error", "code": "budget_exceeded",
+                    "message": f"budget exceeded: {reason}"})
+        return
     # API key is only required for providers that authenticate per-request
     # with a static credential. OAuth-based providers (openai-codex,
     # qwen-oauth, google-gemini-cli, ...) read tokens from the shared
@@ -210,7 +224,7 @@ async def chat_stream(
         yield _sse({"type": "error", "message": "no LLM API key configured for this user — PATCH /api/user/llm-config first"})
         return
 
-    slug = agent.container_name.removeprefix("laia-")
+    slug = slug_from_container(agent.container_name)
     session_id = session_id or f"u-{user.id}"
     cfg = LLMSessionConfig(
         provider=user.llm_provider,
@@ -349,6 +363,11 @@ async def chat_stream(
             except Exception as exc:
                 _push({"type": "error", "message": f"run_conversation failed: {exc}"})
                 return
+
+            record_usage_for_session(
+                user_id=user.id, session_id=session_id,
+                llm_config=cfg, run_output=result, kind="chat",
+            )
 
             payload: dict[str, Any] = {"type": "done"}
             if isinstance(result, dict):

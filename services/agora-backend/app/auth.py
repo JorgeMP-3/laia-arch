@@ -64,6 +64,12 @@ def current_user(authorization: str | None = Header(default=None)) -> User:
     user = store.user_by_id(user_id)
     if not user:
         raise HTTPException(status_code=401, detail="user not found")
+
+    # Revocation cut-off (POST /api/logout). Tokens issued before this
+    # instant are rejected even if their JWT exp hasn't passed yet.
+    cutoff = store.tokens_valid_since(user_id)
+    if cutoff and int(payload.get("iat", 0)) <= cutoff:
+        raise HTTPException(status_code=401, detail="token revoked")
     return user
 
 

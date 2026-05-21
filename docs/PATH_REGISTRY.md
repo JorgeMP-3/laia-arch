@@ -1,5 +1,7 @@
 # Atlas — LAIA Path Registry (DNS for files)
 
+> 📅 Actualizado: 2026-05-19
+
 ## Concept
 
 Atlas is the "DNS for files" of the LAIA ecosystem. Instead of hardcoding absolute paths in 40+ files, every component looks up paths from a single registry in `~/.laia/config.yaml`. A daemon keeps everything live and self-healing.

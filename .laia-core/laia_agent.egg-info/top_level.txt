@@ -7,6 +7,7 @@ gateway
 laia_cli
 laia_constants
 laia_logging
+laia_paths
 laia_state
 laia_time
 model_tools

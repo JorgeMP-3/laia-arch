@@ -5,6 +5,8 @@ import threading
 import time
 from typing import Any
 
+from .agent_identity import slug_from_container
+
 from .config import settings
 from .coordinator import drain_broadcasts, queue_broadcast
 from .models import Event, now_iso
@@ -71,7 +73,7 @@ class FleetMonitor:
         for a in agents_list:
             if not True:
                 continue
-            slug = a.container_name.removeprefix("laia-")
+            slug = slug_from_container(a.container_name)
             lxd = next((la for la in lxd_agents if la.get("slug") == slug), None)
             current_state = (lxd.get("lxd_state") or "UNKNOWN").upper() if lxd else "NOT_FOUND"
             prev_state = self._prev_states.get(slug, "")

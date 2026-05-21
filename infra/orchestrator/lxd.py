@@ -18,8 +18,22 @@ def valid_slug(slug: str) -> bool:
     return bool(SLUG_RE.match(slug))
 
 
+# NOTE: these naming helpers are duplicated from
+# ``services/agora-backend/app/agent_identity.py``. They live here so that
+# the host-side orchestrator (which doesn't import the agora-backend
+# package) can derive container names without a cross-package dep.
+# Keep the two implementations in sync — if you change the prefix
+# convention here, also update agent_identity.py.
 def container_name(slug: str) -> str:
+    return f"agent-{slug}"
+
+
+def legacy_container_name(slug: str) -> str:
     return f"laia-{slug}"
+
+
+def candidate_container_names(slug: str) -> list[str]:
+    return [container_name(slug), legacy_container_name(slug)]
 
 
 def script(paths: config.Paths, relative: str) -> Path:
@@ -57,7 +71,7 @@ def image_exists(alias: str = config.DEFAULT_IMAGE_ALIAS) -> bool:
 
 
 def container_exists(slug: str) -> bool:
-    return lxc("info", container_name(slug), check=False).ok
+    return any(lxc("info", name, check=False).ok for name in candidate_container_names(slug))
 
 
 def list_agent_containers() -> list[dict[str, str]]:
@@ -66,7 +80,7 @@ def list_agent_containers() -> list[dict[str, str]]:
     if not result.stdout.strip():
         return rows
     for row in csv.reader(io.StringIO(result.stdout)):
-        if row and row[0].startswith("laia-"):
+        if row and (row[0].startswith("agent-") or row[0].startswith("laia-")) and row[0] not in {"laia-agora", "laia-jorge"}:
             rows.append(
                 {
                     "name": row[0],
@@ -429,7 +443,9 @@ def all_slugs() -> list[str]:
     slugs: list[str] = []
     for row in list_agent_containers():
         name = row["name"]
-        if name.startswith("laia-"):
+        if name.startswith("agent-"):
+            slugs.append(name.removeprefix("agent-"))
+        elif name.startswith("laia-") and name not in {"laia-agora", "laia-jorge"}:
             slugs.append(name.removeprefix("laia-"))
     return slugs
 
@@ -437,7 +453,7 @@ def all_slugs() -> list[str]:
 def fleet_status() -> list[dict]:
     rows: list[dict] = []
     for row in list_agent_containers():
-        slug = row["name"].removeprefix("laia-")
+        slug = row["name"].removeprefix("agent-") if row["name"].startswith("agent-") else row["name"].removeprefix("laia-")
         service = "unknown"
         try:
             svc = run(["lxc", "exec", row["name"], "--", "systemctl", "is-active", "laia-agent.service"], check=False)

@@ -268,7 +268,7 @@ def test_agent_pool_threads_user_llm_config_to_aiagent(monkeypatch):
     import app.agent_pool as _pool_mod
 
     sentinel = object()
-    monkeypatch.setattr(_pool_mod, "_build_aiagent", lambda cfg, *, session_metadata: sentinel)
+    monkeypatch.setattr(_pool_mod, "_build_aiagent", lambda cfg, **kwargs: sentinel)
 
     pool = AgentPool()
     cfg = LLMSessionConfig(

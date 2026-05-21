@@ -13,7 +13,8 @@ fi
 
 EMPLOYEE="$1"
 SNAPSHOT="${2:-manual-$(date -u +%Y%m%dT%H%M%SZ)}"
-CONTAINER="laia-${EMPLOYEE}"
+CONTAINER="${AGENT_CONTAINER_PREFIX:-agent-}${EMPLOYEE}"
+LEGACY_CONTAINER="laia-${EMPLOYEE}"
 
 if ! command -v lxc >/dev/null 2>&1; then
   echo "lxc command not found" >&2
@@ -21,10 +22,13 @@ if ! command -v lxc >/dev/null 2>&1; then
 fi
 
 if ! lxc info "$CONTAINER" >/dev/null 2>&1; then
-  echo "Container not found: $CONTAINER" >&2
-  exit 1
+  if lxc info "$LEGACY_CONTAINER" >/dev/null 2>&1; then
+    CONTAINER="$LEGACY_CONTAINER"
+  else
+    echo "Container not found: $CONTAINER (or legacy $LEGACY_CONTAINER)" >&2
+    exit 1
+  fi
 fi
 
 lxc snapshot "$CONTAINER" "$SNAPSHOT"
 echo "Snapshot created: $CONTAINER/$SNAPSHOT"
-

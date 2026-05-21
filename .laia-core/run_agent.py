@@ -9528,19 +9528,31 @@ class AIAgent:
             if not isinstance(function_args, dict):
                 function_args = {}
 
-            # Check plugin hooks for a block directive before executing.
+            # Check plugin hooks for a block-or-replace directive before
+            # executing. Same directive surface as the concurrent path: a
+            # ``block`` short-circuits with an error, a ``replace`` injects
+            # the message verbatim as the tool result (e.g. AGORA executor
+            # forwarder returns the JSON output of a remote HTTP call).
             _block_msg: Optional[str] = None
+            _replace_msg: Optional[str] = None
             try:
-                from laia_cli.plugins import get_pre_tool_call_block_message
-                _block_msg = get_pre_tool_call_block_message(
+                from laia_cli.plugins import get_pre_tool_call_directive
+                _directive = get_pre_tool_call_directive(
                     function_name, function_args, task_id=effective_task_id or "",
+                    tool_call_id=tool_call.id,
                 )
+                if _directive is not None:
+                    _action = _directive.get("action")
+                    if _action == "block":
+                        _block_msg = _directive.get("message", "")
+                    elif _action == "replace":
+                        _replace_msg = _directive.get("message", "")
             except Exception:
                 pass
 
-            if _block_msg is not None:
-                # Tool blocked by plugin policy — skip counter resets.
-                # Execution is handled below in the tool dispatch chain.
+            if _block_msg is not None or _replace_msg is not None:
+                # Tool intercepted by plugin (block OR replace) — skip
+                # counter resets and any pre-tool checkpoint side effects.
                 pass
             else:
                 # Reset nudge counters when the relevant tool is actually used
@@ -9614,6 +9626,12 @@ class AIAgent:
             if _block_msg is not None:
                 # Tool blocked by plugin policy — return error without executing.
                 function_result = json.dumps({"error": _block_msg}, ensure_ascii=False)
+                tool_duration = 0.0
+            elif _replace_msg is not None:
+                # Tool intercepted by plugin (e.g. AGORA forwarder) — use the
+                # supplied message verbatim as the tool's return value. No
+                # local execution; the result already came over the wire.
+                function_result = _replace_msg
                 tool_duration = 0.0
             elif function_name == "todo":
                 from tools.todo_tool import todo_tool as _todo_tool

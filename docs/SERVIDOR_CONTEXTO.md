@@ -1,5 +1,7 @@
 # Contexto para busqueda de servidor — Proyecto LAIA
 
+> &#x1F4C5; Actualizado: 2026-05-19. Ver `ARCHITECTURE.md` para la arquitectura v2.5 actual.
+
 ## Resumen ejecutivo
 
 LAIA es un ecosistema de agentes IA con un agente padre unico y agentes hijos por usuario. Se despliega sobre Ubuntu con servicios nativos + LXD para aislamiento de agentes + Docker solo para WordPress.
@@ -37,9 +39,9 @@ Volumenes Docker: `tienda_db_data`, `tienda_wordpress_data`
 | Contenedor | Agente | CPU | RAM | IP | Proposito |
 |---|---|---|---|---|---|
 | `laia-agora` | LAIA AGORA (coordinador) | 2 | 4 GB | 10.99.0.10 | Monitoriza, asigna tareas, interactua con todos los usuarios |
-| `laia-jorge` | "Nombrix" (ejemplo) | 2 | 4 GB | 10.99.0.50 | Agente personal de Jorge |
-| `laia-maria` | "MariaBot" (ejemplo) | 2 | 4 GB | 10.99.0.51 | Agente personal de Maria |
-| `laia-carlos` | "CarlosAI" (ejemplo) | 2 | 4 GB | 10.99.0.52 | Agente personal de Carlos |
+| `laia-jorge` | "Nombrix" (ejemplo) | 2 | 4 GB | 10.99.0.50 | PA-AGORA de Jorge |
+| `laia-maria` | "MariaBot" (ejemplo) | 2 | 4 GB | 10.99.0.51 | PA-AGORA de Maria |
+| `laia-carlos` | "CarlosAI" (ejemplo) | 2 | 4 GB | 10.99.0.52 | PA-AGORA de Carlos |
 | ... | ... | 2 | 4 GB | ... | Uno por empleado |
 
 **Perfil por agente** (`laia-employee`):
@@ -49,7 +51,7 @@ Volumenes Docker: `tienda_db_data`, `tienda_wordpress_data`
 - Nesting desactivado por defecto
 - Red bridge `lxdbr0` con subred `10.99.0.0/24`
 
-**Dentro de cada contenedor de agente personal** corre:
+**Dentro de cada contenedor de PA-AGORA** corre:
 - `laia-agent.service` (systemd dentro del container)
 - Runtime Python (`/opt/laia/runtime/venv`)
 - WorkspaceStore personal (`/opt/laia/workspaces/personal/workspace.db`)
@@ -73,13 +75,13 @@ TODO el trafico entra via `cloudflared` (tunel cifrado Cloudflare). El servidor 
 | `laiajmp.org` | arete-backend (Node.js) + SPA estatica | 8000 | Publico |
 | `app.laiajmp.org` | arete-backend API | 8000 | Publico |
 | `tienda.laiajmp.org` | WordPress Docker | 9000 | Publico |
-| `arch.laiajmp.org` | ARCH UI (admin) | pendiente | Solo VPN/Cloudflare Access |
+| `arch.laiajmp.org` | LAIA-ARCH UI (admin) | pendiente | Solo VPN/Cloudflare Access |
 | `agora.laiajmp.org` | AGORA frontend (React SPA) | 8090 (nginx) | Publico con login |
-| `api.laiajmp.org` | AGORA backend `/api/*` | 8088 | Publico |
+| `api.laiajmp.org` | LAIA-AGORA Backend `/api/*` | 8088 | Publico |
 
-### C) Dominios para agentes personales (futuro)
+### C) Dominios para PA-AGORA (futuro)
 
-Cada agente personal podria tener su propio subdominio para exponer servicios que el usuario levante dentro de su LXD:
+Cada PA-AGORA podria tener su propio subdominio para exponer servicios que el usuario levante dentro de su LXD:
 - `jorge.laiajmp.org` → nginx proxy → IP del LXD `laia-jorge` (10.99.0.50)
 - `maria.laiajmp.org` → nginx proxy → IP del LXD `laia-maria` (10.99.0.51)
 
@@ -108,7 +110,7 @@ nginx (reverse proxy)
               │                     /api/* → agora-backend :8088
               │
               ▼
-         AGORA backend (FastAPI)
+         LAIA-AGORA Backend (FastAPI)
               │
               ├── Gestiona usuarios, tareas, eventos
               ├── Coordinador (LAIA AGORA) → endpoint /api/coordinator/report
@@ -150,7 +152,7 @@ nginx (reverse proxy)
 | **Disco /srv/laia/** | 100+ GB (datos productivos, backups, workspaces, BD agentes) | Crece con el numero de agentes |
 | **Disco por agente LXD** | ~500 MB base + workspaces + datos | Depende del uso del agente |
 
-### Para N agentes personales
+### Para N PA-AGORA
 
 | Componente | Formula |
 |---|---|
@@ -165,7 +167,7 @@ nginx (reverse proxy)
 ```
 /home/laia-hermes/LAIA/           # Repositorio principal del proyecto
 ├── .laia-arch/                   # Hermes core + herramientas admin
-├── laia-ui/                      # UI monorepo (ARCH + AGORA)
+├── laia-ui/                      # UI monorepo (LAIA-ARCH + AGORA)
 ├── services/
 │   ├── agora-backend/            # Backend FastAPI de AGORA
 │   └── laia-runtime/       # Runtime que se despliega en cada LXD
@@ -221,7 +223,7 @@ Estas son las piezas NUEVAS que necesita este proyecto respecto al servidor Dell
 
 ## 8. Requisitos para el nuevo servidor
 
-### Minimo viable (1-3 agentes personales)
+### Minimo viable (1-3 PA-AGORA)
 - CPU: 8 cores
 - RAM: 32 GB
 - Disco: 256 GB SSD
@@ -229,7 +231,7 @@ Estas son las piezas NUEVAS que necesita este proyecto respecto al servidor Dell
 - Red: IP publica no necesaria (Cloudflare Tunnel)
 - Soporte para LXD (kernel Linux con user namespaces)
 
-### Recomendado (5-10 agentes personales)
+### Recomendado (5-10 PA-AGORA)
 - CPU: 12-16 cores
 - RAM: 64 GB
 - Disco: 512 GB NVMe SSD

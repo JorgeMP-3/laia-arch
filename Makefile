@@ -7,7 +7,7 @@ AGORA_DIR := $(LAIA_ROOT)/services/agora-backend
 INFRA_DIR := $(LAIA_ROOT)/infra
 UI_DIR := $(LAIA_ROOT)/laia-ui
 
-.PHONY: help install test deploy backup clean status health
+.PHONY: help install test smoke deploy backup clean status health
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
@@ -29,6 +29,9 @@ test: ## Run all tests
 	cd $(UI_DIR) && npx tsc --noEmit -p packages/arch-app/tsconfig.json 2>/dev/null
 	cd $(UI_DIR) && npx tsc --noEmit -p packages/agora-app/tsconfig.json 2>/dev/null
 	@echo "All tests passed."
+
+smoke: ## Run deployed AGORA smoke test
+	@bash $(INFRA_DIR)/dev/smoke-test.sh
 
 # ── Deploy ───────────────────────────────────────────────────────────────
 

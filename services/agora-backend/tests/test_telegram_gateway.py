@@ -236,6 +236,121 @@ def test_chat_turn_failure_is_surfaced_to_user():
     store.unlink_telegram_user(telegram_user_id="8012")
 
 
+def test_agent_pool_turn_returns_final_response_string_not_dict(monkeypatch):
+    """Regression: the gateway used to ``return run(message)`` directly,
+    which is a dict, so Telegram users got the raw AIAgent trace dumped
+    into the chat. After the fix the gateway extracts ``final_response``.
+    """
+    from app import telegram_gateway as tg
+
+    uid = _seed_user("tg_dict_extract")
+    user = store.user_by_id(uid)
+    assert user is not None
+    user.llm_provider = "openai-codex"
+    user.llm_model = "gpt-5.5"
+    store.save_user(user)
+
+    fake_run_output = {
+        "final_response": "Hola, soy jorge-dev.",
+        "messages": [
+            {"role": "user", "content": "hola"},
+            {"role": "assistant", "content": "Hola, soy jorge-dev."},
+        ],
+        "input_tokens": 100, "output_tokens": 7,
+    }
+
+    class _FakeSession:
+        class _AI:
+            def run_conversation(self, *a, **kw):
+                return fake_run_output
+        aiagent = _AI()
+
+    class _FakePool:
+        def get_or_create(self, **_): return _FakeSession()
+
+    monkeypatch.setattr(tg, "_shared_pool", lambda: _FakePool())
+    result = asyncio.run(tg._agent_pool_turn(uid, "hola"))
+    assert result == "Hola, soy jorge-dev.", f"got: {result!r}"
+    assert "{" not in result, "raw dict leaked into chat reply"
+
+
+def test_agent_pool_turn_falls_back_to_last_assistant_message(monkeypatch):
+    """When ``final_response``/``response`` are missing the gateway must
+    still extract the last assistant content from ``messages``."""
+    from app import telegram_gateway as tg
+
+    uid = _seed_user("tg_fallback")
+    user = store.user_by_id(uid)
+    assert user is not None
+    user.llm_provider = "openai-codex"
+    store.save_user(user)
+
+    class _FakeSession:
+        class _AI:
+            def run_conversation(self, *a, **kw):
+                return {
+                    "messages": [
+                        {"role": "user", "content": "hola"},
+                        {"role": "assistant", "content": "respuesta-final"},
+                    ],
+                }
+        aiagent = _AI()
+
+    class _FakePool:
+        def get_or_create(self, **_): return _FakeSession()
+
+    monkeypatch.setattr(tg, "_shared_pool", lambda: _FakePool())
+    result = asyncio.run(tg._agent_pool_turn(uid, "hola"))
+    assert result == "respuesta-final"
+
+
+def test_agent_pool_turn_oauth_provider_doesnt_require_api_key(monkeypatch):
+    """Regression: telegram_gateway._agent_pool_turn rejected OAuth users
+    because the guard only checked llm_api_key. After the fix it must
+    accept providers like ``openai-codex`` even with api_key=None."""
+    from app import telegram_gateway as tg
+
+    uid = _seed_user("tg_oauth")
+    user = store.user_by_id(uid)
+    assert user is not None
+    user.llm_provider = "openai-codex"
+    user.llm_api_key = None
+    user.llm_model = "gpt-5.5"
+    store.save_user(user)
+
+    # Force the pool path to skip actual AIAgent construction so the test
+    # doesn't need a live LLM. We just need the gate to NOT short-circuit.
+    class _FakeSession:
+        class _AI:
+            def run_conversation(self, *a, **kw):
+                return "ok"
+        aiagent = _AI()
+
+    class _FakePool:
+        def get_or_create(self, **_): return _FakeSession()
+
+    monkeypatch.setattr(tg, "_shared_pool", lambda: _FakePool())
+
+    result = asyncio.run(tg._agent_pool_turn(uid, "hola"))
+    assert "API key del LLM" not in result, (
+        "OAuth user shouldn't trip the api_key guard"
+    )
+
+
+def test_agent_pool_turn_still_rejects_non_oauth_without_api_key():
+    """Counterpart: a user on a non-OAuth provider with no api_key must
+    still get the configuration warning."""
+    from app import telegram_gateway as tg
+    uid = _seed_user("tg_noapi")
+    user = store.user_by_id(uid)
+    assert user is not None
+    user.llm_provider = "anthropic"   # not in OAUTH_PROVIDERS
+    user.llm_api_key = None
+    store.save_user(user)
+    result = asyncio.run(tg._agent_pool_turn(uid, "hola"))
+    assert "API key del LLM" in result
+
+
 def test_build_gateway_from_env_returns_none_without_token(monkeypatch):
     monkeypatch.delenv("AGORA_TELEGRAM_TOKEN", raising=False)
     from app.telegram_gateway import build_gateway_from_env

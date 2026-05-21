@@ -7,6 +7,10 @@ _test_dir = tempfile.mkdtemp(prefix="agora_test_")
 os.environ["AGORA_ENV"] = "dev"
 os.environ["AGORA_DATA_DIR"] = _test_dir
 os.environ["AGORA_DEV_DATA_DIR"] = _test_dir
+# Tests don't need the background tick loop and the asyncio task can leak
+# across test files. The scheduler exposes its public helpers without
+# needing the loop, so unit tests call them directly.
+os.environ["AGORA_DISABLE_SCHEDULER"] = "1"
 
 import atexit
 atexit.register(lambda: shutil.rmtree(_test_dir, ignore_errors=True))

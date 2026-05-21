@@ -1,0 +1,8 @@
+slug: agora-now
+name: agora-now
+version: 0.1.2
+kind: standalone
+description: |
+  Devuelve la fecha y hora actual en UTC y en la zona del proceso.
+  Sirve para que el agente tenga "reloj" sin depender de una llamada de
+  bash externa.

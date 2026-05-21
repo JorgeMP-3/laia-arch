@@ -51,13 +51,21 @@ def _mock_op(method: str, return_value):
 # ── GET /api/agent/profile ─────────────────────────────────────────────────
 
 def test_get_my_profile_ok():
-    with _mock_op("get_agent_profile", FAKE_PROFILE):
-        r = client.get("/api/agent/profile", headers=HEADERS)
+    client.patch(
+        "/api/agent/profile",
+        headers=HEADERS,
+        json={
+            "persona": "# Agent\n\nI am a helpful assistant.",
+            "preferences": {"language": "es"},
+            "skills": {"enabled": ["tasks.basic"]},
+        },
+    )
+    r = client.get("/api/agent/profile", headers=HEADERS)
     assert r.status_code == 200
     body = r.json()
     assert body["persona"] == "# Agent\n\nI am a helpful assistant."
     assert body["preferences"]["language"] == "es"
-    assert body["skills"]["enabled"] == ["tasks.basic"]
+    assert body["preferences"]["skills"]["enabled"] == ["tasks.basic"]
 
 
 def test_get_my_profile_requires_auth():
@@ -65,19 +73,18 @@ def test_get_my_profile_requires_auth():
     assert r.status_code == 401
 
 
-def test_get_my_profile_orchestrator_error():
+def test_get_my_profile_ignores_orchestrator():
     with _mock_op("get_agent_profile", {"ok": False, "returncode": 1, "data": None, "stderr": "container down"}):
         r = client.get("/api/agent/profile", headers=HEADERS)
-    assert r.status_code == 500
+    assert r.status_code == 200
 
 
 # ── PATCH /api/agent/profile ──────────────────────────────────────────────
 
 def test_update_my_profile_ok():
-    with _mock_op("update_agent_profile", FAKE_PROFILE):
-        r = client.patch("/api/agent/profile", headers=HEADERS, json={"persona": "# New Agent\n\nI am new."})
+    r = client.patch("/api/agent/profile", headers=HEADERS, json={"persona": "# New Agent\n\nI am new."})
     assert r.status_code == 200
-    assert r.json()["persona"] == "# Agent\n\nI am a helpful assistant."
+    assert r.json()["persona"] == "# New Agent\n\nI am new."
 
 
 def test_update_my_profile_empty_payload():
@@ -86,8 +93,7 @@ def test_update_my_profile_empty_payload():
 
 
 def test_update_my_profile_skills():
-    with _mock_op("update_agent_profile", FAKE_PROFILE):
-        r = client.patch("/api/agent/profile", headers=HEADERS, json={"skills": {"enabled": ["tasks.basic"]}})
+    r = client.patch("/api/agent/profile", headers=HEADERS, json={"skills": {"enabled": ["tasks.basic"]}})
     assert r.status_code == 200
 
 

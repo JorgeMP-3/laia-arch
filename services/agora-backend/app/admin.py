@@ -6,6 +6,7 @@ import logging
 import os
 import re
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -20,6 +21,13 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from .auth import public_user, require_roles
+from .agent_identity import (
+    canonical_container_name,
+    candidate_container_names,
+    is_user_agent_container,
+    legacy_container_name,
+    normalize_container_name,
+)
 from .config import settings
 from .models import Agent, Event, Role, User, new_id, now_iso
 from .security import hash_password
@@ -37,7 +45,7 @@ logger = logging.getLogger("agora.admin")
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
 SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{1,30}$")
-CONTAINER_RE = re.compile(r"^laia-[a-z0-9][a-z0-9-]{1,30}$|^laia-agora$")
+CONTAINER_RE = re.compile(r"^(agent|laia)-[a-z0-9][a-z0-9_-]{1,40}$|^laia-agora$")
 
 # Whitelist of LXD image aliases the admin endpoints may pass to
 # create-agent.sh / lxc launch. ``laia-agent`` is the only image the
@@ -107,6 +115,44 @@ def _admin_rate_limit(actor_id: str) -> None:
                 headers={"Retry-After": str(retry_after)},
             )
         bucket.append(now)
+
+
+def _warn_host_op_via_agora_admin(actor: User, action: str) -> None:
+    """Emit a WARN audit event when ``actor`` triggers a host-LXD action.
+
+    Regla ⑥ del Documento Definitivo: admin AGORA NO gestiona
+    infraestructura (LXD, systemd, filesystem del host). Esos endpoints
+    son territorio de LAIA-ARCH y deberían exigir el rol ``host_admin``.
+    Hoy se siguen aceptando con ``agora_admin`` por compatibilidad —
+    flippear el role-check rompería el flujo de Jorge sin la migración
+    asociada (asignarle el rol ``host_admin`` a su fila ``users``).
+
+    Esta función deja una pista observable cada vez que se hace una
+    operación host por la puerta ``agora_admin``, sin bloquear. Cuando la
+    migración esté hecha (Jorge marcado como ``host_admin``), cambiar el
+    ``require_roles("agora_admin")`` a ``require_roles("host_admin")`` en
+    los 5 endpoints afectados y eliminar este helper.
+    """
+    if getattr(actor, "role", None) == "host_admin":
+        return  # caller is the right role, nada que loggear.
+    try:
+        ev = Event(
+            id=new_id("evt"),
+            event_type="rule_6_host_op_via_agora_admin",
+            actor_id=actor.id,
+            summary=f"host op {action!r} executed by agora_admin (regla ⑥ deferred enforcement)",
+            payload={"action": action, "actor_role": actor.role},
+        )
+        store.record_event(ev)
+    except Exception:
+        pass
+    logger.warning(
+        "regla⑥: host LXD op '%s' triggered by agora_admin %s "
+        "(should require host_admin after migration)",
+        action, getattr(actor, "username", actor.id),
+        extra={"event": "rule_6_violation", "action": action,
+               "actor_id": actor.id, "actor_role": actor.role},
+    )
 
 
 def _log_admin_action(
@@ -259,7 +305,7 @@ def _parse_lxc_csv(output: str) -> list[dict]:
         if not row:
             continue
         name = row[0].strip()
-        if not name.startswith("laia-"):
+        if name != "laia-agora" and not is_user_agent_container(name):
             continue
         containers.append({
             "name": name,
@@ -276,6 +322,36 @@ def _list_lxc_containers() -> tuple[list[dict], str | None]:
     if not result["ok"]:
         return [], result["stderr"] or result["stdout"] or "lxc list failed"
     return _parse_lxc_csv(result["stdout"]), None
+
+
+def _fallback_containers_from_store() -> list[dict]:
+    """Best-effort container view when backend cannot access host LXD.
+
+    In the deployed architecture, ``laia-agora`` runs inside an unprivileged
+    container and may not be in the host ``lxd`` group. The admin dashboard
+    should still report the orchestrator and registered executors from DB
+    state instead of showing zero containers.
+    """
+    rows = [{
+        "name": "laia-agora",
+        "state": "RUNNING",
+        "ipv4": "",
+        "type": "CONTAINER",
+        "snapshots": "0",
+        "source": "db-fallback",
+    }]
+    for agent in store.agents():
+        if agent.status != "running":
+            continue
+        rows.append({
+            "name": agent.container_name,
+            "state": "RUNNING",
+            "ipv4": agent.container_ip or "",
+            "type": "CONTAINER",
+            "snapshots": "0",
+            "source": "db-fallback",
+        })
+    return rows
 
 
 def _http_json(url: str, *, headers: dict[str, str] | None = None, timeout: float = 2.0) -> dict:
@@ -421,7 +497,10 @@ def _journal_lines(name: str, *, lines: int, since: str | None = None) -> tuple[
 
 
 def _normalize_container_name(name: str) -> str:
-    container = name if name.startswith("laia-") else f"laia-{name}"
+    try:
+        container = "laia-agora" if name == "laia-agora" else normalize_container_name(name)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     if not CONTAINER_RE.fullmatch(container):
         raise HTTPException(status_code=422, detail="invalid container name")
     return container
@@ -565,7 +644,7 @@ def _register_agent_for_user(slug: str, user: User, provision: dict, actor_id: s
     agent = Agent(
         id=new_id("agent"),
         user_id=user.id,
-        container_name=f"laia-{slug}",
+        container_name=canonical_container_name(slug),
         status="running",
         workspace_path="/opt/laia/workspaces/personal/workspace.db",
         container_ip=provision.get("ipv4") or provision.get("container_ip"),
@@ -592,7 +671,8 @@ def _provision_user_job(actor_id: str) -> Callable[[dict, str], dict]:
         existing = store.user_by_username(slug)
         provision: dict | None = None
         user: User | None = None
-        _append_job_log(log_path, f"provisioning container laia-{slug}")
+        container = canonical_container_name(slug)
+        _append_job_log(log_path, f"provisioning container {container}")
         try:
             result = _run_command([str(script), slug, params.get("image_alias", "laia-agent")], timeout=900)
             _append_job_log(log_path, result["stdout"])
@@ -611,7 +691,7 @@ def _provision_user_job(actor_id: str) -> Callable[[dict, str], dict]:
             }
         except Exception:
             if provision is not None:
-                cleanup = _run_command(["lxc", "delete", "--force", f"laia-{slug}"], timeout=120)
+                cleanup = _run_command(["lxc", "delete", "--force", container], timeout=120)
                 if not cleanup["ok"]:
                     _append_job_log(log_path, cleanup["stderr"] or cleanup["stdout"])
             if user is not None and (existing is None or not existing.active):
@@ -628,7 +708,9 @@ def _delete_user_job(actor_id: str) -> Callable[[dict, str], dict]:
             raise RuntimeError(f"user not found: {slug}")
         store.disable_user(user.id)
         _append_job_log(log_path, f"disabled user {slug}")
-        result = _run_command(["lxc", "delete", "--force", f"laia-{slug}"], timeout=120)
+        existing_agent = next((a for a in store.agents() if a.user_id == user.id or a.id == user.agent_id), None)
+        container = existing_agent.container_name if existing_agent else canonical_container_name(slug)
+        result = _run_command(["lxc", "delete", "--force", container], timeout=120)
         if not result["ok"]:
             _append_job_log(log_path, result["stderr"] or result["stdout"])
         user_dir = Path(os.environ.get("AGORA_ADMIN_USERS_ROOT", "/srv/laia/users")) / slug
@@ -659,12 +741,14 @@ def _rebuild_user_job(actor_id: str) -> Callable[[dict, str], dict]:
         user = store.user_by_username(slug)
         if not user or not user.active:
             raise RuntimeError(f"user not found: {slug}")
-        _append_job_log(log_path, f"deleting old container laia-{slug}")
-        delete_result = _run_command(["lxc", "delete", "--force", f"laia-{slug}"], timeout=120)
+        existing_agent = next((a for a in store.agents() if a.user_id == user.id or a.id == user.agent_id), None)
+        container = existing_agent.container_name if existing_agent else canonical_container_name(slug)
+        _append_job_log(log_path, f"deleting old container {container}")
+        delete_result = _run_command(["lxc", "delete", "--force", container], timeout=120)
         if not delete_result["ok"]:
             _append_job_log(log_path, delete_result["stderr"] or delete_result["stdout"])
         script = settings.laia_root / "infra" / "lxd" / "scripts" / "create-agent.sh"
-        _append_job_log(log_path, f"recreating container laia-{slug}")
+        _append_job_log(log_path, f"recreating container {container}")
         create_result = _run_command([str(script), slug, params.get("image_alias", "laia-agent")], timeout=900)
         _append_job_log(log_path, create_result["stdout"])
         if create_result["stderr"]:
@@ -673,7 +757,11 @@ def _rebuild_user_job(actor_id: str) -> Callable[[dict, str], dict]:
             raise RuntimeError(create_result["stderr"] or create_result["stdout"] or "create-agent failed")
         provision = _extract_last_json_line(create_result["stdout"])
         for agent in store.agents():
-            if agent.user_id == user.id or agent.id == user.agent_id or agent.container_name == f"laia-{slug}":
+            if (
+                agent.user_id == user.id
+                or agent.id == user.agent_id
+                or agent.container_name in set(candidate_container_names(slug))
+            ):
                 agent.status = "running"
                 agent.container_ip = provision.get("ipv4") or provision.get("container_ip")
                 agent.api_token = provision.get("api_token")
@@ -771,9 +859,77 @@ def _tests_snapshot() -> dict:
     }
 
 
+def _parse_lxd_time(value: str) -> datetime | None:
+    value = value.strip().replace(" UTC", "+00:00")
+    for fmt in ("%Y/%m/%d %H:%M%z", "%Y-%m-%dT%H:%M:%SZ"):
+        try:
+            return datetime.strptime(value, fmt).astimezone(timezone.utc)
+        except ValueError:
+            continue
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(timezone.utc)
+    except ValueError:
+        return None
+
+
+def _image_freshness_snapshot() -> dict:
+    image_alias = os.environ.get("AGORA_IMAGE_ALIAS", "laia-agora")
+    threshold = int(os.environ.get("AGORA_IMAGE_DRIFT_WARNING_SECONDS", "0"))
+    image = _run_command(["lxc", "image", "info", image_alias], timeout=10)
+    git = _run_command(
+        [
+            "git", "-C", str(settings.laia_root), "log", "-1", "--format=%ct",
+            "--", "services/agora-backend", ".laia-core",
+        ],
+        timeout=10,
+    )
+    built_at: str | None = None
+    built_epoch: float | None = None
+    if image["ok"]:
+        uploaded = created = ""
+        for line in image["stdout"].splitlines():
+            stripped = line.strip()
+            if stripped.startswith("Uploaded:"):
+                uploaded = stripped.split(":", 1)[1].strip()
+            elif stripped.startswith("Created:"):
+                created = stripped.split(":", 1)[1].strip()
+        parsed = _parse_lxd_time(uploaded or created)
+        if parsed:
+            built_at = parsed.isoformat()
+            built_epoch = parsed.timestamp()
+
+    last_commit: str | None = None
+    commit_epoch: float | None = None
+    if git["ok"]:
+        raw = git["stdout"].strip().splitlines()[-1:] or [""]
+        if raw[0].isdigit():
+            commit_epoch = float(raw[0])
+            last_commit = datetime.fromtimestamp(commit_epoch, timezone.utc).isoformat()
+
+    drift_seconds = None
+    stale = False
+    if built_epoch is not None and commit_epoch is not None:
+        drift_seconds = int(commit_epoch - built_epoch)
+        stale = drift_seconds > threshold
+
+    return {
+        "image_alias": image_alias,
+        "built_at": built_at,
+        "last_commit_touching_backend": last_commit,
+        "drift_seconds": drift_seconds,
+        "drift_warning_threshold": threshold,
+        "stale": stale,
+        "ok": image["ok"] and git["ok"] and built_at is not None and last_commit is not None,
+        "image_error": None if image["ok"] else image["stderr"] or image["stdout"],
+        "git_error": None if git["ok"] else git["stderr"] or git["stdout"],
+    }
+
+
 @router.get("/status")
 def admin_status(_: User = Depends(require_roles("agora_admin"))):
     containers, container_error = _list_lxc_containers()
+    if not containers and container_error:
+        containers = _fallback_containers_from_store()
     enriched = _enrich_containers(containers, include_health=True)
     users = store.users()
     agents = store.agents()
@@ -796,6 +952,7 @@ def admin_status(_: User = Depends(require_roles("agora_admin"))):
                 "running": sum(1 for a in agents if a.status == "running"),
             },
             "auth": _auth_snapshot(),
+            "image": _image_freshness_snapshot(),
             "tests": _tests_snapshot(),
             "jobs": _jobs_summary(),
             "recent_errors": _recent_error_lines(),
@@ -803,9 +960,16 @@ def admin_status(_: User = Depends(require_roles("agora_admin"))):
     }
 
 
+@router.get("/image/freshness")
+def image_freshness(_: User = Depends(require_roles("agora_admin"))):
+    return {"image": _image_freshness_snapshot()}
+
+
 @router.get("/containers")
 def admin_containers(_: User = Depends(require_roles("agora_admin"))):
     containers, error = _list_lxc_containers()
+    if not containers and error:
+        containers = _fallback_containers_from_store()
     return {"containers": _enrich_containers(containers), "error": error}
 
 
@@ -977,6 +1141,245 @@ def admin_users(_: User = Depends(require_roles("agora_admin"))):
     return {"users": rows}
 
 
+# ── Budget caps + usage ledger (Fase D) ───────────────────────────────────
+
+
+from pydantic import BaseModel as _BaseModel
+from typing import Optional as _Optional
+
+
+class _BudgetPatch(_BaseModel):
+    daily_usd: _Optional[float] = None
+    monthly_usd: _Optional[float] = None
+    tokens_daily: _Optional[int] = None
+    # Sentinel keys: any field set explicitly to ``None`` clears; missing
+    # fields are left unchanged. Pydantic exposes ``model_fields_set`` to
+    # tell which keys arrived in the request body.
+
+
+@router.get("/users/{user_id}/budget")
+def get_user_budget(user_id: str, _: User = Depends(require_roles("agora_admin"))):
+    if store.user_by_id(user_id) is None:
+        raise HTTPException(status_code=404, detail="user not found")
+    return {"user_id": user_id, "budget": store.get_user_budget(user_id)}
+
+
+@router.patch("/users/{user_id}/budget")
+def patch_user_budget(user_id: str, payload: _BudgetPatch,
+                      actor: User = Depends(require_roles("agora_admin"))):
+    if store.user_by_id(user_id) is None:
+        raise HTTPException(status_code=404, detail="user not found")
+    kwargs: dict = {}
+    if "daily_usd" in payload.model_fields_set:
+        kwargs["daily_usd"] = payload.daily_usd
+    if "monthly_usd" in payload.model_fields_set:
+        kwargs["monthly_usd"] = payload.monthly_usd
+    if "tokens_daily" in payload.model_fields_set:
+        kwargs["tokens_daily"] = payload.tokens_daily
+    new = store.set_user_budget(user_id, **kwargs)
+    _log_admin_action(actor, "budget-set", target=user_id, **new)
+    return {"user_id": user_id, "budget": new}
+
+
+@router.get("/usage")
+def admin_usage_breakdown(
+    user_id: str | None = None,
+    window: str = "day",
+    _: User = Depends(require_roles("agora_admin")),
+):
+    """Return per-user (or single-user) usage breakdown for the window
+    ``day`` / ``week`` / ``month``. Default: day."""
+    from datetime import datetime, timedelta, timezone
+    now = datetime.now(timezone.utc)
+    if window == "month":
+        since = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    elif window == "week":
+        since = (now - timedelta(days=7)).replace(hour=0, minute=0, second=0, microsecond=0)
+    else:
+        since = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    since_iso = since.isoformat()
+
+    if user_id is not None:
+        if store.user_by_id(user_id) is None:
+            raise HTTPException(status_code=404, detail="user not found")
+        return {
+            "window": window, "since": since_iso, "user_id": user_id,
+            "totals": store.usage_total_for(user_id, since_iso=since_iso),
+            "breakdown": store.usage_breakdown_for(user_id, since_iso=since_iso),
+        }
+    # All users.
+    users_rows = []
+    for u in store.users():
+        totals = store.usage_total_for(u.id, since_iso=since_iso)
+        if totals["calls"] > 0:
+            users_rows.append({
+                "user_id": u.id, "username": u.username,
+                "totals": totals,
+            })
+    return {"window": window, "since": since_iso, "users": users_rows}
+
+
+@router.get("/users-overview")
+def users_overview(
+    window: str = "day",
+    _: User = Depends(require_roles("agora_admin")),
+):
+    """Single-shot per-user roll-up: profile + container + LLM cfg + budget
+    + usage for the window. Replaces the N+1 pattern in the legacy TUI
+    (Cost + Areas tabs used to fan out 50+ requests for 50 users).
+    """
+    from datetime import datetime, timedelta, timezone
+    now = datetime.now(timezone.utc)
+    if window == "month":
+        since = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    elif window == "week":
+        since = (now - timedelta(days=7)).replace(
+            hour=0, minute=0, second=0, microsecond=0)
+    else:
+        since = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    since_iso = since.isoformat()
+
+    agents_by_user = {a.user_id: a for a in store.agents()}
+
+    rows: list[dict] = []
+    for u in store.users():
+        agent = agents_by_user.get(u.id)
+        # Cheap path: budget + usage + inbox + learnings all hit indexed
+        # cols in agora.db; the heaviest query is usage_total_for, but it
+        # uses idx_ledger_user_ts so it stays sub-ms even with thousands
+        # of rows per user.
+        try:
+            usage = store.usage_total_for(u.id, since_iso=since_iso)
+        except Exception:
+            usage = {"tokens_input": 0, "tokens_output": 0,
+                     "cost_usd": 0.0, "calls": 0}
+        try:
+            budget = store.get_user_budget(u.id)
+        except Exception:
+            budget = {"daily_usd": None, "monthly_usd": None, "tokens_daily": None}
+        try:
+            unread = store.unread_count_for_user(u.id)
+        except Exception:
+            unread = 0
+        try:
+            lcount_row = store.db.conn.execute(
+                "SELECT COUNT(*) FROM agent_learnings WHERE user_id = ?",
+                (u.id,),
+            ).fetchone()
+            lcount = int(lcount_row[0] or 0)
+        except Exception:
+            lcount = 0
+        rows.append({
+            "id": u.id,
+            "username": u.username,
+            "display_name": u.display_name,
+            "role": u.role,
+            "active": bool(u.active),
+            "agent_id": u.agent_id,
+            "container_name": agent.container_name if agent else None,
+            "container_ip": agent.container_ip if agent else None,
+            "container_status": agent.status if agent else None,
+            "llm_provider": u.llm_provider,
+            "llm_model": u.llm_model,
+            "budget": budget,
+            "usage": usage,
+            "unread_inbox": unread,
+            "learnings_count": lcount,
+        })
+    return {"window": window, "since": since_iso, "users": rows}
+
+
+class _LLMConfigUpdateAdmin(BaseModel):
+    provider: str | None = None
+    api_key: str | None = None
+    base_url: str | None = None
+    model: str | None = None
+    api_mode: str | None = None
+    extras: dict | None = None
+    mcp_servers: list[dict] | None = None
+
+
+@router.patch("/users/{user_id}/llm-config")
+def patch_user_llm_config_admin(
+    user_id: str,
+    payload: _LLMConfigUpdateAdmin,
+    actor: User = Depends(require_roles("agora_admin")),
+):
+    """Admin counterpart to ``PATCH /api/user/llm-config``. Lets an admin
+    set the LLM provider/api_key/model/mode for any user — used by the
+    new-user wizard in the v2 control center."""
+    if store.user_by_id(user_id) is None:
+        raise HTTPException(status_code=404, detail="user not found")
+    fields = payload.model_fields_set
+    extras_json: str | None
+    if "extras" in fields:
+        if payload.extras is None:
+            extras_json = ""
+        else:
+            extras_json = json.dumps(payload.extras, ensure_ascii=False, sort_keys=True)
+    else:
+        extras_json = None
+    mcp_json: str | None
+    if "mcp_servers" in fields:
+        if payload.mcp_servers is None:
+            mcp_json = ""
+        else:
+            mcp_json = json.dumps(payload.mcp_servers, ensure_ascii=False, sort_keys=True)
+    else:
+        mcp_json = None
+    updated = store.update_user_llm_config(
+        user_id,
+        provider=payload.provider if "provider" in fields else None,
+        api_key=payload.api_key if "api_key" in fields else None,
+        base_url=payload.base_url if "base_url" in fields else None,
+        model=payload.model if "model" in fields else None,
+        api_mode=payload.api_mode if "api_mode" in fields else None,
+        extras_json=extras_json,
+        mcp_servers_json=mcp_json,
+    )
+    if updated is None:
+        raise HTTPException(status_code=404, detail="user not found")
+    _log_admin_action(actor, "llm-config-set", target=user_id,
+                      provider=updated.llm_provider, model=updated.llm_model)
+    return {
+        "user_id": user_id,
+        "provider": updated.llm_provider,
+        "model": updated.llm_model,
+        "base_url": updated.llm_base_url,
+        "api_mode": updated.llm_api_mode,
+        "has_key": bool(updated.llm_api_key),
+    }
+
+
+@router.get("/users/{user_id}/scheduled-jobs")
+def user_scheduled_jobs(
+    user_id: str,
+    _: User = Depends(require_roles("agora_admin")),
+):
+    if store.user_by_id(user_id) is None:
+        raise HTTPException(status_code=404, detail="user not found")
+    jobs = store.list_scheduled_jobs(user_id)
+    webhooks = store.list_webhooks(user_id)
+    return {
+        "user_id": user_id,
+        "scheduled_jobs": [j.model_dump() for j in jobs],
+        "webhooks": [w.model_dump() for w in webhooks],
+    }
+
+
+@router.get("/users/{user_id}/child-runs")
+def user_child_runs(
+    user_id: str,
+    limit: int = Query(default=20, ge=1, le=200),
+    _: User = Depends(require_roles("agora_admin")),
+):
+    if store.user_by_id(user_id) is None:
+        raise HTTPException(status_code=404, detail="user not found")
+    runs = store.list_child_runs_for_user(user_id, limit=limit)
+    return {"user_id": user_id, "count": len(runs),
+            "child_runs": [r.model_dump() for r in runs]}
+
+
 @router.delete("/users/{slug}", response_model=AdminJobResponse, status_code=202)
 def delete_admin_user(slug: str, actor: User = Depends(require_roles("agora_admin"))):
     _admin_rate_limit(actor.id)
@@ -994,12 +1397,16 @@ def delete_admin_user(slug: str, actor: User = Depends(require_roles("agora_admi
     return AdminJobResponse(job_id=job_id)
 
 
+# regla ⑥: this endpoint runs `lxc delete --force` + `create-agent.sh`
+# on the host. After the host_admin migration it should require that
+# role. For now we audit + accept.
 @router.post("/users/{slug}/rebuild", response_model=AdminJobResponse, status_code=202)
 def rebuild_admin_user(
     slug: str,
     image_alias: str = "laia-agent",
     actor: User = Depends(require_roles("agora_admin")),
 ):
+    _warn_host_op_via_agora_admin(actor, "rebuild-user")  # regla ⑥
     _admin_rate_limit(actor.id)
     if not SLUG_RE.fullmatch(slug):
         raise HTTPException(status_code=422, detail="invalid slug")
@@ -1020,6 +1427,9 @@ def rebuild_admin_user(
 
 @router.post("/containers/{name}/restart", response_model=AdminJobResponse, status_code=202)
 def restart_container(name: str, actor: User = Depends(require_roles("agora_admin"))):
+    # regla ⑥: this is LXD host territory, should require host_admin
+    # post-migration. See _warn_host_op_via_agora_admin docstring.
+    _warn_host_op_via_agora_admin(actor, "container-restart")
     _admin_rate_limit(actor.id)
     container = _normalize_container_name(name)
     job_id = _start_job(
@@ -1038,6 +1448,7 @@ def snapshot_container(
     payload: AdminContainerSnapshotRequest,
     actor: User = Depends(require_roles("agora_admin")),
 ):
+    _warn_host_op_via_agora_admin(actor, "container-snapshot")  # regla ⑥
     _admin_rate_limit(actor.id)
     container = _normalize_container_name(name)
     job_id = _start_job(
@@ -1056,6 +1467,7 @@ def restore_container(
     payload: AdminContainerSnapshotRequest,
     actor: User = Depends(require_roles("agora_admin")),
 ):
+    _warn_host_op_via_agora_admin(actor, "container-restore")  # regla ⑥
     _admin_rate_limit(actor.id)
     container = _normalize_container_name(name)
     job_id = _start_job(
@@ -1070,6 +1482,7 @@ def restore_container(
 
 @router.post("/system/restart-backend", response_model=AdminJobResponse, status_code=202)
 def restart_backend(actor: User = Depends(require_roles("agora_admin"))):
+    _warn_host_op_via_agora_admin(actor, "restart-backend")  # regla ⑥
     _admin_rate_limit(actor.id)
 
     def run(_params: dict, log_path: str) -> dict:
@@ -1127,11 +1540,12 @@ def _fix_auth_json_push(actor_id: str, log_path: str) -> dict:
     return {"target": f"{container}{target}", "output": result["stdout"]}
 
 
-def _fix_pip_install_laia_core(actor_id: str, log_path: str) -> dict:
-    """G3 from the handoff: `.laia-core` deps missing inside laia-agora
-    container (the build script used to look for requirements.txt that
-    no longer exists). Installs the package — useful if a fresh image
-    was built without the fix in build-agora-image.sh."""
+def _fix_pip_reinstall_laia_core(actor_id: str, log_path: str) -> dict:
+    """Reinstall `.laia-core` inside laia-agora for upgrade repair.
+
+    Fresh images install the package from pyproject.toml during build; this
+    curated fix remains for future in-place upgrades or damaged venvs.
+    """
     container = os.environ.get("AGORA_ADMIN_AGORA_CONTAINER", "laia-agora")
     args = [
         "lxc", "exec", container, "--",
@@ -1192,9 +1606,9 @@ _FIX_REGISTRY: dict[str, dict] = {
         "fn": _fix_auth_json_push,
         "timeout": 60,
     },
-    "pip-install-laia-core": {
-        "description": "Install .laia-core deps inside laia-agora venv",
-        "fn": _fix_pip_install_laia_core,
+    "pip-reinstall-laia-core": {
+        "description": "Reinstall .laia-core package inside laia-agora venv",
+        "fn": _fix_pip_reinstall_laia_core,
         "timeout": 700,
     },
     "pm2-stop-respawner": {
@@ -1267,12 +1681,20 @@ def run_tests(actor: User = Depends(require_roles("agora_admin"))):
 
     def run(_params: dict, log_path: str) -> dict:
         backend_dir = settings.laia_root / "services" / "agora-backend"
-        pytest_bin = backend_dir / ".venv" / "bin" / "pytest"
-        if not pytest_bin.is_file():
-            raise RuntimeError(f"pytest binary not found at {pytest_bin}")
-        env_extra = {"PYTHONPATH": str(settings.laia_root / ".laia-core")}
+        python_bin = Path(sys.executable)
+        if not python_bin.is_file():
+            raise RuntimeError(f"python binary not found at {python_bin}")
+        pythonpath = os.pathsep.join([
+            str(settings.laia_root),
+            str(settings.laia_root / ".laia-core"),
+            str(settings.laia_root / "services" / "laia-executor" / "src"),
+        ])
+        env_extra = {
+            "PYTHONPATH": pythonpath,
+            "PYTEST_ADDOPTS": "-p no:cacheprovider",
+        }
         cmd = [
-            str(pytest_bin), "tests/", "-q", "--no-header",
+            str(python_bin), "-m", "pytest", "tests/", "-q", "--no-header",
             "--maxfail", "5",
         ]
         _append_job_log(log_path, "$ " + " ".join(cmd))

@@ -83,7 +83,8 @@ TAR="$TMPDIR/laia-agora-src.tar.gz"
     -czf "$TAR" \
       .laia-core \
       workspace_store \
-      services/agora-backend )
+      services/agora-backend \
+      services/laia-executor )
 ok "tarball ready: $(du -h "$TAR" | cut -f1)"
 
 # ── launch base container ────────────────────────────────────────────────────
@@ -157,11 +158,18 @@ lxc exec "$BASE_CONTAINER" -- bash -lc '
   set -euo pipefail
   python3 -m venv /opt/agora/venv
   /opt/agora/venv/bin/pip install --upgrade pip setuptools wheel
+  /opt/agora/venv/bin/pip install pytest
   # Install agora-backend (FastAPI service)
   if [[ -f /opt/agora/app/services/agora-backend/pyproject.toml ]]; then
     /opt/agora/venv/bin/pip install -e /opt/agora/app/services/agora-backend
   elif [[ -f /opt/agora/app/services/agora-backend/requirements.txt ]]; then
     /opt/agora/venv/bin/pip install -r /opt/agora/app/services/agora-backend/requirements.txt
+  fi
+  # Install laia-executor too: backend integration tests instantiate its ASGI
+  # app directly to verify tool forwarding, even though production tool calls
+  # are sent to separate per-user executor containers.
+  if [[ -f /opt/agora/app/services/laia-executor/pyproject.toml ]]; then
+    /opt/agora/venv/bin/pip install -e /opt/agora/app/services/laia-executor
   fi
   # Install .laia-core (motor AIAgent) and its deps. ARCH migrated from
   # requirements.txt to pyproject.toml so we try both — first the
@@ -206,6 +214,11 @@ Environment="LAIA_HOME=/opt/agora/data"
 Environment="LAIA_ROOT=/opt/agora/app"
 Environment="AGORA_COLLECTIVE_WORKSPACE=collective"
 Environment="PYTHONPATH=/opt/agora/app:/opt/agora/app/.laia-core"
+# Optional operator overrides — file lives in the bind-mounted data dir
+# (host: /srv/laia/agora/.env) so the wizard / admin can drop secrets in
+# without rebuilding the image. The "-" prefix makes the file optional;
+# common keys: AGORA_TELEGRAM_TOKEN, AGORA_DEFAULT_PROVIDER, …
+EnvironmentFile=-/opt/agora/data/.env
 ExecStart=/opt/agora/venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000
 Restart=on-failure
 RestartSec=3
