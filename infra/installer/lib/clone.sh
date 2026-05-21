@@ -36,6 +36,8 @@
 readonly LAIA_LIB_CLONE_LOADED=1
 
 readonly LAIA_USERS_DIR_DEFAULT="/srv/laia/users"
+readonly LAIA_AGORA_DIR_DEFAULT="/srv/laia/agora"
+readonly LAIA_ARCH_DIR_DEFAULT="/srv/laia/arch"
 readonly LAIA_AGORA_HEALTH_URL="http://127.0.0.1:8088/api/health"
 
 # Populated by clone_detect_paths.
@@ -49,6 +51,15 @@ clone_dest_laia_home() {
 }
 clone_dest_users_dir() {
   printf '%s\n' "${LAIA_USERS_DIR_OVERRIDE:-$LAIA_USERS_DIR_DEFAULT}"
+}
+clone_dest_agora_dir() {
+  printf '%s\n' "${LAIA_AGORA_DIR_OVERRIDE:-$LAIA_AGORA_DIR_DEFAULT}"
+}
+clone_dest_arch_dir() {
+  printf '%s\n' "${LAIA_ARCH_DIR_OVERRIDE:-$LAIA_ARCH_DIR_DEFAULT}"
+}
+clone_dest_arch_creds_dir() {
+  printf '%s\n' "${LAIA_ARCH_CREDS_DIR_OVERRIDE:-$LAIA_USER_HOME/.laia}"
 }
 clone_dest_tools_home() {
   printf '%s\n' "${LAIA_TOOLS_HOME_OVERRIDE:-$LAIA_USER_HOME}"
@@ -65,14 +76,20 @@ clone_src_for() {
   if clone_is_local_source; then
     case "$kind" in
       laia_home) printf '%s/LAIA-ARCH/\n' "$OPT_SOURCE_DIR" ;;
+      agora)     printf '%s/agora/\n'      "$OPT_SOURCE_DIR" ;;
       users)     printf '%s/users/\n'     "$OPT_SOURCE_DIR" ;;
       home)      printf '%s/home/\n'      "$OPT_SOURCE_DIR" ;;
+      arch)      printf '%s/arch/\n'      "$OPT_SOURCE_DIR" ;;
+      legacy_laia) printf '%s/home/.laia/\n' "$OPT_SOURCE_DIR" ;;
     esac
   else
     case "$kind" in
       laia_home) printf '%s:%s/\n' "$OPT_SOURCE" "$REMOTE_LAIA_HOME" ;;
+      agora)     printf '%s:%s/\n' "$OPT_SOURCE" "$LAIA_AGORA_DIR_DEFAULT" ;;
       users)     printf '%s:%s/\n' "$OPT_SOURCE" "$LAIA_USERS_DIR_DEFAULT" ;;
       home)      printf '%s:%s/\n' "$OPT_SOURCE" "$REMOTE_HOME" ;;
+      arch)      printf '%s:%s/\n' "$OPT_SOURCE" "$LAIA_ARCH_DIR_DEFAULT" ;;
+      legacy_laia) printf '%s:%s/.laia/\n' "$OPT_SOURCE" "$REMOTE_HOME" ;;
     esac
   fi
 }
@@ -81,8 +98,23 @@ clone_src_for() {
 # Sets a global array CLONE_RSYNC_OPTS the callers can extend.
 clone_rsync_base_opts() {
   CLONE_RSYNC_OPTS=(-a --info=stats1)
+  [[ -n "${OPT_BWLIMIT:-}" ]] && CLONE_RSYNC_OPTS+=(--bwlimit="$OPT_BWLIMIT")
   if ! clone_is_local_source; then
     CLONE_RSYNC_OPTS+=(-e 'ssh -o BatchMode=yes')
+  fi
+}
+
+clone_stub_log() {
+  [[ -n "${LAIA_TEST_STUB_LOG:-}" ]] && printf '%s\n' "$*" >>"$LAIA_TEST_STUB_LOG"
+  return 0
+}
+
+clone_source_path_exists() {
+  local path="$1"
+  if clone_is_local_source; then
+    [[ -e "$path" ]]
+  else
+    ssh -o BatchMode=yes "$OPT_SOURCE" "test -e '$path'" >/dev/null 2>&1
   fi
 }
 
@@ -94,8 +126,8 @@ clone_preflight() {
 
   if clone_is_local_source; then
     [[ -d "$OPT_SOURCE_DIR" ]] || die "Source directory not found: $OPT_SOURCE_DIR" 3
-    [[ -d "$OPT_SOURCE_DIR/LAIA-ARCH" ]] \
-      || die "Source dir layout invalid: $OPT_SOURCE_DIR/LAIA-ARCH missing" 3
+    [[ -d "$OPT_SOURCE_DIR/LAIA-ARCH" || -d "$OPT_SOURCE_DIR/agora" || -d "$OPT_SOURCE_DIR/users" || -d "$OPT_SOURCE_DIR/home" || -d "$OPT_SOURCE_DIR/arch" ]] \
+      || die "Source dir layout invalid: expected one of LAIA-ARCH/, agora/, users/, home/, arch/" 3
     log_success "Source (local): $OPT_SOURCE_DIR"
   else
     command -v ssh >/dev/null 2>&1 || die "ssh not installed (apt install openssh-client)" 3
@@ -181,6 +213,31 @@ __pycache__/
 *.pyc
 .DS_Store
 *.lock
+EOF
+}
+
+_clone_arch_legacy_dir_specs() {
+  cat <<'EOF'
+workspaces
+memories
+cron
+sessions
+atlas
+platforms
+plugins
+sandboxes
+orchestrator-runs
+pastes
+migration
+whatsapp
+EOF
+}
+
+_clone_arch_legacy_file_specs() {
+  cat <<'EOF'
+state.db
+SOUL.md
+config.yaml
 EOF
 }
 
@@ -303,6 +360,226 @@ clone_phase3_users() {
   log_success "Phase 3 complete"
 }
 
+clone_rsync_to_privileged_dest() {
+  local src="$1" dst="$2" label="$3"
+  shift 3
+  local extra=("$@")
+
+  clone_rsync_base_opts
+  CLONE_RSYNC_OPTS+=(--numeric-ids "${extra[@]}")
+
+  if clone_is_local_source; then
+    [[ -e "${src%/}" ]] || { log_info "  Source missing for $label — skipping"; return 0; }
+    if inst_is_override_mode; then
+      mkdir -p "$dst"
+      rsync "${CLONE_RSYNC_OPTS[@]}" "$src" "$dst/" >/dev/null || die "$label rsync failed"
+    else
+      sudo mkdir -p "$dst"
+      sudo rsync "${CLONE_RSYNC_OPTS[@]}" "$src" "$dst/" >/dev/null || die "$label rsync failed"
+    fi
+  else
+    local stage="$LAIA_USER_HOME/.laia-clone-stage/$(basename "$dst")"
+    rm -rf "$stage" 2>/dev/null || true
+    mkdir -p "$stage"
+    rsync "${CLONE_RSYNC_OPTS[@]}" "$src" "$stage/" >/dev/null || die "$label stage rsync failed"
+    if inst_is_override_mode; then
+      mkdir -p "$dst"
+      rsync -a --numeric-ids "$stage/" "$dst/" >/dev/null || die "$label promote failed"
+    else
+      sudo mkdir -p "$dst"
+      sudo rsync -a --numeric-ids "$stage/" "$dst/" >/dev/null || die "$label promote failed"
+    fi
+    rm -rf "$stage" 2>/dev/null || true
+  fi
+}
+
+clone_phase_h_rsync_agora_data() {
+  log_step "Phase H: /srv/laia/agora"
+  clone_rsync_to_privileged_dest "$(clone_src_for agora)" "$(clone_dest_agora_dir)" "agora data"
+  log_success "Phase H agora data complete"
+}
+
+clone_phase_h_rsync_users_data() {
+  log_step "Phase H: /srv/laia/users"
+  clone_phase3_users
+}
+
+clone_phase_h_rsync_arch_data() {
+  log_step "Phase H: LAIA-ARCH operational data"
+  local dst
+  dst="$(clone_dest_arch_dir)"
+
+  if clone_is_local_source && [[ -d "$OPT_SOURCE_DIR/arch" ]]; then
+    clone_rsync_to_privileged_dest "$(clone_src_for arch)" "$dst" "arch data"
+    clone_phase_h_rewrite_config_paths
+    return 0
+  fi
+  if ! clone_is_local_source && clone_source_path_exists "$LAIA_ARCH_DIR_DEFAULT"; then
+    clone_rsync_to_privileged_dest "$(clone_src_for arch)" "$dst" "arch data"
+    clone_phase_h_rewrite_config_paths
+    return 0
+  fi
+  if clone_is_local_source && [[ ! -d "$OPT_SOURCE_DIR/home/.laia" ]]; then
+    log_info "  Source has no ARCH operational data — skipping"
+    return 0
+  fi
+
+  if inst_is_override_mode; then
+    mkdir -p "$dst"
+  else
+    sudo mkdir -p "$dst"
+  fi
+
+  local rel src_base src dst_path
+  src_base="$(clone_src_for legacy_laia)"
+  while IFS= read -r rel; do
+    [[ -z "$rel" ]] && continue
+    if clone_is_local_source && [[ ! -d "$OPT_SOURCE_DIR/home/.laia/$rel" ]]; then
+      log_info "  skip ~/.laia/$rel (missing)"
+      continue
+    fi
+    src="${src_base}${rel}/"
+    dst_path="$dst/$rel"
+    clone_rsync_to_privileged_dest "$src" "$dst_path" "arch data $rel"
+  done < <(_clone_arch_legacy_dir_specs)
+
+  while IFS= read -r rel; do
+    [[ -z "$rel" ]] && continue
+    if clone_is_local_source && [[ ! -f "$OPT_SOURCE_DIR/home/.laia/$rel" ]]; then
+      log_info "  skip ~/.laia/$rel (missing)"
+      continue
+    fi
+    clone_rsync_base_opts
+    CLONE_RSYNC_OPTS+=(--numeric-ids)
+    if clone_is_local_source; then
+      mkdir -p "$dst"
+      rsync "${CLONE_RSYNC_OPTS[@]}" "$OPT_SOURCE_DIR/home/.laia/$rel" "$dst/$rel" >/dev/null 2>&1 || true
+    else
+      local stage="$LAIA_USER_HOME/.laia-clone-stage/arch-files"
+      mkdir -p "$stage"
+      rsync "${CLONE_RSYNC_OPTS[@]}" "${src_base}${rel}" "$stage/$rel" >/dev/null 2>&1 || true
+      if [[ -f "$stage/$rel" ]]; then
+        if inst_is_override_mode; then
+          mkdir -p "$dst"
+          rsync -a "$stage/$rel" "$dst/$rel" >/dev/null
+        else
+          sudo mkdir -p "$dst"
+          sudo rsync -a "$stage/$rel" "$dst/$rel" >/dev/null
+        fi
+      fi
+    fi
+  done < <(_clone_arch_legacy_file_specs)
+
+  clone_phase_h_rewrite_config_paths
+}
+
+clone_phase_h_rewrite_config_paths() {
+  local cfg
+  cfg="$(clone_dest_arch_dir)/config.yaml"
+  [[ -f "$cfg" ]] || return 0
+  if inst_is_override_mode; then
+    sed -i 's#~/.laia/#/srv/laia/arch/#g; s#'"$LAIA_USER_HOME"'/.laia/#/srv/laia/arch/#g' "$cfg"
+  else
+    sudo sed -i 's#~/.laia/#/srv/laia/arch/#g; s#'"$LAIA_USER_HOME"'/.laia/#/srv/laia/arch/#g' "$cfg"
+  fi
+  log_success "Rewrote config.yaml paths to /srv/laia/arch"
+}
+
+clone_phase_h_rsync_arch_creds() {
+  log_step "Phase H: LAIA-ARCH credentials"
+  local dst src_base rel src_file dst_file
+  if clone_is_local_source && [[ ! -d "$OPT_SOURCE_DIR/home/.laia" ]]; then
+    log_info "  Source has no ~/.laia credentials — skipping"
+    return 0
+  fi
+  dst="$(clone_dest_arch_creds_dir)"
+  src_base="$(clone_src_for legacy_laia)"
+  mkdir -p "$dst"
+  for rel in auth.json .env; do
+    if clone_is_local_source && [[ ! -f "$OPT_SOURCE_DIR/home/.laia/$rel" ]]; then
+      log_info "  skip ~/.laia/$rel (missing)"
+      continue
+    fi
+    src_file="${src_base}${rel}"
+    dst_file="$dst/$rel"
+    clone_rsync_base_opts
+    rsync "${CLONE_RSYNC_OPTS[@]}" "$src_file" "$dst_file" >/dev/null 2>&1 || true
+    [[ -f "$dst_file" ]] && chmod 600 "$dst_file"
+  done
+  if [[ "${OPT_KEEP_SESSION:-false}" == true ]]; then
+    rel="admin-session.json"
+    if ! clone_is_local_source || [[ -f "$OPT_SOURCE_DIR/home/.laia/$rel" ]]; then
+      clone_rsync_base_opts
+      rsync "${CLONE_RSYNC_OPTS[@]}" "${src_base}${rel}" "$dst/$rel" >/dev/null 2>&1 || true
+      [[ -f "$dst/$rel" ]] && chmod 600 "$dst/$rel"
+    fi
+  fi
+}
+
+clone_phase_h_enumerate_slugs() {
+  log_step "Phase H: enumerate users"
+  CLONE_PHASE_H_SLUGS=()
+  local db
+  db="$(clone_dest_agora_dir)/agora.db"
+  if [[ -f "$db" ]] && command -v sqlite3 >/dev/null 2>&1; then
+    local slug
+    while IFS= read -r slug; do
+      [[ -n "$slug" ]] && CLONE_PHASE_H_SLUGS+=("$slug")
+    done < <(sqlite3 "$db" "select username from users where coalesce(active,1)=1 and role <> 'agora_admin' order by username;" 2>/dev/null || true)
+  fi
+  if [[ "${#CLONE_PHASE_H_SLUGS[@]}" -eq 0 ]]; then
+    local users_dir d
+    users_dir="$(clone_dest_users_dir)"
+    for d in "$users_dir"/*; do
+      [[ -d "$d" ]] || continue
+      CLONE_PHASE_H_SLUGS+=("$(basename "$d")")
+    done
+  fi
+  log_info "Slugs: ${CLONE_PHASE_H_SLUGS[*]:-<none>}"
+}
+
+clone_phase_h_rebuild_agora_container() {
+  log_step "Phase H: rebuild laia-agora locally"
+  if inst_is_override_mode || [[ -n "${LAIA_TEST_STUB_PATH:-}" ]]; then
+    clone_stub_log "rebuild-3-provision-agora.sh"
+    log_info "[stub] skipping rebuild-3-provision-agora.sh"
+    return 0
+  fi
+  LAIA_ROOT="$LAIA_ROOT" bash "$LAIA_ROOT/infra/lxd/scripts/rebuild-3-provision-agora.sh"
+}
+
+clone_phase_h_rebuild_agent_container() {
+  local slug="$1"
+  log_step "Phase H: rebuild agent-$slug locally"
+  if inst_is_override_mode || [[ -n "${LAIA_TEST_STUB_PATH:-}" ]]; then
+    clone_stub_log "rebuild-4-first-user.sh --slug $slug --existing-user-only"
+    log_info "[stub] skipping rebuild-4-first-user.sh --slug $slug --existing-user-only"
+    return 0
+  fi
+  LAIA_ROOT="$LAIA_ROOT" bash "$LAIA_ROOT/infra/lxd/scripts/rebuild-4-first-user.sh" \
+    --slug "$slug" --existing-user-only
+}
+
+clone_phase_h_fix_uid_mapping() {
+  log_step "Phase H: fix uid mappings"
+  if inst_is_override_mode || [[ -n "${LAIA_TEST_STUB_PATH:-}" ]]; then
+    log_info "[stub] skipping uid mapping fix"
+    return 0
+  fi
+  sudo chown -R 1000000:1000000 "$(clone_dest_agora_dir)" "$(clone_dest_users_dir)" 2>/dev/null || true
+}
+
+clone_phase_h_verify() {
+  log_step "Phase H: verify"
+  if inst_is_override_mode || [[ -n "${LAIA_TEST_STUB_PATH:-}" ]]; then
+    log_info "[stub] skipping live verify"
+    return 0
+  fi
+  lxc list
+  curl -fsS "$LAIA_AGORA_HEALTH_URL" >/dev/null || die "AGORA health check failed"
+  log_success "Phase H verify passed"
+}
+
 # ─── D.4: Phase 4 — --with-tools (personal CLIs) ───────────────────────────
 clone_phase4_tools() {
   if [[ "$OPT_WITH_TOOLS" != true ]]; then
@@ -422,19 +699,18 @@ clone_print_summary() {
   printf '\n'
   printf '  %sSource:%s          %s\n' "$C_BLD" "$C_RST" "${OPT_SOURCE_DIR:-$OPT_SOURCE}"
   printf '  %sLAIA_HOME:%s       %s\n' "$C_BLD" "$C_RST" "$(clone_dest_laia_home)"
+  printf '  %sAGORA data:%s      %s\n' "$C_BLD" "$C_RST" "$(clone_dest_agora_dir)"
   printf '  %sUsers dir:%s       %s\n' "$C_BLD" "$C_RST" "$(clone_dest_users_dir)"
+  printf '  %sARCH data:%s       %s\n' "$C_BLD" "$C_RST" "$(clone_dest_arch_dir)"
+  printf '  %sARCH creds:%s      %s\n' "$C_BLD" "$C_RST" "$(clone_dest_arch_creds_dir)"
   if [[ "$OPT_WITH_TOOLS" == true ]]; then
     printf '  %sTools (home):%s    %s\n' "$C_BLD" "$C_RST" "$(clone_dest_tools_home)"
   fi
   printf '\n'
 
-  if [[ "$OPT_NO_LXD" != true ]]; then
-    printf '  %sLXD containers:%s  NOT cloned (Fase E not implemented yet)\n' "$C_YEL" "$C_RST"
-    printf '                     Use --no-lxd to silence this warning.\n'
-  fi
+  printf '  %sLXD containers:%s  rebuilt locally from destination images\n' "$C_BLD" "$C_RST"
   if [[ -n "$OPT_ONLY_AGENT" ]]; then
-    printf '  %sNote:%s --only-agent %s ignored (LXD support is Fase E)\n' \
-      "$C_YEL" "$C_RST" "$OPT_ONLY_AGENT"
+    printf '  %sOnly agent:%s      %s\n' "$C_BLD" "$C_RST" "$OPT_ONLY_AGENT"
   fi
   if [[ "$OPT_WITH_MLX_MODELS" == true ]]; then
     printf '  %sMLX models:%s      included (heavy — %s\n)' "$C_BLD" "$C_RST" "mlx-servers/"

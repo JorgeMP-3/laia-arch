@@ -1,19 +1,10 @@
 #!/usr/bin/env bash
 # ─────────────────────────────────────────────────────────────────────────────
-# laia-clone — clone LAIA state from a remote server
+# laia-clone — pull LAIA state from an old server into this new server.
 #
-# Pre-condition: laia-install must already have run on this host (LAIA is
-# installed at /opt/laia, ~/LAIA-ARCH/ exists, LXD is initialized if --with-lxd).
-#
-# What it clones from <user@host>:
-#   - Phase 1: rsync of $LAIA_HOME/ (data, workspaces, sessions, db, auth, ...)
-#   - Phase 3: rsync of /srv/laia/users/ (PA-AGORA persistent bind mounts)
-#   - Phase 4 (opt-in via --with-tools): ~/.claude, ~/.codex, ~/.opencode, etc.
-#   - Phase 5: smoke test (services active, /api/health responding)
-#
-# Phase 2 (LXD container export/import) is Fase E — not implemented yet.
-# Without --no-lxd the script will WARN about this and continue with the
-# data-only path; pass --no-lxd to silence the warning.
+# This command runs on the destination and pulls from --source user@old-host.
+# It installs LAIA first when /opt/laia is missing, rsyncs portable bind-mount
+# data, then rebuilds containers locally for the destination architecture.
 # ─────────────────────────────────────────────────────────────────────────────
 set -euo pipefail
 
@@ -34,6 +25,8 @@ source "$LIB_DIR/version.sh"
 source "$LIB_DIR/install.sh"
 # shellcheck source=../infra/installer/lib/release.sh
 source "$LIB_DIR/release.sh"
+# shellcheck source=../infra/installer/lib/bootstrap.sh
+source "$LIB_DIR/bootstrap.sh"
 # shellcheck source=../infra/installer/lib/clone.sh
 source "$LIB_DIR/clone.sh"
 
@@ -46,41 +39,47 @@ OPT_WITH_TOOLS=false
 OPT_WITH_MLX_MODELS=false
 OPT_NO_LXD=false
 OPT_ONLY_AGENT=""
+OPT_KEEP_SESSION=false
+OPT_BWLIMIT=""
+OPT_PREFLIGHT_ONLY=false
 
 print_help() {
   cat <<'EOF'
-laia-clone — clone LAIA state from a remote server
+laia-clone — pull LAIA state from an old server
 
 USAGE
-    laia-clone <user@host> [OPTIONS]
+    sudo laia-clone --source <user@old-host> [OPTIONS]
     laia-clone --source-dir <path> [OPTIONS]
-    laia clone <user@host> [OPTIONS]
+    sudo laia clone --source <user@old-host> [OPTIONS]
 
 ARGUMENTS
-    <user@host>           SSH target of the source server (passwordless required)
+    --source <user@host>  SSH source server to pull from (passwordless required)
 
 OPTIONS
     --source-dir PATH     Use a local directory as the source instead of SSH.
-                          Expected layout: <PATH>/{LAIA-ARCH,users,home}/
+                          Expected layout: <PATH>/{agora,users,arch,home}/
                           Useful for migrations on the same machine and tests.
+    --keep-session        Also clone admin-session.json. Default is to require
+                          a fresh login on the destination.
+    --bwlimit LIMIT       Pass rsync --bwlimit, e.g. 50M for WAN migrations.
     --with-tools          Also clone personal CLI configs (Claude Code, Codex,
                           OpenCode, .gitconfig, .pm2, .docker)
     --with-mlx-models     Also clone heavy local models (LAIA-ARCH/mlx-servers/)
-    --no-lxd              Acknowledge LXD phase is skipped (Fase E, not yet
-                          implemented). Default behaviour is the same; this
-                          flag just silences the warning at the end.
-    --only-agent <slug>   (Reserved for Fase E — LXD container export.)
+    --no-lxd              Compatibility no-op; containers are rebuilt locally.
+    --only-agent <slug>   Rebuild only this agent container after data import.
+    --preflight-only      Stop after source/destination checks.
     --yes, -y             Non-interactive mode
     --dry-run             Print plan, don't transfer anything
     --help, -h            Show this help
 
 PRE-CONDITIONS
-    - `laia-install` already ran on this host (LAIA_HOME exists)
+    - Run this on the destination server. If /opt/laia is missing, laia-clone
+      invokes laia-install --minimal first.
     - Passwordless SSH to <user@host>  (when not using --source-dir)
 
 EXAMPLES
-    laia-clone laia-hermes@old.example.com --yes
-    laia-clone jorge@10.0.0.5 --with-tools --no-lxd
+    sudo laia-clone --source laia-hermes@old.example.com --yes
+    sudo laia-clone --source jorge@10.0.0.5 --bwlimit=50M
     laia-clone --source-dir /mnt/backup/laia-snapshot-2026-05-20 --with-tools
 
 EXIT CODES
@@ -95,12 +94,22 @@ parse_args() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
       -h|--help)       print_help; exit 0 ;;
+      --source)
+        [[ $# -ge 2 && -n "${2:-}" ]] || die "--source requires user@host" 2
+        OPT_SOURCE="$2"; shift 2 ;;
       --source-dir)
         [[ $# -ge 2 && -n "${2:-}" ]] || die "--source-dir requires PATH" 2
         OPT_SOURCE_DIR="$(readlink -f "$2")"; shift 2 ;;
+      --keep-session)  OPT_KEEP_SESSION=true; shift ;;
+      --bwlimit)
+        [[ $# -ge 2 && -n "${2:-}" ]] || die "--bwlimit requires LIMIT" 2
+        OPT_BWLIMIT="$2"; shift 2 ;;
+      --bwlimit=*)
+        OPT_BWLIMIT="${1#--bwlimit=}"; shift ;;
       --with-tools)    OPT_WITH_TOOLS=true; shift ;;
       --with-mlx-models) OPT_WITH_MLX_MODELS=true; shift ;;
       --no-lxd)        OPT_NO_LXD=true; shift ;;
+      --preflight-only) OPT_PREFLIGHT_ONLY=true; shift ;;
       --only-agent)
         [[ $# -ge 2 && -n "${2:-}" ]] || die "--only-agent requires SLUG" 2
         OPT_ONLY_AGENT="$2"; shift 2 ;;
@@ -129,6 +138,32 @@ parse_args() {
   fi
 }
 
+clone_install_first_if_needed() {
+  local prefix
+  prefix="$(inst_install_prefix)"
+  [[ -e "$prefix" ]] && return 0
+
+  if inst_is_override_mode && [[ -z "${LAIA_INSTALL_ROOT_OVERRIDE:-}" ]]; then
+    log_info "Override mode without install-root override: skipping install-first"
+    return 0
+  fi
+
+  log_step "Install-first"
+  local version
+  version="$(detect_version "$LAIA_ROOT" "" 2>/dev/null || printf 'v0.0.0-clone\n')"
+
+  "$LAIA_ROOT/bin/laia-install" \
+    --from-local "$LAIA_ROOT" \
+    --version "$version" \
+    --minimal \
+    --skip-pip \
+    --skip-frontend \
+    --yes || die "install-first laia-install --minimal failed"
+
+  boot_init_defaults
+  boot_build_images
+}
+
 # ─── Main ───────────────────────────────────────────────────────────────────
 main() {
   parse_args "$@"
@@ -137,8 +172,9 @@ main() {
   log_info "Source:           ${OPT_SOURCE_DIR:-$OPT_SOURCE}"
   log_info "With tools:       $OPT_WITH_TOOLS"
   log_info "With MLX models:  $OPT_WITH_MLX_MODELS"
-  log_info "LXD containers:   skip (Fase E not implemented yet)"
-  [[ -n "$OPT_ONLY_AGENT" ]] && log_info "Only agent:       $OPT_ONLY_AGENT (no effect — Fase E)"
+  log_info "LXD containers:   rebuild locally"
+  [[ -n "$OPT_ONLY_AGENT" ]] && log_info "Only agent:       $OPT_ONLY_AGENT"
+  [[ -n "$OPT_BWLIMIT" ]] && log_info "Rsync bwlimit:    $OPT_BWLIMIT"
   log_info "Dry-run:          $OPT_DRY_RUN"
   log_info "Admin user:       $LAIA_USER ($LAIA_USER_HOME)"
 
@@ -147,8 +183,15 @@ main() {
     exit 0
   fi
 
+  clone_install_first_if_needed
+
   clone_preflight
   clone_detect_paths
+
+  if [[ "$OPT_PREFLIGHT_ONLY" == true ]]; then
+    log_success "Preflight passed"
+    exit 0
+  fi
 
   if ! inst_is_override_mode; then
     ensure_sudo_cached
@@ -157,12 +200,31 @@ main() {
   rel_capture_active_units
   clone_stop_services
 
-  clone_phase1_laia_home
-  clone_phase3_users
+  if clone_is_local_source && [[ -d "$OPT_SOURCE_DIR/LAIA-ARCH" ]]; then
+    clone_phase1_laia_home
+  fi
+  clone_phase_h_rsync_agora_data
+  clone_phase_h_rsync_users_data
+  clone_phase_h_rsync_arch_data
+  clone_phase_h_rsync_arch_creds
+  clone_phase_h_enumerate_slugs
+  clone_phase_h_rebuild_agora_container
+  if [[ -n "$OPT_ONLY_AGENT" ]]; then
+    clone_phase_h_rebuild_agent_container "$OPT_ONLY_AGENT"
+  else
+    slug_list=("${CLONE_PHASE_H_SLUGS[@]:-}")
+    for slug in "${slug_list[@]}"; do
+      clone_phase_h_rebuild_agent_container "$slug"
+    done
+  fi
+  clone_phase_h_fix_uid_mapping
   clone_phase4_tools
 
   rel_restart_active
 
+  if ! clone_phase_h_verify; then
+    log_warn "Phase H verification reported failures — investigate manually"
+  fi
   if ! clone_phase5_smoke; then
     log_warn "Smoke test reported failures — investigate manually"
   fi
