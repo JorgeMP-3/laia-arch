@@ -35,6 +35,7 @@ INST_PREFIX=""
 INST_BIN_DIR=""
 DATA_DIR=""
 SYSTEMD_DIR=""
+LAIA_HOST_ARCH=""
 
 # inst_compute_paths — fills the INST_* globals based on overrides or defaults.
 # Call once after OPT_VERSION is resolved.
@@ -125,6 +126,17 @@ inst_preflight() {
   require_python_min 3.11
   log_info "Python:       $(python3 -V 2>&1 | awk '{print $2}')"
 
+  LAIA_HOST_ARCH="${LAIA_HOST_ARCH_OVERRIDE:-}"
+  if [[ -z "$LAIA_HOST_ARCH" ]]; then
+    command -v dpkg >/dev/null 2>&1 || die "dpkg not found; cannot detect host architecture"
+    LAIA_HOST_ARCH="$(dpkg --print-architecture)"
+  fi
+  case "$LAIA_HOST_ARCH" in
+    amd64|arm64) log_info "Architecture: $LAIA_HOST_ARCH" ;;
+    *) die "Unsupported architecture: $LAIA_HOST_ARCH (supported: amd64, arm64)" ;;
+  esac
+  export LAIA_HOST_ARCH
+
   # Disk space at install root
   local install_root="${LAIA_INSTALL_ROOT_OVERRIDE:-$LAIA_INSTALL_ROOT}"
   ensure_disk_free_gb "$install_root" 5   # minimal — full builds need more
@@ -214,6 +226,7 @@ node_modules/
 .turbo/
 .next/
 .cache/
+.test-tmp/
 .vscode/
 .idea/
 .DS_Store
