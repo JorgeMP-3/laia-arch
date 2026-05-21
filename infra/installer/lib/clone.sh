@@ -100,7 +100,7 @@ clone_rsync_base_opts() {
   CLONE_RSYNC_OPTS=(-a --info=stats1)
   [[ -n "${OPT_BWLIMIT:-}" ]] && CLONE_RSYNC_OPTS+=(--bwlimit="$OPT_BWLIMIT")
   if ! clone_is_local_source; then
-    CLONE_RSYNC_OPTS+=(-e 'ssh -o BatchMode=yes')
+    CLONE_RSYNC_OPTS+=(-e "$(clone_ssh_transport)")
   fi
 }
 
@@ -109,12 +109,44 @@ clone_stub_log() {
   return 0
 }
 
+clone_invoking_user_home() {
+  [[ "$(id -u)" == "0" ]] || return 1
+  [[ -n "${SUDO_USER:-}" && "$SUDO_USER" != "root" ]] || return 1
+
+  local entry
+  entry="$(getent passwd "$SUDO_USER" 2>/dev/null || true)"
+  [[ -n "$entry" ]] || return 1
+  printf '%s\n' "$entry" | cut -d: -f6
+}
+
+clone_use_invoking_user_ssh() {
+  local home
+  home="$(clone_invoking_user_home)" || return 1
+  [[ -d "$home/.ssh" ]]
+}
+
+clone_ssh_transport() {
+  if clone_use_invoking_user_ssh; then
+    printf 'sudo -H -u %s ssh -o BatchMode=yes' "$SUDO_USER"
+  else
+    printf 'ssh -o BatchMode=yes'
+  fi
+}
+
+clone_ssh() {
+  if clone_use_invoking_user_ssh; then
+    sudo -H -u "$SUDO_USER" ssh -o BatchMode=yes "$@"
+  else
+    ssh -o BatchMode=yes "$@"
+  fi
+}
+
 clone_source_path_exists() {
   local path="$1"
   if clone_is_local_source; then
     [[ -e "$path" ]]
   else
-    ssh -o BatchMode=yes "$OPT_SOURCE" "test -e '$path'" >/dev/null 2>&1
+    clone_ssh "$OPT_SOURCE" "test -e '$path'" >/dev/null 2>&1
   fi
 }
 
@@ -131,8 +163,8 @@ clone_preflight() {
     log_success "Source (local): $OPT_SOURCE_DIR"
   else
     command -v ssh >/dev/null 2>&1 || die "ssh not installed (apt install openssh-client)" 3
-    if ! ssh -o BatchMode=yes -o ConnectTimeout=5 "$OPT_SOURCE" true 2>/dev/null; then
-      die "SSH to $OPT_SOURCE failed (passwordless required). Test: ssh -o BatchMode=yes $OPT_SOURCE true" 3
+    if ! clone_ssh -o ConnectTimeout=5 "$OPT_SOURCE" true 2>/dev/null; then
+      die "SSH to $OPT_SOURCE failed (passwordless required). Test: $(clone_ssh_transport) $OPT_SOURCE true" 3
     fi
     log_success "SSH to $OPT_SOURCE works (passwordless)"
   fi
@@ -160,7 +192,7 @@ clone_detect_paths() {
     REMOTE_LAIA_VER="(local)"
   else
     local out
-    out="$(ssh -o BatchMode=yes "$OPT_SOURCE" '
+    out="$(clone_ssh "$OPT_SOURCE" '
       printf "HOME=%s\n"      "$HOME"
       bash -lc "printf LAIA_HOME=%s\\\\n \"\${LAIA_HOME:-}\""
       readlink /opt/laia 2>/dev/null || true
@@ -647,7 +679,7 @@ _clone_rsync_tool() {
   fi
 
   local rsync_opts=(-a --info=stats1 "${exc_args[@]}")
-  clone_is_local_source || rsync_opts+=(-e 'ssh -o BatchMode=yes')
+  clone_is_local_source || rsync_opts+=(-e "$(clone_ssh_transport)")
 
   log_info "  $rel"
   if rsync "${rsync_opts[@]}" "$src_full" "$dst_target" 2>/dev/null; then
