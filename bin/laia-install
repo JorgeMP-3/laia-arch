@@ -3,15 +3,9 @@
 # laia-install — install LAIA on a clean host
 #
 # Lays down /opt/laia-vX.Y.Z/, switches /opt/laia symlink, registers wrappers
-# in /usr/local/bin, installs systemd units (disabled), prepares ~/LAIA-ARCH/
-# and writes LAIA_HOME into the user's shell rc files.
-#
-# What this script does NOT do:
-#   - Does not initialize LXD or build AGORA images (use `laia init`)
-#   - Does not start systemd services (the operator decides when)
-#   - Does not install Docker, Tailscale, Samba, etc. (separate concerns)
-#   - Does not clone user data (use `laia clone <host>` after install)
-#   - Does not build the frontend (run `pnpm build` first or use --skip-frontend)
+# in /usr/local/bin, installs systemd units (disabled), prepares ~/LAIA-ARCH/,
+# writes LAIA_HOME into shell rc files, and unless --minimal is passed,
+# bootstraps a factory-default LAIA (LXD + laia-agora + auth/admin/skills).
 # ─────────────────────────────────────────────────────────────────────────────
 set -euo pipefail
 
@@ -30,6 +24,12 @@ source "$LIB_DIR/system.sh"
 source "$LIB_DIR/version.sh"
 # shellcheck source=../infra/installer/lib/install.sh
 source "$LIB_DIR/install.sh"
+# shellcheck source=../infra/installer/lib/release.sh
+source "$LIB_DIR/release.sh"
+# shellcheck source=../infra/installer/lib/bootstrap.sh
+source "$LIB_DIR/bootstrap.sh"
+# shellcheck source=../infra/installer/lib/factory.sh
+source "$LIB_DIR/factory.sh"
 # shellcheck source=../infra/installer/lib/shell_rc.sh
 source "$LIB_DIR/shell_rc.sh"
 # shellcheck source=../infra/installer/lib/systemd.sh
@@ -43,6 +43,11 @@ OPT_NO_SYSTEMD=false
 OPT_SKIP_PIP=false
 OPT_SKIP_FRONTEND=false
 OPT_ALSO_DEV_CLONE=false
+OPT_MINIMAL=false
+OPT_INIT_LXD=false
+OPT_AUTH_FILE=""
+OPT_ADMIN_USER=""
+OPT_ADMIN_PASS=""
 OPT_VERSION=""
 OPT_FROM_LOCAL=""
 
@@ -58,6 +63,11 @@ OPTIONS
     --version VER         Force install version (default: read from git tag or VERSION)
     --from-local PATH     Build from a local source tree (default: clone from GitHub)
     --also-dev-clone      Also clone the repo to ~/.laia/ for development
+    --minimal             Install bare host files only; skip factory bootstrap
+    --auth-file PATH      Pre-stage auth.json from PATH
+    --admin-user USER     LAIA admin username for AGORA
+    --admin-pass PASS     LAIA admin password for AGORA
+    --init-lxd            Install/init LXD automatically if missing
     --no-systemd          Don't install systemd unit files
     --skip-pip            Don't create venvs / run pip install
     --skip-frontend       Don't check for laia-ui build artifacts
@@ -101,6 +111,17 @@ parse_args() {
         [[ $# -ge 2 && -n "${2:-}" ]] || die "--from-local requires PATH" 2
         OPT_FROM_LOCAL="$(readlink -f "$2")"; shift 2 ;;
       --also-dev-clone) OPT_ALSO_DEV_CLONE=true; shift ;;
+      --minimal)       OPT_MINIMAL=true; shift ;;
+      --auth-file)
+        [[ $# -ge 2 && -n "${2:-}" ]] || die "--auth-file requires PATH" 2
+        OPT_AUTH_FILE="$(readlink -f "$2")"; shift 2 ;;
+      --admin-user)
+        [[ $# -ge 2 && -n "${2:-}" ]] || die "--admin-user requires USER" 2
+        OPT_ADMIN_USER="$2"; shift 2 ;;
+      --admin-pass)
+        [[ $# -ge 2 && -n "${2:-}" ]] || die "--admin-pass requires PASS" 2
+        OPT_ADMIN_PASS="$2"; shift 2 ;;
+      --init-lxd)      OPT_INIT_LXD=true; shift ;;
       --no-systemd)     OPT_NO_SYSTEMD=true; shift ;;
       --skip-pip)       OPT_SKIP_PIP=true; shift ;;
       --skip-frontend)  OPT_SKIP_FRONTEND=true; shift ;;
@@ -124,6 +145,7 @@ main() {
   log_info "Install systemd: $([[ "$OPT_NO_SYSTEMD" == true ]] && echo no || echo yes)"
   log_info "Skip pip:        $OPT_SKIP_PIP"
   log_info "Skip frontend:   $OPT_SKIP_FRONTEND"
+  log_info "Factory bootstrap: $([[ "$OPT_MINIMAL" == true ]] && echo no || echo yes)"
   log_info "Admin user:      $LAIA_USER ($LAIA_USER_HOME)"
 
   inst_preflight
@@ -152,6 +174,22 @@ main() {
   inst_ensure_data_dir
   shell_rc_apply "$DATA_DIR"
   systemd_install_all
+
+  if [[ "$OPT_MINIMAL" == true ]]; then
+    log_step "Factory bootstrap (SKIPPED — --minimal)"
+  else
+    fact_seed_cli_config
+    fact_seed_authjson
+    fact_persist_env_to_container
+    boot_detect_arch
+    boot_check_lxd_installed
+    boot_init_defaults
+    boot_build_images
+    boot_provision_agora
+    boot_wait_for_agora_health
+    fact_seed_admin_user
+    fact_seed_base_skills
+  fi
 
   inst_print_summary
 }

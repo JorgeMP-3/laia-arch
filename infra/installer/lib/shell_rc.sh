@@ -51,6 +51,8 @@ shell_rc_apply() {
 
   while IFS= read -r rc; do
     [[ -z "$rc" ]] && continue
+    mkdir -p "$(dirname "$rc")" 2>/dev/null || true
+    [[ -f "$rc" ]] || : >"$rc"
     tmp="$(mktemp "${rc}.laia-tmp.XXXXXX")" || die "mktemp failed"
 
     if grep -qF "$LAIA_RC_MARKER_BEGIN" "$rc" 2>/dev/null; then
