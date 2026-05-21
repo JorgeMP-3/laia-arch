@@ -7,7 +7,19 @@ destino con su arquitectura nativa.
 ## Comando
 
 ```bash
-sudo laia-clone --source laia-hermes@viejo-server --yes --bwlimit=50M
+curl -fsSL https://raw.githubusercontent.com/JorgeMP-3/laia-arch/feat/installer-cloner-v2/install.sh \
+  | sudo -E bash -s -- clone --source laia-hermes@viejo-server --yes --bwlimit=50M
+```
+
+Si el repo es privado:
+
+```bash
+read -rsp "GitHub token: " GITHUB_TOKEN; echo
+
+curl -fsSL \
+  -H "Authorization: Bearer $GITHUB_TOKEN" \
+  https://raw.githubusercontent.com/JorgeMP-3/laia-arch/feat/installer-cloner-v2/install.sh \
+  | sudo -E LAIA_GITHUB_TOKEN="$GITHUB_TOKEN" bash -s -- clone --source laia-hermes@viejo-server --yes --bwlimit=50M
 ```
 
 Si `/opt/laia` no existe en el destino, `laia-clone` ejecuta primero

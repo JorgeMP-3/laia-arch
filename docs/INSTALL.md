@@ -12,23 +12,49 @@
 - 15 GB libres para imágenes y containers LXD.
 - SSH saliente si luego se usará `laia-clone`.
 
-## Instalación Factory
+## Instalación Factory Desde GitHub
 
 ```bash
-sudo -E laia-install --from-local /ruta/LAIA --version vX.Y.Z --yes
+curl -fsSL https://raw.githubusercontent.com/JorgeMP-3/laia-arch/feat/installer-cloner-v2/install.sh \
+  | sudo -E bash -s -- install --yes
 ```
 
 Opciones útiles:
 
 ```bash
-sudo -E laia-install --minimal --yes
-sudo -E laia-install --auth-file /secure/auth.json --yes
-sudo -E laia-install --admin-user admin --admin-pass '...' --yes
-sudo -E laia-install --init-lxd --yes
+curl -fsSL https://raw.githubusercontent.com/JorgeMP-3/laia-arch/feat/installer-cloner-v2/install.sh \
+  | sudo -E bash -s -- install --minimal --yes
+
+curl -fsSL https://raw.githubusercontent.com/JorgeMP-3/laia-arch/feat/installer-cloner-v2/install.sh \
+  | sudo -E bash -s -- install --auth-file /secure/auth.json --yes
+
+curl -fsSL https://raw.githubusercontent.com/JorgeMP-3/laia-arch/feat/installer-cloner-v2/install.sh \
+  | sudo -E bash -s -- install --admin-user admin --admin-pass '...' --yes
 ```
 
 `--minimal` instala solo la base host y salta la Fase G. Es el modo usado por
 CI y por `laia-clone` cuando debe autoinstalar el destino antes de importar.
+
+Para probar una rama distinta:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/JorgeMP-3/laia-arch/main/install.sh \
+  | sudo -E LAIA_BRANCH=main bash -s -- install --yes
+```
+
+## Repo Privado
+
+Si `JorgeMP-3/laia-arch` es privado, usa un GitHub token con permiso
+`Contents: read` sobre ese repo:
+
+```bash
+read -rsp "GitHub token: " GITHUB_TOKEN; echo
+
+curl -fsSL \
+  -H "Authorization: Bearer $GITHUB_TOKEN" \
+  https://raw.githubusercontent.com/JorgeMP-3/laia-arch/feat/installer-cloner-v2/install.sh \
+  | sudo -E LAIA_GITHUB_TOKEN="$GITHUB_TOKEN" bash -s -- install --yes
+```
 
 ## Credenciales
 
