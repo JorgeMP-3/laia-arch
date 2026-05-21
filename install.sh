@@ -12,7 +12,7 @@
 set -euo pipefail
 
 DEFAULT_REPO_URL="https://github.com/JorgeMP-3/laia-arch.git"
-DEFAULT_BRANCH="feat/installer-cloner-v2"
+DEFAULT_BRANCH="feat/installer-wizard"
 
 LAIA_REPO_URL="${LAIA_REPO_URL:-$DEFAULT_REPO_URL}"
 LAIA_BRANCH="${LAIA_BRANCH:-$DEFAULT_BRANCH}"
