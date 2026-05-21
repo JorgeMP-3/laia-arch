@@ -106,6 +106,7 @@ def stream_command(
         return
 
     assert proc.stdout is not None
+    interrupted = False
     try:
         for raw in proc.stdout:
             line = raw.rstrip("\n")
@@ -140,8 +141,32 @@ def stream_command(
                 label=line[:300],  # bound the event size
                 elapsed_s=time.time() - started,
             )
+    except KeyboardInterrupt:
+        interrupted = True
+        # Forward the signal to the child, then wait briefly. If it doesn't
+        # exit we kill -9. The main loop's KeyboardInterrupt handler still
+        # runs after this generator unwinds.
+        try:
+            proc.send_signal(__import__("signal").SIGINT)
+            proc.wait(timeout=5)
+        except Exception:
+            proc.kill()
+        yield ProgressEvent(
+            type="step_error",
+            step_id=step_id,
+            label=f"{label} interrumpido por el usuario",
+            elapsed_s=time.time() - started,
+            extra={"hint": "Re-ejecuta laia-wizard --resume para continuar."},
+        )
+        raise
     finally:
-        rc = proc.wait()
+        if not interrupted:
+            rc = proc.wait()
+        else:
+            try:
+                rc = proc.wait(timeout=1)
+            except Exception:
+                rc = -1
 
     elapsed = time.time() - started
     if rc == 0:

@@ -44,30 +44,8 @@ def _load_ui(force_dev: bool):
     return _dev_ui
 
 
-def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(
-        prog="laia-wizard",
-        description="LAIA installer wizard — install, clone, diagnose, reset",
-    )
-    parser.add_argument("--resume", action="store_true",
-                        help="Restaura el checkpoint y continúa donde te quedaste.")
-    parser.add_argument("--text-ui", action="store_true",
-                        help="Fuerza la UI mínima de texto (sin colores/rich).")
-    parser.add_argument("--mode",
-                        choices=("install", "clone", "diagnose", "reset", "connectivity"),
-                        help="Salta el menú principal y arranca este modo directamente.")
-    parser.add_argument("--version", action="store_true",
-                        help="Imprime versión del contrato y sale.")
-    args = parser.parse_args(argv)
-
-    if args.version:
-        print(f"laia-wizard contract {CONTRACT_VERSION}")
-        return 0
-
-    ui = _load_ui(args.text_ui)
-
-    # State: --resume reads checkpoint, else fresh state. If --mode is given,
-    # pre-set it (and skip the mode_select screen).
+def _run(args, ui) -> int:
+    """The actual loop. Wrapped by ``main()`` for clean Ctrl-C handling."""
     state = state_mod.load() if args.resume else None
     if state is None:
         state = state_mod.WizardState()
@@ -84,10 +62,9 @@ def main(argv: list[str] | None = None) -> int:
         result = engine.submit(user_input)
 
         if not result.ok:
-            # Errors are per-field; ask the UI to show them and re-render.
+            # Errors are per-field; print them and re-render the same screen.
             for field_name, msg in result.errors.items():
                 print(f"  ⚠  {field_name}: {msg}", file=sys.stderr)
-            # Loop back; the next next_screen() returns the same screen.
             continue
 
         if result.ready_action:
@@ -103,6 +80,59 @@ def main(argv: list[str] | None = None) -> int:
             break
 
     return rc
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        prog="laia-wizard",
+        description="LAIA installer wizard — install, clone, diagnose, reset",
+    )
+    parser.add_argument("--resume", action="store_true",
+                        help="Restaura el checkpoint y continúa donde te quedaste.")
+    parser.add_argument("--text-ui", action="store_true",
+                        help="Fuerza la UI mínima de texto (sin colores/rich).")
+    parser.add_argument("--mode",
+                        choices=("install", "clone", "diagnose", "reset", "connectivity"),
+                        help="Salta el menú principal y arranca este modo directamente.")
+    parser.add_argument("--version", action="store_true",
+                        help="Imprime versión del contrato y sale.")
+    parser.add_argument("--debug", action="store_true",
+                        help="No oculta tracebacks (sólo desarrollo).")
+    args = parser.parse_args(argv)
+
+    if args.version:
+        print(f"laia-wizard contract {CONTRACT_VERSION}")
+        return 0
+
+    ui = _load_ui(args.text_ui)
+
+    try:
+        return _run(args, ui)
+    except KeyboardInterrupt:
+        # Ctrl-C / SIGINT: print a clean line, leave checkpoint in place so
+        # the user can --resume. 130 is the POSIX convention for SIGINT.
+        print()
+        print("  ✕  Cancelado por el usuario. "
+              "Re-ejecuta con --resume para continuar donde lo dejaste.",
+              file=sys.stderr)
+        return 130
+    except EOFError:
+        # stdin closed mid-prompt (typically a piped wizard run that ran out
+        # of input). Differentiate from Ctrl-C in the exit code.
+        print()
+        print("  ✕  Fin de entrada antes de completar.",
+              file=sys.stderr)
+        return 130
+    except Exception as exc:  # noqa: BLE001 - last-chance handler
+        # Don't dump a traceback at the user unless --debug. The wizard is
+        # supposed to feel solid, not like a python REPL.
+        if args.debug:
+            raise
+        print()
+        print(f"  ✗  Error inesperado: {exc}", file=sys.stderr)
+        print("     Re-ejecuta con --debug para ver el traceback completo.",
+              file=sys.stderr)
+        return 1
 
 
 if __name__ == "__main__":
