@@ -78,4 +78,13 @@ LOG_DIR="${XDG_CACHE_HOME:-$HOME/.cache}"
 mkdir -p "$LOG_DIR" 2>/dev/null || true
 printf '[%s] laia-wizard %s\n' "$(date -Iseconds)" "$*" >>"$LOG_DIR/laia-wizard.log" 2>/dev/null || true
 
+# When the script is invoked through a pipe (typical: `curl … | sudo bash -s
+# -- wizard`), stdin is the already-drained shell pipe, not the terminal —
+# any `input()` from Python sees EOF immediately. Reconnect stdin to the
+# controlling tty when one is available so the wizard can actually ask the
+# user something.
+if [[ ! -t 0 ]] && exec 3</dev/tty 2>/dev/null; then
+  exec 3<&-
+  exec "$PY" -m laia_cli.install_wizard "$@" </dev/tty
+fi
 exec "$PY" -m laia_cli.install_wizard "$@"
