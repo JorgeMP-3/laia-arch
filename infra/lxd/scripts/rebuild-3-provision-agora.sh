@@ -27,8 +27,13 @@ if [[ $EUID -ne 0 ]]; then
   exec sudo -E bash "$0" "$@"
 fi
 
-ORIG_USER="${SUDO_USER:-laia-hermes}"
+ORIG_USER="${SUDO_USER:-${LAIA_ADMIN_USER:-}}"
+if [[ -z "$ORIG_USER" || "$ORIG_USER" == "root" ]]; then
+  ORIG_USER=$(getent passwd | awk -F: '$3 >= 1000 && $3 < 65534 {print $1; exit}')
+fi
+[[ -n "$ORIG_USER" ]] || { echo "Cannot determine ORIG_USER (set SUDO_USER or LAIA_ADMIN_USER)" >&2; exit 1; }
 ORIG_HOME=$(getent passwd "$ORIG_USER" | cut -d: -f6)
+[[ -n "$ORIG_HOME" ]] || { echo "Cannot resolve home for user '$ORIG_USER'" >&2; exit 1; }
 REPO="${LAIA_ROOT:-$ORIG_HOME/LAIA}"
 PREFLIGHT="$REPO/infra/dev/preflight.sh"
 STATE_DIR="${LAIA_STATE_DIR:-$ORIG_HOME/.laia/state}"

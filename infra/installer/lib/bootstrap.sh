@@ -58,13 +58,39 @@ boot_check_lxd_installed() {
     die "LXD is required. Install it with: sudo snap install lxd && sudo lxd init --auto"
   fi
 
-  if is_root; then
-    snap install lxd || die "snap install lxd failed"
-    lxd init --auto || die "lxd init --auto failed"
-  else
-    sudo snap install lxd || die "snap install lxd failed"
-    sudo lxd init --auto || die "lxd init --auto failed"
+  # Ensure snapd is available before attempting snap install
+  if ! command -v snap >/dev/null 2>&1; then
+    die "snap command not found. Install snapd: sudo apt-get update && sudo apt-get install -y snapd"
   fi
+
+  local sudo_cmd=""
+  is_root || sudo_cmd="sudo"
+
+  log_info "snap install lxd (can take 1-3 min on aarch64; output streams below)"
+  if ! $sudo_cmd snap install lxd; then
+    die "snap install lxd failed. Check 'sudo journalctl -u snapd -n 50' for details."
+  fi
+
+  log_info "Waiting for LXD daemon to be ready (max 60s)..."
+  local i
+  for ((i = 0; i < 60; i++)); do
+    if $sudo_cmd lxd waitready --timeout=1 >/dev/null 2>&1; then
+      break
+    fi
+    sleep 1
+  done
+
+  log_info "lxd init --auto"
+  if ! $sudo_cmd lxd init --auto; then
+    die "lxd init --auto failed. Check 'sudo journalctl -u snap.lxd.daemon -n 50' for details."
+  fi
+
+  # Add invoking user to lxd group so non-root lxc commands work afterwards
+  local target_user="${SUDO_USER:-${USER:-}}"
+  if [[ -n "$target_user" && "$target_user" != "root" ]]; then
+    $sudo_cmd usermod -aG lxd "$target_user" 2>/dev/null || true
+  fi
+
   log_success "LXD initialized"
 }
 
@@ -133,7 +159,7 @@ boot_wait_for_agora_health() {
   fi
 
   local url="${LAIA_AGORA_HEALTH_URL:-http://127.0.0.1:8088/api/health}"
-  local timeout="${LAIA_AGORA_HEALTH_TIMEOUT:-60}"
+  local timeout="${LAIA_AGORA_HEALTH_TIMEOUT:-120}"
   local i
   for ((i = 0; i < timeout; i++)); do
     if curl -fsS --max-time 2 "$url" >/dev/null 2>&1; then
