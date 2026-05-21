@@ -53,7 +53,8 @@ USAGE
     sudo laia clone --source <user@old-host> [OPTIONS]
 
 ARGUMENTS
-    --source <user@host>  SSH source server to pull from (passwordless required)
+    --source <user@host>  SSH source server to pull from. SSH keys are used
+                          first; if they fail, laia-clone asks for password.
 
 OPTIONS
     --source-dir PATH     Use a local directory as the source instead of SSH.
@@ -75,7 +76,7 @@ OPTIONS
 PRE-CONDITIONS
     - Run this on the destination server. If /opt/laia is missing, laia-clone
       invokes laia-install --minimal first.
-    - Passwordless SSH to <user@host>  (when not using --source-dir)
+    - SSH access to <user@host> by key or password (when not using --source-dir)
 
 EXAMPLES
     sudo laia-clone --source laia-hermes@old.example.com --yes

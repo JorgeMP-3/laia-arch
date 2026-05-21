@@ -44,6 +44,7 @@ readonly LAIA_AGORA_HEALTH_URL="http://127.0.0.1:8088/api/health"
 REMOTE_HOME=""
 REMOTE_LAIA_HOME=""
 REMOTE_LAIA_VER=""
+CLONE_SSH_USE_PASSWORD=false
 
 # ─── Path helpers (override-aware) ─────────────────────────────────────────
 clone_dest_laia_home() {
@@ -126,6 +127,11 @@ clone_use_invoking_user_ssh() {
 }
 
 clone_ssh_transport() {
+  if [[ "${CLONE_SSH_USE_PASSWORD:-false}" == "true" ]]; then
+    printf 'sshpass -e ssh -o BatchMode=no -o StrictHostKeyChecking=accept-new'
+    return 0
+  fi
+
   if clone_use_invoking_user_ssh; then
     printf 'sudo -H -u %s ssh -o BatchMode=yes' "$SUDO_USER"
   else
@@ -134,11 +140,47 @@ clone_ssh_transport() {
 }
 
 clone_ssh() {
+  if [[ "${CLONE_SSH_USE_PASSWORD:-false}" == "true" ]]; then
+    sshpass -e ssh -o BatchMode=no -o StrictHostKeyChecking=accept-new "$@"
+    return $?
+  fi
+
   if clone_use_invoking_user_ssh; then
     sudo -H -u "$SUDO_USER" ssh -o BatchMode=yes "$@"
   else
     ssh -o BatchMode=yes "$@"
   fi
+}
+
+clone_ensure_sshpass() {
+  command -v sshpass >/dev/null 2>&1 && return 0
+
+  if [[ "$(id -u)" != "0" ]]; then
+    die "sshpass not installed. Install it or configure SSH keys first." 3
+  fi
+  if ! command -v apt-get >/dev/null 2>&1; then
+    die "sshpass not installed and automatic install is only supported with apt-get" 3
+  fi
+
+  log_info "Installing sshpass for SSH password authentication"
+  apt-get update >/dev/null
+  DEBIAN_FRONTEND=noninteractive apt-get install -y sshpass >/dev/null
+}
+
+clone_prompt_ssh_password() {
+  [[ -r /dev/tty && -w /dev/tty ]] || \
+    die "SSH to $OPT_SOURCE failed and no TTY is available to ask for a password" 3
+
+  clone_ensure_sshpass
+
+  local password
+  printf 'SSH password for %s: ' "$OPT_SOURCE" >/dev/tty
+  IFS= read -r -s password </dev/tty
+  printf '\n' >/dev/tty
+  [[ -n "$password" ]] || die "SSH password cannot be empty" 3
+
+  export SSHPASS="$password"
+  CLONE_SSH_USE_PASSWORD=true
 }
 
 clone_source_path_exists() {
@@ -164,9 +206,14 @@ clone_preflight() {
   else
     command -v ssh >/dev/null 2>&1 || die "ssh not installed (apt install openssh-client)" 3
     if ! clone_ssh -o ConnectTimeout=5 "$OPT_SOURCE" true 2>/dev/null; then
-      die "SSH to $OPT_SOURCE failed (passwordless required). Test: $(clone_ssh_transport) $OPT_SOURCE true" 3
+      log_warn "SSH key auth to $OPT_SOURCE failed; asking for SSH password"
+      clone_prompt_ssh_password
+      if ! clone_ssh -o ConnectTimeout=5 "$OPT_SOURCE" true 2>/dev/null; then
+        unset SSHPASS
+        die "SSH to $OPT_SOURCE failed. Test: $(clone_ssh_transport) $OPT_SOURCE true" 3
+      fi
     fi
-    log_success "SSH to $OPT_SOURCE works (passwordless)"
+    log_success "SSH to $OPT_SOURCE works"
   fi
 
   # Local LAIA_HOME must exist — i.e. laia-install must have run.
