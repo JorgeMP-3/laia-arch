@@ -166,6 +166,13 @@ class WizardEngine:
                 engine.mark_done()
     """
 
+    # Cycle-detection: a flow that keeps returning the same next_screen_id
+    # for the same {screen, values} signature would trap the user in a loop.
+    # We abort once we see the same signature this many times.
+    MAX_VISITS_PER_SIGNATURE = 5
+    # Catch-all for runaway flows: total submit/transitions in one session.
+    MAX_TOTAL_TRANSITIONS = 500
+
     def __init__(
         self,
         *,
@@ -179,6 +186,9 @@ class WizardEngine:
         self._exec_plan: _ExecPlan | None = None
         self._done: bool = False
         self._autosave: bool = autosave
+        # In-session counters; not persisted (resume starts fresh).
+        self._visit_counts: dict[str, int] = {}
+        self._total_transitions: int = 0
 
     # ---- C2-facing API ----------------------------------------------------
 
@@ -368,6 +378,35 @@ class WizardEngine:
             return ValidationResult(ok=True, ready_action=current_id)
 
         next_id = self._flow.next_screen_id(current_id, self.state)
+
+        # Runaway / cycle protection. The signature is screen+sorted-values
+        # so visiting the same screen with different inputs doesn't trip
+        # the detector, but a flow that keeps bouncing the user to the
+        # same screen with the same inputs does.
+        self._total_transitions += 1
+        if self._total_transitions > self.MAX_TOTAL_TRANSITIONS:
+            return ValidationResult(
+                ok=False,
+                errors={"_form": (
+                    "Demasiadas transiciones en este flow "
+                    f"({self.MAX_TOTAL_TRANSITIONS}+). Esto suele indicar "
+                    "un bug en el flow. Abortando para evitar un loop."
+                )},
+            )
+        if next_id is not None:
+            sig = f"{next_id}|{sorted(self.state.values.items())}"
+            count = self._visit_counts.get(sig, 0) + 1
+            self._visit_counts[sig] = count
+            if count > self.MAX_VISITS_PER_SIGNATURE:
+                return ValidationResult(
+                    ok=False,
+                    errors={"_form": (
+                        f"Ciclo detectado: la pantalla {next_id!r} se ha "
+                        f"visitado {count} veces con los mismos valores. "
+                        "Cambia algún campo o reporta el bug."
+                    )},
+                )
+
         if next_id is None:
             # Flow has no more questions — emit default confirm screen.
             confirm = self._build_confirm_screen()

@@ -205,7 +205,12 @@ def screen_to_dict(screen: WizardScreen) -> dict[str, Any]:
 def field_visible(f: Field, current_values: dict[str, Any]) -> bool:
     """C2 helper: should this field be shown given what the user already filled?
 
-    Honors :attr:`Field.depends_on`. Values of ``"*"`` mean "any non-empty".
+    Honors :attr:`Field.depends_on`. Supported semantics for ``dep_value``:
+
+    * ``"*"``          — show when the dependency has ANY non-empty value.
+    * a string         — show when the dependency equals that string.
+    * ``list``/``tuple`` — show when the dependency is in the collection.
+    * ``True``/``False`` — show when truthy/falsy (handy for yes/no toggles).
     """
     if not f.depends_on:
         return True
@@ -213,6 +218,12 @@ def field_visible(f: Field, current_values: dict[str, Any]) -> bool:
         actual = current_values.get(dep_name)
         if dep_value == "*":
             if not actual:
+                return False
+        elif isinstance(dep_value, (list, tuple)):
+            if actual not in dep_value:
+                return False
+        elif isinstance(dep_value, bool):
+            if bool(actual) != dep_value:
                 return False
         elif actual != dep_value:
             return False

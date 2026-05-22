@@ -77,6 +77,30 @@ def _load_ui(force_dev: bool):
     return _dev_ui
 
 
+def _build_headless_ui(config_path: Path, mode_override: str | None):
+    """Construct a HeadlessUI from the user's config file.
+
+    Returns (ui_instance, resolved_mode). Raises FileNotFoundError or
+    RuntimeError/ValueError on bad input — the caller turns those into
+    exit-2 messages.
+    """
+    from . import _headless_ui
+
+    if not config_path.is_file():
+        raise FileNotFoundError(f"--config no encontrado: {config_path}")
+    data = _headless_ui.load_config(config_path)
+
+    mode = mode_override or data.get("mode")
+    if not mode:
+        raise ValueError(
+            "Modo headless requiere --mode o un campo `mode:` en el config."
+        )
+    values = data.get("values") or {}
+    if not isinstance(values, dict):
+        raise ValueError("El campo `values` del config debe ser un objeto.")
+    return _headless_ui.HeadlessUI(values), mode
+
+
 def _run(args, ui) -> int:
     """The actual loop. Wrapped by ``main()`` for clean Ctrl-C handling."""
     state = state_mod.load() if args.resume else None
@@ -142,6 +166,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--mode",
                         choices=("install", "clone", "diagnose", "reset", "connectivity"),
                         help="Salta el menú principal y arranca este modo directamente.")
+    parser.add_argument("--config", type=Path,
+                        help=("Archivo YAML/JSON con respuestas pre-rellenadas. "
+                              "Implica modo headless (no se pide nada al usuario)."))
+    parser.add_argument("--yes", "-y", action="store_true",
+                        help=("Modo no-interactivo: usa defaults para todo lo que "
+                              "no esté en --config y avanza sin confirmar. "
+                              "Falla con exit 2 si falta algún campo requerido."))
     parser.add_argument("--version", action="store_true",
                         help="Imprime versión del contrato y sale.")
     parser.add_argument("--debug", action="store_true",
@@ -157,10 +188,37 @@ def main(argv: list[str] | None = None) -> int:
         "wizard start argv=%s contract=%s", sys.argv, CONTRACT_VERSION,
     )
 
-    ui = _load_ui(args.text_ui)
+    # Headless mode (--config FILE [--yes]) bypasses the interactive UI
+    # entirely. --yes alone (no config) means "advance through screens
+    # using defaults" — still uses the regular UI but skips prompts. We
+    # combine these in _load_ui via the HeadlessUI replacement so the
+    # engine doesn't need to know.
+    if args.config is not None:
+        try:
+            headless_ui, resolved_mode = _build_headless_ui(args.config, args.mode)
+        except (FileNotFoundError, ValueError, RuntimeError) as exc:
+            print(f"  ✗  {exc}", file=sys.stderr)
+            return 2
+        args.mode = resolved_mode
+        ui = headless_ui
+    elif args.yes and args.mode:
+        # --yes without --config: use HeadlessUI with no values, so every
+        # field falls back to its default. Required fields without defaults
+        # will exit 2 (intentional — CI must declare them via --config).
+        from . import _headless_ui
+        ui = _headless_ui.HeadlessUI({})
+    else:
+        ui = _load_ui(args.text_ui)
+
+    from ._headless_ui import HeadlessMissingField
 
     try:
         return _run(args, ui)
+    except HeadlessMissingField as exc:
+        # A required headless field was missing. Surface the field name and
+        # exit 2 (matches CLI convention for "bad arguments").
+        print(f"  ✗  Campo requerido faltante: {exc}", file=sys.stderr)
+        return 2
     except KeyboardInterrupt:
         # Ctrl-C / SIGINT: print a clean line, leave checkpoint in place so
         # the user can --resume. 130 is the POSIX convention for SIGINT.

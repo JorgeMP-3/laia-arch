@@ -133,7 +133,9 @@ def _llm_screen(_state) -> WizardScreen:
                 placeholder="sk-...",
                 secret=True,
                 validator="non_empty",
-                depends_on={"llm_provider": "*"},  # any non-empty provider != unset
+                # Only require the key when a real provider was chosen.
+                # Skipped for "unset" (placeholder auth) and "local" (no key).
+                depends_on={"llm_provider": ["deepseek", "openai", "anthropic", "claude"]},
                 help_text="No se persiste en el checkpoint; sólo se escribe a auth.json.",
             ),
         ),
