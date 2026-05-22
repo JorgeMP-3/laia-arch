@@ -12,12 +12,45 @@ still works end-to-end during development.
 from __future__ import annotations
 
 import argparse
+import logging
+import os
 import sys
+import traceback
+from logging.handlers import RotatingFileHandler
+from pathlib import Path
 from typing import Any
 
 from . import state as state_mod
 from .contract import CONTRACT_VERSION
 from .engine import WizardEngine
+
+
+def _setup_logfile() -> Path:
+    """Send wizard logs to a rotating file under ~/.cache (5 MB × 3).
+
+    Returns the resolved path so we can mention it on error.
+    """
+    cache_dir = Path(
+        os.environ.get("XDG_CACHE_HOME") or
+        os.path.join(os.path.expanduser("~"), ".cache")
+    )
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    log_path = cache_dir / "laia-wizard.log"
+    handler = RotatingFileHandler(
+        str(log_path), maxBytes=5 * 1024 * 1024, backupCount=3, encoding="utf-8",
+    )
+    handler.setLevel(logging.DEBUG)
+    handler.setFormatter(logging.Formatter(
+        "%(asctime)s %(levelname)s %(name)s: %(message)s",
+    ))
+    root = logging.getLogger()
+    root.setLevel(logging.INFO)
+    # Avoid duplicating handlers when re-entered from tests.
+    for h in list(root.handlers):
+        if isinstance(h, RotatingFileHandler) and h.baseFilename == str(log_path):
+            return log_path
+    root.addHandler(handler)
+    return log_path
 
 
 def _load_ui(force_dev: bool):
@@ -47,6 +80,21 @@ def _load_ui(force_dev: bool):
 def _run(args, ui) -> int:
     """The actual loop. Wrapped by ``main()`` for clean Ctrl-C handling."""
     state = state_mod.load() if args.resume else None
+    # If load() quarantined a corrupt/stale checkpoint, surface that fact
+    # immediately so the user knows why they're not resuming.
+    warning = state_mod.consume_load_warning()
+    if warning:
+        # The UI module may or may not have a banner helper; fall back to
+        # plain stderr if not. The engine still proceeds normally.
+        try:
+            show_panel = getattr(ui, "render_warning_panel", None)
+            if callable(show_panel):
+                show_panel("Checkpoint inválido", warning)
+            else:
+                print(f"  ⚠  {warning}", file=sys.stderr)
+        except Exception:
+            print(f"  ⚠  {warning}", file=sys.stderr)
+
     if state is None:
         state = state_mod.WizardState()
     if args.mode and not state.mode:
@@ -104,6 +152,11 @@ def main(argv: list[str] | None = None) -> int:
         print(f"laia-wizard contract {CONTRACT_VERSION}")
         return 0
 
+    log_path = _setup_logfile()
+    logging.getLogger("laia.wizard").info(
+        "wizard start argv=%s contract=%s", sys.argv, CONTRACT_VERSION,
+    )
+
     ui = _load_ui(args.text_ui)
 
     try:
@@ -111,6 +164,7 @@ def main(argv: list[str] | None = None) -> int:
     except KeyboardInterrupt:
         # Ctrl-C / SIGINT: print a clean line, leave checkpoint in place so
         # the user can --resume. 130 is the POSIX convention for SIGINT.
+        logging.getLogger("laia.wizard").info("wizard interrupted by user")
         print()
         print("  ✕  Cancelado por el usuario. "
               "Re-ejecuta con --resume para continuar donde lo dejaste.",
@@ -119,18 +173,21 @@ def main(argv: list[str] | None = None) -> int:
     except EOFError:
         # stdin closed mid-prompt (typically a piped wizard run that ran out
         # of input). Differentiate from Ctrl-C in the exit code.
+        logging.getLogger("laia.wizard").info("wizard EOF on stdin")
         print()
         print("  ✕  Fin de entrada antes de completar.",
               file=sys.stderr)
         return 130
     except Exception as exc:  # noqa: BLE001 - last-chance handler
-        # Don't dump a traceback at the user unless --debug. The wizard is
-        # supposed to feel solid, not like a python REPL.
+        # Always record the full traceback to the rotating log so the user
+        # can post-mortem even without --debug.
+        logging.getLogger("laia.wizard").exception("wizard crashed: %s", exc)
         if args.debug:
             raise
         print()
         print(f"  ✗  Error inesperado: {exc}", file=sys.stderr)
-        print("     Re-ejecuta con --debug para ver el traceback completo.",
+        print(f"     Detalles completos en {log_path}", file=sys.stderr)
+        print("     (Re-ejecuta con --debug para ver el traceback en pantalla.)",
               file=sys.stderr)
         return 1
 
