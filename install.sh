@@ -318,9 +318,31 @@ EOF
   fi
 }
 
+# ─── Pre-hand-off cleanup ──────────────────────────────────────────────────
+# Earlier install attempts that ran as root may have left files in the
+# user's home owned by root (e.g. ~/.bashrc, ~/.cache/, ~/.laia/). The
+# user then can't even SSH back in cleanly. Fix that here, idempotently.
+chown_user_home() {
+  local target="$LAIA_USER_HOME"
+  [[ -d "$target" ]] || return 0
+  local fixed=0
+  for f in "$target/.bashrc" "$target/.profile" "$target/.bash_logout" \
+           "$target/.cache" "$target/.laia" "$target/.ssh" \
+           "$target/LAIA" "$target/LAIA-ARCH"; do
+    [[ -e "$f" ]] || continue
+    if [[ "$(stat -c '%U' "$f" 2>/dev/null)" != "$LAIA_USER" ]]; then
+      chown -R "$LAIA_USER:$LAIA_USER" "$f" 2>/dev/null && fixed=$((fixed+1)) || true
+    fi
+  done
+  [[ $fixed -gt 0 ]] && log "Fixed ownership of $fixed item(s) under $target."
+  return 0
+}
+
 # ─── Sub-command handoff ─────────────────────────────────────────────────────
 hand_off() {
   step "Running: $OPT_MODE"
+  chown_user_home
+
   local bin="$LAIA_DIR/bin"
   local cmd=()
 
@@ -345,23 +367,32 @@ hand_off() {
       ;;
   esac
 
-  log "Exec: ${cmd[*]}"
+  log "About to exec:"
+  log "  ${cmd[*]}"
 
-  # CRITICAL: when this script was launched via `curl | sudo -E bash`,
-  # our stdin is the (now-EOF) curl pipe, not the terminal. If we exec
-  # the wizard without reattaching stdin, rich.Prompt.ask blocks on a
-  # closed fd and the user can't type. Reopen /dev/tty as fd 0 before
-  # the exec so the interactive prompts actually work.
-  #
-  # We only need this for the `wizard` action (install/clone read no
-  # interactive input unless they're prompting for sudo, which sudo
-  # itself reads from /dev/tty directly).
+  # We are ALREADY root at this point (resolve_user verified EUID=0).
+  # In the previous version this function did `exec sudo -E -- …`, a
+  # second sudo (root→root) that on Ubuntu 26+ silently swallows the
+  # env *and* drops the controlling tty connection in some setups,
+  # leaving the wizard with no input. We don't need a second sudo —
+  # we just exec the command directly, preserving env explicitly so
+  # the sub-scripts can resolve $SUDO_USER / $HOME correctly.
+  export SUDO_USER="${SUDO_USER:-$LAIA_USER}"
+  export LAIA_USER="$LAIA_USER"
+  export LAIA_USER_HOME="$LAIA_USER_HOME"
+  # Point HOME at the real user's home so the wizard's log file lands
+  # at /home/$user/.cache/laia-wizard.log (not /root/.cache/).
+  export HOME="$LAIA_USER_HOME"
+  export LAIA_ROOT="$LAIA_DIR"
+
+  # If stdin isn't a TTY (curl|bash), reopen /dev/tty so the wizard can
+  # read user input. Python's __main__._reattach_tty does the same on
+  # its side; belt-and-braces.
   if [[ ! -t 0 ]] && [[ -r /dev/tty ]]; then
-    log "Stdin is not a TTY (curl|bash invocation?). Reopening /dev/tty for interactive input."
-    exec sudo -E -- "${cmd[@]}" </dev/tty
+    log "Reopening /dev/tty for interactive input."
+    exec "${cmd[@]}" </dev/tty
   fi
-  # Preserve SUDO_USER so the subscripts can resolve $LAIA_USER properly.
-  exec sudo -E -- "${cmd[@]}"
+  exec "${cmd[@]}"
 }
 
 # ─── Main ────────────────────────────────────────────────────────────────────
