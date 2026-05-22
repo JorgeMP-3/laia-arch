@@ -205,13 +205,6 @@ screens: dict[str, Any] = {
 
 def next_screen_id(screen_id: str, state) -> str | None:
     order = ["source_kind", "source_host", "ssh_auth", "options", "confirm"]
-    # ssh_auth == "setup" → tell engine to bail out; in v1 we just stay on
-    # ssh_auth with a hint that the user should run connectivity first.
-    if screen_id == "ssh_auth" and state.values.get("ssh_auth_mode") == "setup":
-        # We don't auto-jump flows yet — surface as an error from the engine
-        # in a later iteration. For MVP, just continue and let laia-clone's
-        # own SSH probe explain.
-        pass
     try:
         idx = order.index(screen_id)
     except ValueError:
@@ -236,6 +229,24 @@ def execute(state) -> Iterator[ProgressEvent]:
         )
         return
 
+    # The `setup` ssh_auth_mode means the user has no key set up yet. We
+    # don't auto-jump flows in MVP — refuse with a clear, actionable error
+    # rather than letting laia-clone fail mid-rsync with an opaque SSH
+    # message. This matches the "fail loudly at the boundary" principle.
+    if v.get("ssh_auth_mode") == "setup":
+        yield ProgressEvent(
+            type="step_error",
+            step_id="ssh-auth",
+            label=(
+                "Necesitas configurar la clave SSH antes de clonar. "
+                "Sal de este flow, ejecuta `sudo laia-wizard` y elige "
+                "el modo Connectivity. Luego vuelve aquí con "
+                "'usar mi clave SSH existente'."
+            ),
+            extra={"hint": "laia-wizard --mode connectivity (también disponible)"},
+        )
+        return
+
     root: Path = repo_root()
     laia_clone = root / "bin" / "laia-clone"
     if not laia_clone.is_file():
@@ -251,9 +262,14 @@ def execute(state) -> Iterator[ProgressEvent]:
         "sudo", "-E", "bash", str(laia_clone),
         "--source", source,
         "--yes",
+        "--json-progress",
     ]
     bwlimit = v.get("bwlimit")
     if bwlimit:
+        # The bwlimit value is regex-validated by validators.rsync_bwlimit on
+        # the wizard side AND by bin/laia-clone::validate_options (block 1) so
+        # passing it as argv here is safe. Using --bwlimit= form is fine for
+        # positional safety because shell=False is implicit in subprocess.
         cmd.append(f"--bwlimit={bwlimit}")
     if v.get("keep_session"):
         cmd.append("--keep-session")

@@ -217,8 +217,31 @@ def execute(state) -> Iterator[ProgressEvent]:
     # ---- ssh-copy-id ----------------------------------------------------
     target_host = v.get("ssh_copy_target")
     if target_host:
+        # MITM protection: scan the host key first and show its fingerprint to
+        # the user. We use StrictHostKeyChecking=ask (not accept-new) so the
+        # user is prompted by SSH if the key doesn't match a previously known
+        # entry. The ssh-keyscan step is informational; the actual trust
+        # boundary is the next ssh-copy-id invocation.
+        yield ProgressEvent(
+            type="info",
+            step_id="ssh-keyscan",
+            label=f"Mostrando huella SSH de {target_host} antes de confiar en ella",
+            extra={"hint": "Verifica la huella con el operador del host destino."},
+        )
+        host_only = target_host.split("@", 1)[1] if "@" in target_host else target_host
+        # ssh-keyscan exit code is informational; we render whatever it
+        # produces (key fingerprints) and continue regardless of the rc —
+        # the next ssh-copy-id call is where actual trust is established.
         yield from stream_command(
-            ["ssh-copy-id", "-o", "StrictHostKeyChecking=accept-new", target_host],
+            ["ssh-keyscan", "-T", "5", "-H", host_only],
+            step_id="ssh-keyscan",
+            label=f"ssh-keyscan {host_only}",
+        )
+        yield from stream_command(
+            ["ssh-copy-id",
+             "-o", "StrictHostKeyChecking=ask",
+             "-o", "ConnectTimeout=15",
+             target_host],
             step_id="ssh-copy-id",
             label=f"Copiando clave a {target_host}",
         )
@@ -226,11 +249,66 @@ def execute(state) -> Iterator[ProgressEvent]:
     # ---- Tailscale ------------------------------------------------------
     ts_action = v.get("tailscale_action", "skip")
     if ts_action == "install_and_up":
-        yield from stream_command(
-            ["bash", "-c", "curl -fsSL https://tailscale.com/install.sh | sh"],
+        # SAFETY: piping the upstream installer to sh is a MITM/supply-chain
+        # risk (a poisoned CDN or DNS hijack swaps the script for a malicious
+        # one). We download the script to a tempfile first so the user can
+        # inspect it via the log, and we make a small effort to verify it's
+        # plausible (non-zero size + starts with shebang). Full GPG/SHA
+        # verification requires an out-of-band trusted hash, which we don't
+        # hardcode here because Tailscale doesn't publish a stable signed
+        # checksum for install.sh. The user gets an explicit warning.
+        from tempfile import NamedTemporaryFile
+        yield ProgressEvent(
+            type="warning",
             step_id="tailscale-install",
-            label="Instalando Tailscale",
+            label=(
+                "Vas a instalar Tailscale desde su sitio. Si tu red no es "
+                "de confianza, abandona y haz `sudo apt install tailscale` "
+                "desde el repositorio oficial de tu distribución."
+            ),
         )
+        with NamedTemporaryFile(prefix="tailscale-install-", suffix=".sh",
+                                delete=False, mode="w") as fh:
+            installer_path = Path(fh.name)
+        try:
+            yield from stream_command(
+                ["curl", "-fsSL",
+                 "--proto", "=https", "--tlsv1.2",
+                 "--max-time", "60",
+                 "-o", str(installer_path),
+                 "https://tailscale.com/install.sh"],
+                step_id="tailscale-install",
+                label="Descargando installer (HTTPS only)",
+            )
+            # Sanity-check before running: script must be non-empty and start
+            # with a recognizable shebang. Anything else is treated as a
+            # corrupted download and aborted.
+            if installer_path.stat().st_size < 100:
+                yield ProgressEvent(
+                    type="step_error",
+                    step_id="tailscale-install",
+                    label="Installer descargado parece truncado (<100 bytes). Abortando.",
+                )
+            else:
+                head = installer_path.read_text(encoding="utf-8", errors="replace")[:200]
+                if not head.lstrip().startswith("#!"):
+                    yield ProgressEvent(
+                        type="step_error",
+                        step_id="tailscale-install",
+                        label="Installer no parece un script shell — abortando por seguridad.",
+                        extra={"head": head[:120]},
+                    )
+                else:
+                    yield from stream_command(
+                        ["bash", str(installer_path)],
+                        step_id="tailscale-install",
+                        label="Ejecutando installer descargado",
+                    )
+        finally:
+            try:
+                installer_path.unlink(missing_ok=True)
+            except OSError:
+                pass
         yield from stream_command(
             ["sudo", "tailscale", "up"],
             step_id="tailscale-up",

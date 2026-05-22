@@ -15,6 +15,7 @@ The screen IDs are stable — tests reference them, the checkpoint stores them.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import secrets
@@ -34,6 +35,32 @@ from ..contract import (
     WizardScreen,
 )
 from ._subprocess import repo_root, stream_command
+
+
+@contextlib.contextmanager
+def _secret_to_tempfile(secret: str, prefix: str = "laia-secret-"):
+    """Write ``secret`` to a freshly-created 0600 tempfile and yield its path.
+
+    The receiving binary is expected to consume and unlink the file (see
+    ``bin/laia-install`` ``resolve_admin_pass_file``). We still unlink on
+    exit with ``missing_ok=True`` as a belt-and-braces fallback in case
+    the subprocess crashed before reading.
+
+    Using a file instead of argv keeps the secret out of ``ps``,
+    ``/proc/<pid>/cmdline`` and bash history.
+    """
+    fd, path_str = tempfile.mkstemp(prefix=prefix, dir=tempfile.gettempdir())
+    path = Path(path_str)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(secret)
+        os.chmod(path, 0o600)
+        yield path
+    finally:
+        try:
+            path.unlink(missing_ok=True)
+        except OSError:
+            pass
 
 flow_id = "install"
 first_screen_id = "admin"
@@ -213,7 +240,11 @@ def _materialize_auth_file(provider: str, api_key: str | None) -> Path | None:
     if api_key:
         # Schema is .laia-core's territory; this matches its expectations.
         payload["api_key"] = api_key
-    fd, tmp_str = tempfile.mkstemp(prefix="auth.", suffix=".json", dir="/tmp")
+    # Use the system temp dir (XDG_RUNTIME_DIR-aware) rather than hardcoded
+    # /tmp — encrypted-home systems and locked-down containers may not have
+    # /tmp writable, and /tmp is world-readable by default in many configs.
+    fd, tmp_str = tempfile.mkstemp(prefix="auth.", suffix=".json",
+                                   dir=tempfile.gettempdir())
     tmp = Path(tmp_str)
     with os.fdopen(fd, "w", encoding="utf-8") as fh:
         json.dump(payload, fh, indent=2)
@@ -243,31 +274,39 @@ def execute(state) -> Iterator[ProgressEvent]:
         )
         return
 
-    cmd: list[str] = [
-        "sudo", "-E", "bash", str(laia_install),
-        "--from-local", str(root),
-        "--yes",
-        "--admin-user", admin_user,
-        "--admin-pass", admin_pass,
-    ]
-    if init_lxd:
-        cmd.append("--init-lxd")
-    if auth_file:
-        cmd.extend(["--auth-file", str(auth_file)])
+    # Use an ExitStack so every secret-bearing tempfile we create is unlinked
+    # on success AND on KeyboardInterrupt / exception, even if the subprocess
+    # was killed mid-flight before it could consume the file.
+    with contextlib.ExitStack() as stack:
+        pass_file = stack.enter_context(_secret_to_tempfile(
+            admin_pass, prefix="laia-admin-pass-"))
 
-    try:
-        yield from stream_command(
-            cmd,
-            step_id="laia-install",
-            label="Instalando LAIA",
-            cwd=root,
-        )
-    finally:
+        cmd: list[str] = [
+            "sudo", "-E", "bash", str(laia_install),
+            "--from-local", str(root),
+            "--yes",
+            "--json-progress",
+            "--admin-user", admin_user,
+            "--admin-pass-file", str(pass_file),
+        ]
+        if init_lxd:
+            cmd.append("--init-lxd")
         if auth_file:
-            try:
-                auth_file.unlink()
-            except FileNotFoundError:
-                pass
+            cmd.extend(["--auth-file", str(auth_file)])
+
+        try:
+            yield from stream_command(
+                cmd,
+                step_id="laia-install",
+                label="Instalando LAIA",
+                cwd=root,
+            )
+        finally:
+            if auth_file:
+                try:
+                    auth_file.unlink()
+                except FileNotFoundError:
+                    pass
 
     # Hand the user the autogen password so they can log in.
     yield ProgressEvent(

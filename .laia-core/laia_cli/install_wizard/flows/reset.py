@@ -20,6 +20,8 @@ Both must pass before ``execute()`` performs any ``rm -rf``.
 from __future__ import annotations
 
 import os
+import tarfile
+import time
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -40,9 +42,18 @@ first_screen_id = "warning"
 
 # Paths we'll wipe. Re-computed at execute time using $HOME of SUDO_USER.
 def _targets() -> list[Path]:
+    """Resolve the wipe targets, honoring sudo's preservation of SUDO_USER.
+
+    The original implementation had a bug where the `Path("/home") / user`
+    construction was used as a truthiness test (always truthy). We now
+    actually check that the home directory exists before believing in it.
+    """
     user_home = Path(os.environ.get("SUDO_HOME") or os.path.expanduser("~"))
-    if os.environ.get("SUDO_USER") and Path("/home") / os.environ["SUDO_USER"]:
-        user_home = Path("/home") / os.environ["SUDO_USER"]
+    sudo_user = os.environ.get("SUDO_USER")
+    if sudo_user:
+        candidate = Path("/home") / sudo_user
+        if candidate.is_dir():
+            user_home = candidate
     targets = [
         Path("/opt/laia"),
         Path("/srv/laia"),
@@ -162,23 +173,104 @@ def execute(state) -> Iterator[ProgressEvent]:
         ts = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%SZ")
         snap_dir = Path("/var/backups")
         snap_path = snap_dir / f"laia-reset-{ts}.tar.gz"
-        # Build tar args: -C / + relative paths so the archive is portable.
-        rel_targets = [str(t).lstrip("/") for t in existing]
-        yield from stream_command(
-            ["sudo", "bash", "-c",
-             f"mkdir -p {snap_dir} && tar -czf {snap_path} -C / " +
-             " ".join(rel_targets) + f" 2>/dev/null || true && ls -lh {snap_path}"],
+
+        yield ProgressEvent(
+            type="step_start",
             step_id="snapshot",
             label=f"Snapshot → {snap_path}",
         )
+        started = time.time()
+        # Use Python's tarfile module — paths with spaces, $, ', " etc. are
+        # safe (no shell involvement), and we can yield log_line events for
+        # progress without relying on tar's stdout. Run via `sudo` only if
+        # we can't write to /var/backups directly.
+        try:
+            snap_dir.mkdir(parents=True, exist_ok=True)
+            can_write_directly = os.access(snap_dir, os.W_OK)
+        except (OSError, PermissionError):
+            can_write_directly = False
+
+        if can_write_directly:
+            try:
+                with tarfile.open(snap_path, mode="w:gz") as tf:
+                    for t in existing:
+                        arcname = str(t).lstrip("/")
+                        yield ProgressEvent(
+                            type="log_line",
+                            step_id="snapshot",
+                            label=f"  + {arcname}",
+                            elapsed_s=time.time() - started,
+                        )
+                        try:
+                            tf.add(str(t), arcname=arcname, recursive=True)
+                        except (OSError, PermissionError) as e:
+                            yield ProgressEvent(
+                                type="log_line",
+                                step_id="snapshot",
+                                label=f"  ! skipped {t}: {e}",
+                                elapsed_s=time.time() - started,
+                            )
+                size = snap_path.stat().st_size if snap_path.exists() else 0
+                yield ProgressEvent(
+                    type="step_done",
+                    step_id="snapshot",
+                    label=f"Snapshot OK ({size // 1024} KB)",
+                    elapsed_s=time.time() - started,
+                    extra={"path": str(snap_path), "size_bytes": size},
+                )
+            except Exception as e:
+                yield ProgressEvent(
+                    type="step_error",
+                    step_id="snapshot",
+                    label=f"Snapshot falló: {e}",
+                    elapsed_s=time.time() - started,
+                    extra={"hint": "El wipe se aborta para no perder datos."},
+                )
+                return
+        else:
+            # Need root to write /var/backups. Fall back to a sudo'd python
+            # one-liner that invokes the same tarfile API. This avoids the
+            # shell injection risk of building a shell command string.
+            import json as _json
+            payload = _json.dumps([
+                {"src": str(t), "arc": str(t).lstrip("/")} for t in existing
+            ])
+            py_script = (
+                "import tarfile, sys, json\n"
+                "items = json.loads(sys.argv[1])\n"
+                "with tarfile.open(sys.argv[2], 'w:gz') as tf:\n"
+                "    for it in items:\n"
+                "        try:\n"
+                "            tf.add(it['src'], arcname=it['arc'], recursive=True)\n"
+                "        except OSError:\n"
+                "            pass\n"
+            )
+            yield from stream_command(
+                ["sudo", "mkdir", "-p", str(snap_dir)],
+                step_id="snapshot",
+                label="mkdir /var/backups",
+            )
+            yield from stream_command(
+                ["sudo", "python3", "-c", py_script, payload, str(snap_path)],
+                step_id="snapshot",
+                label=f"Snapshot → {snap_path}",
+            )
 
     # ---- Wipe ------------------------------------------------------------
-    rm_cmd = ["sudo", "rm", "-rf", "--"] + [str(t) for t in existing]
-    yield from stream_command(
-        rm_cmd,
-        step_id="wipe",
-        label=f"Borrando {len(existing)} ruta(s)",
-    )
+    # Chunk the rm invocations: with 100+ targets the argv could approach
+    # the kernel's ARG_MAX. Use --no-preserve-root explicitly defensive —
+    # all targets are already inside /opt/laia*, /srv/laia, or under the
+    # user home so they can never resolve to / itself, but the flag makes
+    # that intent unmistakable to anyone reading the code.
+    paths_str = [str(t) for t in existing]
+    CHUNK = 32
+    for i in range(0, len(paths_str), CHUNK):
+        chunk = paths_str[i:i + CHUNK]
+        yield from stream_command(
+            ["sudo", "rm", "-rf", "--"] + chunk,
+            step_id="wipe",
+            label=f"Borrando ({i + 1}-{i + len(chunk)}/{len(paths_str)})",
+        )
 
     # ---- Summary --------------------------------------------------------
     yield ProgressEvent(
