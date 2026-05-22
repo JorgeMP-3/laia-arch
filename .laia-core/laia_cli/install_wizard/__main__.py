@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import logging
 import os
+import signal
 import sys
 import traceback
 from logging.handlers import RotatingFileHandler
@@ -23,6 +24,76 @@ from typing import Any
 from . import state as state_mod
 from .contract import CONTRACT_VERSION
 from .engine import WizardEngine
+
+
+def _reattach_tty() -> None:
+    """Defensive stdin reattach: ensure fd 0 is the controlling terminal.
+
+    When the wizard is launched via ``curl … | sudo -E bash`` the calling
+    bash inherits the curl pipe as stdin, and (despite our redirects) that
+    fd can still propagate down to Python. The symptom is: the rich UI
+    renders, the prompt is shown, but typing produces nothing because
+    ``input()`` is blocked on a pipe that will never deliver bytes — and
+    SIGINT/Ctrl-C never reaches the process because the terminal isn't
+    its controlling tty for the wizard's pgroup.
+
+    Fix: at startup, if sys.stdin isn't a TTY, open /dev/tty ourselves
+    and ``dup2`` it onto fd 0, then rebind sys.stdin to the new fd 0.
+    This is idempotent (no-op if stdin is already a TTY) and silent on
+    systems where /dev/tty isn't available (containers, tests).
+    """
+    try:
+        if sys.stdin and sys.stdin.isatty():
+            return
+    except (ValueError, OSError):
+        pass
+
+    try:
+        # Open /dev/tty for read+write so input() and any libraries that
+        # write the prompt directly to the tty both work.
+        tty_fd = os.open("/dev/tty", os.O_RDWR)
+    except OSError:
+        # No controlling terminal; nothing we can do. Headless / --yes
+        # callers won't be affected (they don't read stdin).
+        return
+
+    try:
+        os.dup2(tty_fd, 0)
+    finally:
+        os.close(tty_fd)
+
+    # Rebind Python's sys.stdin to the new fd 0 so rich / input() see it.
+    try:
+        sys.stdin = os.fdopen(0, "r", buffering=1, closefd=False)
+    except OSError:
+        pass
+
+
+def _install_signal_handlers() -> None:
+    """Make Ctrl-C kill the wizard cleanly even from inside a blocking read.
+
+    Python's default SIGINT handler raises KeyboardInterrupt, but when the
+    main thread is blocked deep inside C code (rich's tty reader, for
+    example), the signal may take a while to fire. We add an explicit
+    handler that re-raises KeyboardInterrupt immediately AND falls back
+    to os._exit() after a second SIGINT (the "really kill it now" press).
+    """
+    sigint_count = {"n": 0}
+
+    def _handler(signum, frame):
+        sigint_count["n"] += 1
+        if sigint_count["n"] == 1:
+            raise KeyboardInterrupt()
+        # Second Ctrl-C: caller wants out NOW.
+        os.write(2, b"\n[laia-wizard] forced exit on second Ctrl-C\n")
+        os._exit(130)
+
+    def _term_handler(signum, frame):
+        raise KeyboardInterrupt()
+
+    signal.signal(signal.SIGINT, _handler)
+    # SIGTERM should also unwind cleanly (e.g. `kill <pid>`).
+    signal.signal(signal.SIGTERM, _term_handler)
 
 
 def _setup_logfile() -> Path:
@@ -155,6 +226,11 @@ def _run(args, ui) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # First two things, BEFORE anything that might block on stdin or take
+    # a signal: reattach /dev/tty and install our own SIGINT handler.
+    _reattach_tty()
+    _install_signal_handlers()
+
     parser = argparse.ArgumentParser(
         prog="laia-wizard",
         description="LAIA installer wizard — install, clone, diagnose, reset",
