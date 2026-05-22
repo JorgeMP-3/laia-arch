@@ -124,6 +124,10 @@ class HeadlessUI:
                 # Let the validator decide; if it fails the engine surfaces
                 # a ValidationResult error and the entry point exits 2.
                 out[f.name] = ""
+            elif not f.validator:
+                # Optional field with no default: submit an empty value so
+                # flows can apply their own defaults (e.g. autogen password).
+                out[f.name] = ""
             else:
                 raise HeadlessMissingField(
                     f"Falta '{f.name}' (pantalla {sid!r}) en el config y no "

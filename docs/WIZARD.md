@@ -16,8 +16,8 @@ $ sudo laia-wizard
 ### 1. Pantalla de bienvenida + menú principal
 
 ```
-                              _      _    ___    _
-                             | |    / \  |_ _|  / \
+                             _      _    ___    _
+                            | |    / \  |_ _|  / \
                             | |   / _ \  | |  / _ \
                             | |__/ ___ \ | | / ___ \
                            |____/_/   \_\___/_/   \_\
@@ -57,10 +57,14 @@ Durante la ejecución verás:
 
 ```
   ▸  Instalando LAIA
+       Ver log completo: ~/.cache/laia-wizard/runs/<run-id>-laia-install.log
      · Pre-flight checks
      · Source tree
      · Copying source tree to /opt/laia-vX.Y.Z
-     · Python venvs
+     · Python deps: core venv
+       Collecting ...
+       Installing collected packages ...
+     · Python deps: agora-backend venv
      · Frontend
      · Symlink
      · Wrappers
@@ -69,7 +73,7 @@ Durante la ejecución verás:
      · Bootstrap: host architecture
      · Bootstrap: LXD
      · Bootstrap: LXD defaults
-     · Bootstrap: LXD images       ← (10-20 min, con heartbeat 60s)
+     · Bootstrap: LXD images       ← (10-20 min, con heartbeat periódico)
      · Bootstrap: laia-agora container
      · Bootstrap: AGORA health
      · Factory: LAIA admin user
@@ -102,7 +106,12 @@ Durante la ejecución verás:
 
 Durante el clone te muestra cada `clone_phase_h_*` como una sub-fase, la
 build de imágenes con heartbeat, el reset del admin password importado y
-el smoke final.
+el smoke final. Los `rsync` muestran progreso lineal (`progress2`) y cada
+ejecución deja un log completo en `~/.cache/laia-wizard/runs/`.
+
+Si eliges **Password SSH**, el wizard pide el password en una pantalla propia
+y lo entrega a `laia-clone` mediante `--ssh-pass-file` (archivo temporal
+0600, borrado al empezar). El password no aparece en `ps`, argv ni logs.
 
 ### 4. Modo **Connectivity** (SSH + Tailscale)
 
@@ -132,6 +141,22 @@ parseado del output de `vm-smoke.sh` y `preflight.sh`:
   │  Exit       0       │
   └─────────────────────┘
 ```
+
+Al final también se escribe un paquete de diagnóstico en:
+
+```
+~/.cache/laia-wizard/diagnose/laia-diagnose-<timestamp>.log
+```
+
+Ese archivo incluye versiones, disco, `lxc list`, imágenes LXD, health del
+backend, estado de systemd, últimas líneas de journald y la cola del log del
+instalador. Si un install/clone falla en una VM o servidor real, ejecuta:
+
+```bash
+sudo laia-wizard --mode diagnose --yes
+```
+
+y comparte ese archivo junto al log completo que te mostró la operación fallida.
 
 ### 6. Modo **Reset / wipe**
 

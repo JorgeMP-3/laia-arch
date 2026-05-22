@@ -60,6 +60,9 @@ emit_json_event() {
   local step_id="${2:-}"
   local label="${3:-}"
   local percent="${4:-null}"
+  if [[ "$event_type" == "step_start" || "$event_type" == "step_progress" ]]; then
+    export LAIA_CURRENT_STEP="$step_id"
+  fi
   # Escape the few characters that must be escaped in JSON strings.
   # We keep this in pure bash to avoid taking a hard dependency on jq.
   _json_escape() {
@@ -71,16 +74,18 @@ emit_json_event() {
     s="${s//$'\t'/\\t}"
     printf '%s' "$s"
   }
-  printf '{"event":"%s","step_id":"%s","label":"%s","percent":%s,"ts":"%s"}\n' \
+  printf '{"event":"%s","step_id":"%s","label":"%s","percent":%s,"ts":"%s","run_id":"%s"}\n' \
     "$(_json_escape "$event_type")" \
     "$(_json_escape "$step_id")" \
     "$(_json_escape "$label")" \
     "$percent" \
-    "$(date -Iseconds)"
+    "$(date -Iseconds)" \
+    "$(_json_escape "${LAIA_RUN_ID:-}")"
 }
 
 # die <msg> [exit_code]
 die() {
+  emit_json_event step_error "${LAIA_CURRENT_STEP:-fatal}" "$1" null
   log_error "$1"
   exit "${2:-1}"
 }
@@ -121,5 +126,52 @@ confirm() {
 # trap_errors — install ERR trap that prints location of failure
 trap_errors() {
   set -E
-  trap 'log_error "Failed at ${BASH_SOURCE[0]}:${LINENO} (exit $?)"' ERR
+  trap 'rc=$?; msg="Failed at ${BASH_SOURCE[0]}:${LINENO} (exit $rc)"; emit_json_event step_error "${LAIA_CURRENT_STEP:-fatal}" "$msg" null; log_error "$msg"; exit "$rc"' ERR
+}
+
+_laia_descendant_pids() {
+  command -v pgrep >/dev/null 2>&1 || return 0
+  local parent="$1" child
+  while IFS= read -r child; do
+    [[ -n "$child" ]] || continue
+    printf '%s\n' "$child"
+    _laia_descendant_pids "$child"
+  done < <(pgrep -P "$parent" 2>/dev/null || true)
+}
+
+_laia_signal_abort() {
+  local sig="${1:-INT}" pids active="${LAIA_ACTIVE_CHILD_PID:-}"
+  trap - INT TERM QUIT
+  emit_json_event step_error "${LAIA_CURRENT_STEP:-interrupted}" "Interrupted by SIG$sig; cancelling" null
+  log_warn "Interrupted by SIG$sig — cancelling LAIA operation now."
+
+  pids="$(
+    [[ -n "$active" ]] && printf '%s\n' "$active"
+    [[ -n "$active" ]] && _laia_descendant_pids "$active" 2>/dev/null || true
+    jobs -pr 2>/dev/null
+    _laia_descendant_pids "$$" 2>/dev/null || true
+  )"
+  if [[ -n "$pids" ]]; then
+    # TERM first so apt/dpkg/ssh/rsync can unwind; KILL after a short grace.
+    kill -TERM $pids 2>/dev/null || true
+    sleep 1
+    kill -KILL $pids 2>/dev/null || true
+  fi
+  exit 130
+}
+
+install_signal_traps() {
+  trap '_laia_signal_abort INT' INT
+  trap '_laia_signal_abort TERM' TERM
+  trap '_laia_signal_abort QUIT' QUIT
+}
+
+laia_run_interruptible() {
+  "$@" &
+  local pid=$! rc
+  LAIA_ACTIVE_CHILD_PID="$pid"
+  wait "$pid"
+  rc=$?
+  LAIA_ACTIVE_CHILD_PID=""
+  return "$rc"
 }

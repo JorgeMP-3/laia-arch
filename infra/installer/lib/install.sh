@@ -304,14 +304,16 @@ inst_create_venvs() {
   local venv_agora="$INST_DEST/services/agora-backend/.venv"
 
   if [[ -d "$INST_DEST/.laia-core" ]]; then
+    emit_json_event step_start install:pip-core "Python deps: core venv"
     _inst_create_venv_at "$venv_core" "core"
-    _inst_pip_install_pkg "$venv_core" "$INST_DEST/.laia-core" "" || \
-      log_warn ".laia-core pip install failed — venv created but package not installed"
+    _inst_pip_install_pkg "$venv_core" "$INST_DEST/.laia-core" ""
+    emit_json_event step_done install:pip-core "Python deps: core ready"
   else
     log_warn "$INST_DEST/.laia-core not found, skipping core venv"
   fi
 
   if [[ -d "$INST_DEST/services/agora-backend" ]]; then
+    emit_json_event step_start install:pip-agora "Python deps: agora-backend venv"
     _inst_create_venv_at "$venv_agora" "agora-backend"
     local req="$INST_DEST/services/agora-backend/requirements.txt"
     if [[ -f "$req" ]]; then
@@ -319,6 +321,7 @@ inst_create_venvs() {
     else
       log_warn "No requirements.txt at $req, skipping pip install for agora-backend"
     fi
+    emit_json_event step_done install:pip-agora "Python deps: agora-backend ready"
   else
     log_warn "$INST_DEST/services/agora-backend not found, skipping backend venv"
   fi
@@ -340,27 +343,63 @@ _inst_pip_install_pkg() {
   local target="$pkg_dir"
   [[ -n "$extras" ]] && target="${pkg_dir}[${extras}]"
   log_info "pip install -e $target  (this can take several minutes)"
+  emit_json_event step_start install:pip-upgrade "pip upgrade: $(basename "$pkg_dir")"
   if inst_is_override_mode; then
-    "$venv/bin/pip" install --quiet --upgrade pip wheel 2>/dev/null || true
-    "$venv/bin/pip" install --quiet -e "$target" || return 1
+    _inst_run_pip "upgrade pip/wheel for $(basename "$pkg_dir")" \
+      "$venv/bin/pip" install --progress-bar off --upgrade pip wheel || true
+    emit_json_event step_start install:pip-package "pip install package: $(basename "$pkg_dir")"
+    _inst_run_pip "install -e $target" \
+      "$venv/bin/pip" install --progress-bar off -e "$target"
   else
-    sudo "$venv/bin/pip" install --quiet --upgrade pip wheel 2>/dev/null || true
-    sudo "$venv/bin/pip" install --quiet -e "$target" || return 1
+    _inst_run_pip "upgrade pip/wheel for $(basename "$pkg_dir")" \
+      sudo "$venv/bin/pip" install --progress-bar off --upgrade pip wheel || true
+    emit_json_event step_start install:pip-package "pip install package: $(basename "$pkg_dir")"
+    _inst_run_pip "install -e $target" \
+      sudo "$venv/bin/pip" install --progress-bar off -e "$target"
   fi
+  emit_json_event step_done install:pip-package "pip package installed: $(basename "$pkg_dir")"
   log_success "Installed $pkg_dir"
 }
 
 _inst_pip_install_req() {
   local venv="$1" req="$2"
   log_info "pip install -r $req"
+  emit_json_event step_start install:pip-upgrade "pip upgrade: requirements"
   if inst_is_override_mode; then
-    "$venv/bin/pip" install --quiet --upgrade pip wheel 2>/dev/null || true
-    "$venv/bin/pip" install --quiet -r "$req" || return 1
+    _inst_run_pip "upgrade pip/wheel for requirements" \
+      "$venv/bin/pip" install --progress-bar off --upgrade pip wheel || true
+    emit_json_event step_start install:pip-requirements "pip install requirements"
+    _inst_run_pip "install -r $req" \
+      "$venv/bin/pip" install --progress-bar off -r "$req"
   else
-    sudo "$venv/bin/pip" install --quiet --upgrade pip wheel 2>/dev/null || true
-    sudo "$venv/bin/pip" install --quiet -r "$req" || return 1
+    _inst_run_pip "upgrade pip/wheel for requirements" \
+      sudo "$venv/bin/pip" install --progress-bar off --upgrade pip wheel || true
+    emit_json_event step_start install:pip-requirements "pip install requirements"
+    _inst_run_pip "install -r $req" \
+      sudo "$venv/bin/pip" install --progress-bar off -r "$req"
   fi
+  emit_json_event step_done install:pip-requirements "pip requirements installed"
   log_success "Installed requirements"
+}
+
+_inst_run_pip() {
+  local label="$1"
+  shift
+  local log_file rc
+  log_file="$(mktemp)"
+  log_info "  $*"
+  set +e
+  "$@" 2>&1 | tee "$log_file"
+  rc="${PIPESTATUS[0]}"
+  set -e
+  if [[ "$rc" -ne 0 ]]; then
+    log_error "pip failed during: $label (exit $rc)"
+    log_error "Last pip output:"
+    tail -40 "$log_file" >&2 || true
+    rm -f "$log_file"
+    die "pip failed during: $label"
+  fi
+  rm -f "$log_file"
 }
 
 # ─── B.4 (continued): Frontend build ────────────────────────────────────────

@@ -27,8 +27,8 @@ command -v snap || sudo apt-get install -y snapd
 ## Comando
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/JorgeMP-3/laia-arch/feat/installer-cloner-v2/install.sh \
-  | sudo -E bash -s -- clone --source laia-hermes@viejo-server --yes --bwlimit=50M
+curl -fsSL https://raw.githubusercontent.com/JorgeMP-3/laia-arch/feat/installer-wizard/install.sh \
+  | sudo bash -s -- --mode clone --source usuario@IP_O_HOST_REAL --yes -- --bwlimit=50M
 ```
 
 Repo privado:
@@ -37,9 +37,14 @@ Repo privado:
 read -rsp "GitHub token: " GITHUB_TOKEN; echo
 curl -fsSL \
   -H "Authorization: Bearer $GITHUB_TOKEN" \
-  https://raw.githubusercontent.com/JorgeMP-3/laia-arch/feat/installer-cloner-v2/install.sh \
-  | sudo -E LAIA_GITHUB_TOKEN="$GITHUB_TOKEN" bash -s -- clone --source laia-hermes@viejo-server --yes --bwlimit=50M
+  https://raw.githubusercontent.com/JorgeMP-3/laia-arch/feat/installer-wizard/install.sh \
+  | sudo LAIA_GITHUB_TOKEN="$GITHUB_TOKEN" bash -s -- --mode clone --source usuario@IP_O_HOST_REAL --yes -- --bwlimit=50M
 ```
+
+No uses placeholders como `IP_DEL_VIEJO`, `old-server` o
+`viejo-server`: el bootstrap los rechaza antes de abrir SSH. En modo
+interactivo puedes omitir `--mode` y `--source`; el instalador preguntará si
+quieres instalar desde cero o clonar, y si clonas pedirá usuario SSH + IP/host.
 
 Si `/opt/laia` no existe en el destino (o está parcialmente instalado),
 `laia-clone` lo detecta, limpia y ejecuta `laia-install --minimal` primero,

@@ -16,8 +16,12 @@ No fields, no prompts — just one informational screen and then execute().
 
 from __future__ import annotations
 
+import os
 import re
+import subprocess
+import time
 from collections.abc import Iterator
+from pathlib import Path
 from typing import Any
 
 from ..contract import (
@@ -139,6 +143,70 @@ def _run_script(path: str, label: str) -> Iterator[ProgressEvent]:
         )
 
 
+def _diagnose_dir() -> Path:
+    cache = Path(
+        os.environ.get("XDG_CACHE_HOME") or
+        os.path.join(os.path.expanduser("~"), ".cache")
+    )
+    path = cache / "laia-wizard" / "diagnose"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _capture(cmd: list[str], *, timeout: int = 20) -> str:
+    try:
+        proc = subprocess.run(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            timeout=timeout,
+            check=False,
+        )
+    except FileNotFoundError:
+        return f"$ {' '.join(cmd)}\nCOMMAND NOT FOUND\n"
+    except subprocess.TimeoutExpired as exc:
+        out = exc.stdout or ""
+        return f"$ {' '.join(cmd)}\nTIMEOUT after {timeout}s\n{out}\n"
+    return f"$ {' '.join(cmd)}\n(exit {proc.returncode})\n{proc.stdout}\n"
+
+
+def _write_diagnostic_bundle(root: Path) -> Path:
+    ts = time.strftime("%Y%m%d-%H%M%S")
+    path = _diagnose_dir() / f"laia-diagnose-{ts}.log"
+    commands = [
+        ["uname", "-a"],
+        ["python3", "--version"],
+        ["df", "-h", "/opt", "/srv", os.path.expanduser("~")],
+        ["bash", str(root / "bin" / "laia-install"), "--version"],
+        ["bash", str(root / "bin" / "laia-clone"), "--help"],
+        ["lxc", "list"],
+        ["lxc", "image", "list"],
+        ["curl", "-fsS", "--max-time", "5", "http://127.0.0.1:8088/api/health"],
+        ["systemctl", "--no-pager", "--full", "status", "laia-pathd", "agora-backend", "laia-ui-server"],
+        ["journalctl", "--no-pager", "-n", "80", "-u", "agora-backend", "-u", "laia-pathd", "-u", "laia-ui-server"],
+    ]
+    with path.open("w", encoding="utf-8") as fh:
+        fh.write("# LAIA diagnostic bundle\n")
+        fh.write(f"# generated: {time.strftime('%Y-%m-%dT%H:%M:%S%z')}\n")
+        fh.write(f"# repo root: {root}\n\n")
+        installer_log = Path(os.environ.get("LAIA_LOG_FILE") or Path.home() / ".cache" / "laia-installer.log")
+        for cmd in commands:
+            fh.write("".join(("=" * 72, "\n")))
+            fh.write(_capture(cmd))
+            fh.write("\n")
+        if installer_log.is_file():
+            fh.write("".join(("=" * 72, "\n")))
+            fh.write(f"$ tail -120 {installer_log}\n")
+            try:
+                lines = installer_log.read_text(encoding="utf-8", errors="replace").splitlines()
+                fh.write("\n".join(lines[-120:]))
+                fh.write("\n")
+            except OSError as exc:
+                fh.write(f"Could not read installer log: {exc}\n")
+    return path
+
+
 def execute(_state) -> Iterator[ProgressEvent]:
     root = repo_root()
     vm_smoke = root / "tests" / "installer" / "vm-smoke.sh"
@@ -153,6 +221,17 @@ def execute(_state) -> Iterator[ProgressEvent]:
             )
             continue
         yield from _run_script(str(path), label=label)
+
+    bundle = _write_diagnostic_bundle(root)
+    yield ProgressEvent(
+        type="summary",
+        step_id="diagnose-bundle",
+        label="Paquete de diagnóstico",
+        extra={"rows": [
+            ("Archivo", str(bundle)),
+            ("Uso", "Pásame este log si install/clone falla en servidor real"),
+        ]},
+    )
 
 
 __all__ = ["flow_id", "first_screen_id", "screens", "next_screen_id", "execute"]

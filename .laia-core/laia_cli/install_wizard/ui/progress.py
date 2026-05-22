@@ -44,6 +44,11 @@ def render_progress(event: ProgressEvent, console: Console | None = None) -> Non
             (f"  {THEME.g_arrow}  ", THEME.accent),
             (event.label, THEME.primary),
         ))
+        if event.extra and event.extra.get("log_path"):
+            console.print(Text.assemble(
+                ("       Ver log completo: ", THEME.muted),
+                (str(event.extra["log_path"]), THEME.field_value),
+            ))
         return
 
     if event.type == "step_progress":
@@ -61,6 +66,11 @@ def render_progress(event: ProgressEvent, console: Console | None = None) -> Non
             (event.label, THEME.field_value),
             (f"   ({event.elapsed_s:.1f}s)", THEME.muted) if event.elapsed_s else ("", ""),
         ))
+        if event.extra and event.extra.get("log_path"):
+            console.print(Text.assemble(
+                ("       Log: ", THEME.muted),
+                (str(event.extra["log_path"]), THEME.muted),
+            ))
         return
 
     if event.type == "step_error":
@@ -74,6 +84,22 @@ def render_progress(event: ProgressEvent, console: Console | None = None) -> Non
                 ("       ", ""),
                 (f"{THEME.g_arrow} {event.extra['hint']}", THEME.muted),
             ))
+        if event.extra and event.extra.get("log_path"):
+            console.print(Text.assemble(
+                ("       Ver log completo: ", THEME.muted),
+                (str(event.extra["log_path"]), THEME.field_value),
+            ))
+        tail = list((event.extra or {}).get("tail") or [])
+        if tail:
+            console.print(Text("       Últimas líneas:", style=THEME.muted))
+            for line in tail[-12:]:
+                msg = str(line)
+                if len(msg) > _LOG_LINE_CLIP:
+                    msg = msg[:_LOG_LINE_CLIP - 1] + "…"
+                console.print(Text.assemble(
+                    ("         ", ""),
+                    (msg, THEME.muted),
+                ))
         return
 
     if event.type == "log_line":

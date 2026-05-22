@@ -16,7 +16,10 @@ auto-install Tailscale from inside clone — keeps blast radius small.
 
 from __future__ import annotations
 
+import contextlib
+import os
 import shutil
+import tempfile
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -128,6 +131,26 @@ _SSH_AUTH_SCREEN = WizardScreen(
 )
 
 
+_SSH_PASSWORD_SCREEN = WizardScreen(
+    id="ssh_password",
+    title="Password SSH",
+    description=(
+        "Se usará sólo para esta ejecución. El wizard lo pasa por un archivo "
+        "temporal 0600 y lo borra antes de empezar la transferencia."
+    ),
+    fields=(
+        Field(
+            name="ssh_password",
+            type="password",
+            label="Password SSH del origen",
+            secret=True,
+            validator="non_empty",
+        ),
+    ),
+    actions=(ACTION_BACK, ACTION_NEXT),
+)
+
+
 _OPTIONS_SCREEN = WizardScreen(
     id="options",
     title="Opciones de transferencia",
@@ -194,6 +217,7 @@ screens: dict[str, Any] = {
     "source_kind": _SOURCE_KIND_SCREEN,
     "source_host": _source_host_screen,
     "ssh_auth":    _SSH_AUTH_SCREEN,
+    "ssh_password": _SSH_PASSWORD_SCREEN,
     "options":     _OPTIONS_SCREEN,
     "confirm":     _confirm_screen,
 }
@@ -204,7 +228,11 @@ screens: dict[str, Any] = {
 # ---------------------------------------------------------------------------
 
 def next_screen_id(screen_id: str, state) -> str | None:
-    order = ["source_kind", "source_host", "ssh_auth", "options", "confirm"]
+    if screen_id == "ssh_auth":
+        if state.values.get("ssh_auth_mode") == "password":
+            return "ssh_password"
+        return "options"
+    order = ["source_kind", "source_host", "ssh_auth", "ssh_password", "options", "confirm"]
     try:
         idx = order.index(screen_id)
     except ValueError:
@@ -217,6 +245,21 @@ def next_screen_id(screen_id: str, state) -> str | None:
 # ---------------------------------------------------------------------------
 # Execution
 # ---------------------------------------------------------------------------
+
+@contextlib.contextmanager
+def _secret_to_tempfile(secret: str, prefix: str = "laia-ssh-pass-"):
+    fd, path_str = tempfile.mkstemp(prefix=prefix, dir=tempfile.gettempdir())
+    path = Path(path_str)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(secret)
+        os.chmod(path, 0o600)
+        yield path
+    finally:
+        try:
+            path.unlink(missing_ok=True)
+        except OSError:
+            pass
 
 def execute(state) -> Iterator[ProgressEvent]:
     v = state.values
@@ -276,24 +319,38 @@ def execute(state) -> Iterator[ProgressEvent]:
     if v.get("resume"):
         cmd.append("--resume")
 
-    # SSH password mode: laia-clone's preflight will prompt interactively via
-    # /dev/tty if SSH key auth fails. We don't pre-write the password — the
-    # interactive prompt path is well-tested and avoids password-in-argv.
     env_extra: dict[str, str] = {}
     if v.get("ssh_auth_mode") == "password":
+        password = v.get("ssh_password") or ""
+        if not password:
+            yield ProgressEvent(
+                type="step_error",
+                step_id="ssh-auth",
+                label="Password SSH no especificado.",
+            )
+            return
         yield ProgressEvent(
             type="info",
             step_id="ssh-auth",
-            label="Modo password SSH: el preflight te pedirá el password si la clave falla.",
+            label="Modo password SSH: el wizard lo pasará por archivo temporal seguro.",
         )
-
-    yield from stream_command(
-        cmd,
-        step_id="laia-clone",
-        label=f"Clonando desde {source}",
-        cwd=root,
-        env_extra=env_extra or None,
-    )
+        with _secret_to_tempfile(password) as pass_file:
+            cmd.extend(["--ssh-pass-file", str(pass_file)])
+            yield from stream_command(
+                cmd,
+                step_id="laia-clone",
+                label=f"Clonando desde {source}",
+                cwd=root,
+                env_extra=env_extra or None,
+            )
+    else:
+        yield from stream_command(
+            cmd,
+            step_id="laia-clone",
+            label=f"Clonando desde {source}",
+            cwd=root,
+            env_extra=env_extra or None,
+        )
 
     # Post-clone tip (real summary is logged by bin/laia-clone itself).
     yield ProgressEvent(

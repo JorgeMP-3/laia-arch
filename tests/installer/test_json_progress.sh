@@ -83,6 +83,83 @@ else
 fi
 
 echo
+echo "→ wizard stream_command parses JSON progress and keeps run logs"
+if PYTHONPATH="$LAIA_ROOT/.laia-core" python3 - <<'PY'
+import os
+import sys
+from pathlib import Path
+from laia_cli.install_wizard.flows._subprocess import stream_command
+
+events = list(stream_command(
+    [
+        "python3",
+        "-c",
+        'print("{\\"event\\":\\"step_progress\\",\\"step_id\\":\\"demo\\",\\"label\\":\\"Structured phase\\",\\"percent\\":42,\\"ts\\":\\"now\\"}"); print("human line")',
+    ],
+    step_id="json-parser-test",
+    label="JSON parser test",
+    idle_timeout_s=-1,
+    timeout_s=10,
+))
+
+labels = [e.label for e in events]
+if "Structured phase" not in labels:
+    print("missing structured JSON event", file=sys.stderr)
+    sys.exit(1)
+if any(str(label).startswith('{"event"') for label in labels):
+    print("JSON line leaked as raw UI label", file=sys.stderr)
+    sys.exit(1)
+starts = [e for e in events if e.type == "step_start"]
+if not starts or not (starts[0].extra or {}).get("log_path"):
+    print("missing run log path", file=sys.stderr)
+    sys.exit(1)
+if not Path(starts[0].extra["log_path"]).is_file():
+    print("run log file does not exist", file=sys.stderr)
+    sys.exit(1)
+PY
+then
+  ok "wizard parser converts JSON progress into events"
+else
+  nope "wizard parser failed to convert JSON progress"
+fi
+
+echo
+echo "→ wizard stream_command error includes tail and log path"
+if PYTHONPATH="$LAIA_ROOT/.laia-core" python3 - <<'PY'
+import sys
+from pathlib import Path
+from laia_cli.install_wizard.flows._subprocess import stream_command
+
+events = list(stream_command(
+    ["bash", "-lc", "echo before-failure; echo final-line; exit 7"],
+    step_id="error-tail-test",
+    label="Error tail test",
+    idle_timeout_s=-1,
+    timeout_s=10,
+))
+errors = [e for e in events if e.type == "step_error"]
+if not errors:
+    print("missing step_error", file=sys.stderr)
+    sys.exit(1)
+extra = errors[-1].extra or {}
+tail = "\n".join(extra.get("tail") or [])
+if extra.get("returncode") != 7:
+    print(f"bad returncode: {extra.get('returncode')}", file=sys.stderr)
+    sys.exit(1)
+if "final-line" not in tail:
+    print(f"tail missing final-line: {tail!r}", file=sys.stderr)
+    sys.exit(1)
+if not extra.get("log_path") or not Path(extra["log_path"]).is_file():
+    print("missing log_path file", file=sys.stderr)
+    sys.exit(1)
+PY
+then
+  ok "wizard error event includes tail + log path"
+else
+  nope "wizard error event missing tail/log context"
+fi
+
+echo
 echo "═══════════════════════════════════════════════════"
 printf "  PASS: %d   FAIL: %d\n" "$PASS" "$FAIL"
 if [[ $FAIL -gt 0 ]]; then

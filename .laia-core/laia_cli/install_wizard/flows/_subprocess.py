@@ -12,11 +12,14 @@ lines become ``step_start`` vs ``log_line`` without touching the flow code.
 from __future__ import annotations
 
 import os
+import json
 import re
 import select
 import signal
 import subprocess
 import time
+import uuid
+from collections import deque
 from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Sequence
@@ -27,7 +30,7 @@ from ..contract import ProgressEvent
 # via stream_command(timeout_s=..., idle_timeout_s=...). A negative value
 # disables the limit.
 DEFAULT_TIMEOUT_S = 2 * 60 * 60       # 2 hours absolute (install / clone)
-DEFAULT_IDLE_TIMEOUT_S = 300          # 5 minutes without any output
+DEFAULT_IDLE_TIMEOUT_S = 30           # heartbeat every 30s without output
 
 # Anchors written by infra/installer/lib/common.sh::log_step. The installer
 # emits ``═══ Phase H: agora data ═══════…`` lines for each phase boundary.
@@ -63,6 +66,71 @@ def repo_root() -> Path:
         if (parent / "infra" / "installer").is_dir():
             return parent
     return Path(os.path.expanduser("~")) / "LAIA"
+
+
+def _runs_dir() -> Path:
+    cache = Path(
+        os.environ.get("XDG_CACHE_HOME") or
+        os.path.join(os.path.expanduser("~"), ".cache")
+    )
+    path = cache / "laia-wizard" / "runs"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _sanitize_cmd(cmd: Sequence[str]) -> list[str]:
+    """Return a command safe to show in UI/log summaries."""
+    redacted_next = {
+        "--admin-pass",
+        "--admin-pass-file",
+        "--auth-file",
+        "--ssh-pass-file",
+        "--bwlimit-file",
+    }
+    out: list[str] = []
+    hide_next = False
+    for arg in cmd:
+        if hide_next:
+            out.append("<redacted>")
+            hide_next = False
+            continue
+        if arg in redacted_next:
+            out.append(arg)
+            hide_next = True
+            continue
+        if arg.startswith("--admin-pass=") or arg.startswith("--ssh-pass-file="):
+            out.append(arg.split("=", 1)[0] + "=<redacted>")
+            continue
+        out.append(arg)
+    return out
+
+
+def _json_progress_event(
+    line: str,
+    *,
+    elapsed_s: float,
+) -> ProgressEvent | None:
+    """Parse one JSON-progress line from bin/laia-* if present."""
+    if not line.startswith("{"):
+        return None
+    try:
+        payload = json.loads(line)
+    except json.JSONDecodeError:
+        return None
+    event_type = payload.get("event")
+    if not event_type:
+        return None
+    return ProgressEvent(
+        type=event_type,
+        step_id=payload.get("step_id") or None,
+        label=str(payload.get("label") or event_type),
+        percent=payload.get("percent"),
+        elapsed_s=elapsed_s,
+        extra={
+            "run_id": payload.get("run_id") or os.environ.get("LAIA_RUN_ID"),
+            "ts": payload.get("ts"),
+        },
+    )
 
 
 def _kill_tree(proc: subprocess.Popen) -> int:
@@ -122,16 +190,28 @@ def stream_command(
         idle_timeout_s = DEFAULT_IDLE_TIMEOUT_S
 
     started = time.time()
+    run_id = os.environ.get("LAIA_RUN_ID") or uuid.uuid4().hex[:12]
+    log_path = _runs_dir() / f"{run_id}-{step_id}.log"
+    safe_cmd = _sanitize_cmd(cmd)
     yield ProgressEvent(
         type="step_start",
         step_id=step_id,
         label=label,
-        extra={"cmd": list(cmd)},
+        extra={"cmd": safe_cmd, "run_id": run_id, "log_path": str(log_path)},
     )
 
     env = os.environ.copy()
+    env.setdefault("LAIA_RUN_ID", run_id)
+    env.setdefault("LAIA_CURRENT_STEP", step_id)
     if env_extra:
         env.update(env_extra)
+
+    log_fh = log_path.open("a", encoding="utf-8")
+    log_fh.write(f"# LAIA wizard run {run_id}\n")
+    log_fh.write(f"# started: {time.strftime('%Y-%m-%dT%H:%M:%S%z')}\n")
+    log_fh.write(f"# cwd: {cwd or Path.cwd()}\n")
+    log_fh.write(f"# cmd: {' '.join(safe_cmd)}\n\n")
+    log_fh.flush()
 
     try:
         proc = subprocess.Popen(
@@ -147,12 +227,14 @@ def stream_command(
             start_new_session=True,
         )
     except FileNotFoundError as exc:
+        log_fh.write(f"COMMAND NOT FOUND: {cmd[0]}: {exc}\n")
+        log_fh.close()
         yield ProgressEvent(
             type="step_error",
             step_id=step_id,
             label=f"Comando no encontrado: {cmd[0]}",
             elapsed_s=time.time() - started,
-            extra={"hint": str(exc)},
+            extra={"hint": str(exc), "log_path": str(log_path), "run_id": run_id},
         )
         return
 
@@ -160,36 +242,53 @@ def stream_command(
     interrupted = False
     timed_out = False
     last_output_at = time.time()
+    last_warning_at = 0.0
+    current_phase = label
+    last_lines: deque[str] = deque(maxlen=40)
     rc: int | None = None
 
     def _emit_for(line: str) -> Iterator[ProgressEvent]:
+        nonlocal current_phase
+        log_fh.write(line + "\n")
+        log_fh.flush()
+        elapsed = time.time() - started
+        json_event = _json_progress_event(line, elapsed_s=elapsed)
+        if json_event is not None:
+            if json_event.type in ("step_start", "step_progress"):
+                current_phase = json_event.label
+            yield json_event
+            return
+        if line and not _is_noise(line):
+            last_lines.append(line)
         if _is_noise(line):
             return
         if line_filter and not line_filter(line):
             return
         m_step = _STEP_LINE_RE.search(line)
         if m_step:
+            current_phase = m_step.group("label").strip()
             yield ProgressEvent(
                 type="step_progress",
                 step_id=step_id,
-                label=m_step.group("label").strip(),
-                elapsed_s=time.time() - started,
+                label=current_phase,
+                elapsed_s=elapsed,
             )
             return
         m_hb = _HEARTBEAT_RE.search(line)
         if m_hb:
+            current_phase = f"construyendo {m_hb.group('name')}..."
             yield ProgressEvent(
                 type="step_progress",
                 step_id=step_id,
-                label=f"construyendo {m_hb.group('name')}…",
-                elapsed_s=time.time() - started,
+                label=current_phase,
+                elapsed_s=elapsed,
             )
             return
         yield ProgressEvent(
             type="log_line",
             step_id=step_id,
             label=line[:300],
-            elapsed_s=time.time() - started,
+            elapsed_s=elapsed,
         )
 
     try:
@@ -218,23 +317,26 @@ def stream_command(
                 rc = _kill_tree(proc)
                 break
 
-            # Idle timeout?
+            # Heartbeat when a child is alive but quiet.
             if (
                 idle_timeout_s
                 and idle_timeout_s > 0
                 and (time.time() - last_output_at) > idle_timeout_s
+                and (time.time() - last_warning_at) > idle_timeout_s
                 and proc.poll() is None
             ):
+                quiet_for = int(time.time() - last_output_at)
                 yield ProgressEvent(
                     type="warning",
                     step_id=step_id,
                     label=(
-                        f"{label}: sin output por {int(idle_timeout_s)}s "
-                        f"(el proceso sigue vivo)."
+                        f"{label}: sigue vivo; última fase: {current_phase}; "
+                        f"sin output por {quiet_for}s."
                     ),
                     elapsed_s=time.time() - started,
+                    extra={"log_path": str(log_path), "run_id": run_id},
                 )
-                last_output_at = time.time()  # don't spam the same warning
+                last_warning_at = time.time()
 
             ready, _, _ = select.select([fd], [], [], poll_interval)
             if ready:
@@ -279,7 +381,11 @@ def stream_command(
             step_id=step_id,
             label=f"{label} interrumpido por el usuario",
             elapsed_s=time.time() - started,
-            extra={"hint": "Re-ejecuta laia-wizard --resume para continuar."},
+            extra={
+                "hint": "Re-ejecuta laia-wizard --resume para continuar.",
+                "log_path": str(log_path),
+                "run_id": run_id,
+            },
         )
         rc = _kill_tree(proc)
         raise
@@ -289,6 +395,8 @@ def stream_command(
                 rc = proc.wait(timeout=2)
             except subprocess.TimeoutExpired:
                 rc = _kill_tree(proc)
+        log_fh.write(f"\n# finished: rc={rc}\n")
+        log_fh.close()
 
     elapsed = time.time() - started
     if timed_out:
@@ -303,15 +411,26 @@ def stream_command(
             step_id=step_id,
             label=f"{label} OK",
             elapsed_s=elapsed,
-            extra={"returncode": 0},
+            extra={"returncode": 0, "log_path": str(log_path), "run_id": run_id},
         )
     else:
+        hint = (
+            f"Log completo: {log_path}. "
+            "Últimas líneas visibles en el detalle del error."
+        )
         yield ProgressEvent(
             type="step_error",
             step_id=step_id,
             label=f"{label} falló (exit {rc})",
             elapsed_s=elapsed,
-            extra={"returncode": rc, "hint": "ver ~/.cache/laia-installer.log y /tmp/build-*.log"},
+            extra={
+                "returncode": rc,
+                "hint": hint,
+                "log_path": str(log_path),
+                "run_id": run_id,
+                "cmd": safe_cmd,
+                "tail": list(last_lines),
+            },
         )
 
 

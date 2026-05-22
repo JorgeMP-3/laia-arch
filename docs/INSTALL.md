@@ -18,21 +18,21 @@ faltantes vía `apt-get` cuando se ejecuta como root.
 ## Instalación Factory Desde GitHub
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/JorgeMP-3/laia-arch/feat/installer-cloner-v2/install.sh \
-  | sudo -E bash -s -- install --yes
+curl -fsSL https://raw.githubusercontent.com/JorgeMP-3/laia-arch/feat/installer-wizard/install.sh \
+  | sudo bash -s -- --mode install --yes
 ```
 
 Opciones útiles:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/JorgeMP-3/laia-arch/feat/installer-cloner-v2/install.sh \
-  | sudo -E bash -s -- install --minimal --yes
+curl -fsSL https://raw.githubusercontent.com/JorgeMP-3/laia-arch/feat/installer-wizard/install.sh \
+  | sudo bash -s -- --mode install --yes -- --minimal
 
-curl -fsSL https://raw.githubusercontent.com/JorgeMP-3/laia-arch/feat/installer-cloner-v2/install.sh \
-  | sudo -E bash -s -- install --auth-file /secure/auth.json --yes
+curl -fsSL https://raw.githubusercontent.com/JorgeMP-3/laia-arch/feat/installer-wizard/install.sh \
+  | sudo bash -s -- --mode install --yes -- --auth-file /secure/auth.json
 
-curl -fsSL https://raw.githubusercontent.com/JorgeMP-3/laia-arch/feat/installer-cloner-v2/install.sh \
-  | sudo -E bash -s -- install --admin-user admin --admin-pass '...' --yes
+curl -fsSL https://raw.githubusercontent.com/JorgeMP-3/laia-arch/feat/installer-wizard/install.sh \
+  | sudo bash -s -- --mode install --yes -- --admin-user admin --admin-pass '...'
 ```
 
 `--minimal` instala solo la base host y salta la Fase G. Es el modo usado por
@@ -55,8 +55,8 @@ read -rsp "GitHub token: " GITHUB_TOKEN; echo
 
 curl -fsSL \
   -H "Authorization: Bearer $GITHUB_TOKEN" \
-  https://raw.githubusercontent.com/JorgeMP-3/laia-arch/feat/installer-cloner-v2/install.sh \
-  | sudo -E LAIA_GITHUB_TOKEN="$GITHUB_TOKEN" bash -s -- install --yes
+  https://raw.githubusercontent.com/JorgeMP-3/laia-arch/feat/installer-wizard/install.sh \
+  | sudo LAIA_GITHUB_TOKEN="$GITHUB_TOKEN" bash -s -- --mode install --yes
 ```
 
 ## Credenciales

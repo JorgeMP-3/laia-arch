@@ -44,6 +44,7 @@ OPT_ONLY_AGENT=""
 OPT_KEEP_SESSION=false
 OPT_BWLIMIT=""
 OPT_BWLIMIT_FILE=""
+OPT_SSH_PASS_FILE=""
 OPT_PREFLIGHT_ONLY=false
 OPT_RESUME=false
 
@@ -82,6 +83,9 @@ OPTIONS
                           Useful when invoked from the wizard, to avoid
                           surfacing user input on the command line. The
                           file is consumed (unlinked) after reading.
+    --ssh-pass-file PATH  Read the SSH password from a mode-0600 file,
+                          unlink it immediately, and use sshpass. Intended
+                          for laia-wizard password mode; avoids password argv.
     --with-tools          Also clone personal CLI configs (Claude Code, Codex,
                           OpenCode, .gitconfig, .pm2, .docker)
     --with-mlx-models     Also clone heavy local models (LAIA-ARCH/mlx-servers/)
@@ -137,6 +141,9 @@ parse_args() {
       --bwlimit-file)
         [[ $# -ge 2 && -n "${2:-}" ]] || die "--bwlimit-file requires PATH" 2
         OPT_BWLIMIT_FILE="$2"; shift 2 ;;
+      --ssh-pass-file)
+        [[ $# -ge 2 && -n "${2:-}" ]] || die "--ssh-pass-file requires PATH" 2
+        OPT_SSH_PASS_FILE="$2"; shift 2 ;;
       --json-progress)
         export LAIA_JSON_PROGRESS=1
         shift ;;
@@ -188,6 +195,32 @@ resolve_bwlimit_file() {
   OPT_BWLIMIT="${OPT_BWLIMIT%$'\n'}"
   rm -f "$OPT_BWLIMIT_FILE" 2>/dev/null || true
   OPT_BWLIMIT_FILE=""
+}
+
+# resolve_ssh_pass_file — read --ssh-pass-file into SSHPASS, unlink it, and
+# switch the clone transport into sshpass mode before preflight.
+resolve_ssh_pass_file() {
+  [[ -z "$OPT_SSH_PASS_FILE" ]] && return 0
+  if [[ ! -f "$OPT_SSH_PASS_FILE" ]]; then
+    die "--ssh-pass-file not found: $OPT_SSH_PASS_FILE" 2
+  fi
+  if [[ ! -r "$OPT_SSH_PASS_FILE" ]]; then
+    die "--ssh-pass-file not readable: $OPT_SSH_PASS_FILE" 2
+  fi
+
+  SSHPASS="$(< "$OPT_SSH_PASS_FILE")"
+  SSHPASS="${SSHPASS%$'\n'}"
+  rm -f "$OPT_SSH_PASS_FILE" 2>/dev/null || true
+  OPT_SSH_PASS_FILE=""
+
+  if [[ -z "$SSHPASS" ]]; then
+    die "--ssh-pass-file is empty" 2
+  fi
+  export SSHPASS
+  CLONE_SSH_USE_PASSWORD=true
+
+  # Fail here, before source checks, if sshpass cannot be made available.
+  clone_ensure_sshpass
 }
 
 # validate_options — reject any user-supplied value that has shell
@@ -270,8 +303,11 @@ clone_install_first_if_needed() {
 
 # ─── Main ───────────────────────────────────────────────────────────────────
 main() {
+  trap_errors
+  install_signal_traps
   parse_args "$@"
   resolve_bwlimit_file
+  resolve_ssh_pass_file
   validate_options
 
   emit_json_event step_start clone:start "laia-clone starting"

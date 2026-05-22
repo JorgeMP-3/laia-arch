@@ -50,6 +50,8 @@ OPT_CONFIG=""
 OPT_YES=false
 OPT_NO_APT=false
 OPT_PRESERVE_BRANCH=false
+OPT_MODE_EXPLICIT=false
+OPT_SOURCE_EXPLICIT=false
 PASSTHRU_ARGS=()
 
 # Colors (off when not a TTY or NO_COLOR is set).
@@ -67,6 +69,50 @@ err()   { printf '%s✗%s %s\n' "$C_R"  "$C_0" "$*" >&2; }
 die()   { err "$@"; exit 1; }
 step()  { printf '\n%s%s═══ %s ═══════════════════════════════════════════════%s\n' \
            "$C_Y" "$C_B" "$1" "$C_0"; }
+
+descendant_pids() {
+  command -v pgrep >/dev/null 2>&1 || return 0
+  local parent="$1" child
+  while IFS= read -r child; do
+    [[ -n "$child" ]] || continue
+    printf '%s\n' "$child"
+    descendant_pids "$child"
+  done < <(pgrep -P "$parent" 2>/dev/null || true)
+}
+
+abort_now() {
+  local sig="${1:-INT}" pids active="${LAIA_ACTIVE_CHILD_PID:-}"
+  trap - INT TERM QUIT
+  warn "Interrupted by SIG$sig — cancelling LAIA bootstrap now."
+  pids="$(
+    [[ -n "$active" ]] && printf '%s\n' "$active"
+    [[ -n "$active" ]] && descendant_pids "$active" 2>/dev/null || true
+    jobs -pr 2>/dev/null
+    descendant_pids "$$" 2>/dev/null || true
+  )"
+  if [[ -n "$pids" ]]; then
+    kill -TERM $pids 2>/dev/null || true
+    sleep 1
+    kill -KILL $pids 2>/dev/null || true
+  fi
+  exit 130
+}
+
+install_signal_traps() {
+  trap 'abort_now INT' INT
+  trap 'abort_now TERM' TERM
+  trap 'abort_now QUIT' QUIT
+}
+
+run_interruptible() {
+  "$@" &
+  local pid=$! rc
+  LAIA_ACTIVE_CHILD_PID="$pid"
+  wait "$pid"
+  rc=$?
+  LAIA_ACTIVE_CHILD_PID=""
+  return "$rc"
+}
 
 # Read from /dev/tty when stdin is not a terminal — typical when invoked
 # via `curl … | sudo -E bash`, where bash's stdin is the (drained) curl
@@ -95,8 +141,10 @@ USAGE
 OPTIONS
     --mode {wizard|install|clone}
                           What to run after prereqs + clone.
-                          Default: wizard (interactive TUI).
-    --source user@host    Required when --mode=clone (the source server).
+                          If omitted in an interactive terminal, this script
+                          asks whether to install from zero or clone.
+    --source user@host    Source server for --mode=clone. If omitted
+                          interactively, the script asks user + IP/hostname.
     --branch BRANCH       Git branch / tag to install from.
                           Default: $DEFAULT_BRANCH
     --laia-dir PATH       Where to clone the repo. Default: \$SUDO_USER's
@@ -120,7 +168,7 @@ ENVIRONMENT
 EXAMPLES
     # Most common: clone from an existing LAIA host onto this new server.
     curl -fsSL https://raw.githubusercontent.com/JorgeMP-3/laia-arch/$DEFAULT_BRANCH/install.sh \\
-      | sudo -E bash -s -- --mode clone --source laia-hermes@old-server --yes
+      | sudo bash -s -- --mode clone --source usuario@192.0.2.10 --yes
 
     # Or interactive (asks everything in the TUI):
     curl -fsSL https://raw.githubusercontent.com/JorgeMP-3/laia-arch/$DEFAULT_BRANCH/install.sh \\
@@ -144,10 +192,10 @@ parse_args() {
       -h|--help)        usage; exit 0 ;;
       --mode)
         [[ $# -ge 2 ]] || die "--mode requires a value"
-        OPT_MODE="$2"; shift 2 ;;
+        OPT_MODE="$2"; OPT_MODE_EXPLICIT=true; shift 2 ;;
       --source)
         [[ $# -ge 2 ]] || die "--source requires user@host"
-        OPT_SOURCE="$2"; shift 2 ;;
+        OPT_SOURCE="$2"; OPT_SOURCE_EXPLICIT=true; shift 2 ;;
       --branch)
         [[ $# -ge 2 ]] || die "--branch requires a name"
         LAIA_BRANCH="$2"; OPT_PRESERVE_BRANCH=true; shift 2 ;;
@@ -170,9 +218,64 @@ parse_args() {
     wizard|install|clone) ;;
     *) die "Unknown --mode: $OPT_MODE (expected wizard|install|clone)" ;;
   esac
-  if [[ "$OPT_MODE" == "clone" && -z "$OPT_SOURCE" && -z "$OPT_CONFIG" ]]; then
-    # Clone needs a source unless the wizard config provides one.
-    die "--mode clone requires --source user@host (or --config FILE)"
+}
+
+validate_source() {
+  local source="$1" user host
+  [[ -n "$source" ]] || die "Clone source is empty."
+
+  case "$source" in
+    *IP_DEL*|*IP-DEL*|*old-server*|*viejo-server*|*example.com*|*"<"*|*">"*)
+      die "Source '$source' looks like a documentation placeholder. Use the real user and IP/hostname, e.g. jorge@192.168.1.50"
+      ;;
+  esac
+
+  if [[ "$source" != *@* ]]; then
+    die "Source must be user@host, got: $source"
+  fi
+  user="${source%@*}"
+  host="${source#*@}"
+  if [[ ! "$user" =~ ^[A-Za-z_][A-Za-z0-9_.-]{0,31}$ ]]; then
+    die "Invalid source user '$user'. Use a normal SSH username, e.g. jorge"
+  fi
+  if [[ -z "$host" || "$host" =~ [[:space:]\;\|\&\$\(\)\<\>\\\'\"] ]]; then
+    die "Invalid source host '$host'. Use a real IP, DNS name, or Tailscale hostname."
+  fi
+}
+
+collect_interactive_intent() {
+  [[ -n "$OPT_CONFIG" ]] && return 0
+
+  if [[ "$OPT_MODE_EXPLICIT" == false && "$OPT_YES" == false ]]; then
+    step "What do you want to do?"
+    printf '  [1] Install LAIA from zero on this server\n'
+    printf '  [2] Clone/migrate LAIA from another server\n'
+    printf '  [3] Open the full wizard\n'
+    local ans
+    ans="$(ask_tty 'Choose 1, 2 or 3 [3]: ')"
+    case "${ans:-3}" in
+      1) OPT_MODE="install" ;;
+      2) OPT_MODE="clone" ;;
+      3) OPT_MODE="wizard" ;;
+      *) die "Invalid choice: $ans" ;;
+    esac
+  fi
+
+  if [[ "$OPT_MODE" == "clone" && -z "$OPT_SOURCE" ]]; then
+    if [[ "$OPT_YES" == true ]]; then
+      die "--mode clone with --yes requires --source user@host. Refusing to guess."
+    fi
+    step "Source server to clone from"
+    local src_user src_host
+    src_user="$(ask_tty 'SSH username on the OLD server: ')"
+    src_host="$(ask_tty 'IP/hostname of the OLD server: ')"
+    [[ -n "$src_user" ]] || die "Source SSH username is required."
+    [[ -n "$src_host" ]] || die "Source IP/hostname is required."
+    OPT_SOURCE="${src_user}@${src_host}"
+  fi
+
+  if [[ "$OPT_MODE" == "clone" || -n "$OPT_SOURCE" ]]; then
+    validate_source "$OPT_SOURCE"
   fi
 }
 
@@ -222,6 +325,7 @@ APT_PACKAGES=(
   curl
   ca-certificates
   openssh-client
+  snapd
   build-essential
 )
 
@@ -262,11 +366,11 @@ ensure_prereqs() {
   # heartbeat; without it the user sees a blank screen for 30-60s
   # and (justifiably) thinks the script froze.
   log "Running 'apt-get update' (refresh package lists)..."
-  if ! apt-get update; then
+  if ! run_interruptible apt-get update; then
     die "apt-get update failed — check your internet connection / proxy."
   fi
   log "Running 'apt-get install' for ${#missing[@]} package(s)..."
-  if ! DEBIAN_FRONTEND=noninteractive apt-get install -y "${missing[@]}"; then
+  if ! run_interruptible env DEBIAN_FRONTEND=noninteractive apt-get install -y "${missing[@]}"; then
     die "apt-get install failed — see output above for the offending package."
   fi
   ok "Installed ${#missing[@]} packages: ${missing[*]}"
@@ -279,9 +383,9 @@ clone_or_update() {
     local current
     current="$(sudo -u "$LAIA_USER" git -C "$LAIA_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown)"
     log "Existing repo found (branch: $current). Updating."
-    sudo -u "$LAIA_USER" git -C "$LAIA_DIR" fetch --depth 1 origin "$LAIA_BRANCH"
-    sudo -u "$LAIA_USER" git -C "$LAIA_DIR" checkout "$LAIA_BRANCH"
-    sudo -u "$LAIA_USER" git -C "$LAIA_DIR" reset --hard "origin/$LAIA_BRANCH"
+    run_interruptible sudo -u "$LAIA_USER" git -C "$LAIA_DIR" fetch --depth 1 origin "$LAIA_BRANCH"
+    run_interruptible sudo -u "$LAIA_USER" git -C "$LAIA_DIR" checkout "$LAIA_BRANCH"
+    run_interruptible sudo -u "$LAIA_USER" git -C "$LAIA_DIR" reset --hard "origin/$LAIA_BRANCH"
     ok "Updated to origin/$LAIA_BRANCH"
     return 0
   fi
@@ -297,10 +401,10 @@ clone_or_update() {
     local token="${LAIA_GITHUB_TOKEN:-${GITHUB_TOKEN:-}}"
     local basic
     basic="$(printf 'x-access-token:%s' "$token" | base64 | tr -d '\n')"
-    sudo -u "$LAIA_USER" git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic ${basic}" \
+    run_interruptible sudo -u "$LAIA_USER" git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic ${basic}" \
       clone --depth 1 --branch "$LAIA_BRANCH" "$LAIA_REPO_URL" "$LAIA_DIR"
   else
-    sudo -u "$LAIA_USER" "${git_cmd[@]}"
+    run_interruptible sudo -u "$LAIA_USER" "${git_cmd[@]}"
   fi
   ok "Cloned."
 }
@@ -409,12 +513,15 @@ hand_off() {
 
 # ─── Main ────────────────────────────────────────────────────────────────────
 main() {
+  install_signal_traps
   parse_args "$@"
 
   step "LAIA bootstrap — production server setup"
   echo "  $C_D(re-run with --help to see all options)$C_0"
 
   resolve_user
+  chown_user_home
+  collect_interactive_intent
   detect_os
   ensure_prereqs
   clone_or_update

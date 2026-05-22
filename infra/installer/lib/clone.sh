@@ -99,11 +99,36 @@ clone_src_for() {
 # clone_rsync_base — common rsync options array. Mode-aware for -e ssh.
 # Sets a global array CLONE_RSYNC_OPTS the callers can extend.
 clone_rsync_base_opts() {
-  CLONE_RSYNC_OPTS=(-a --info=stats1)
+  CLONE_RSYNC_OPTS=(-a --info=progress2,stats1,name1 --human-readable --outbuf=L)
   [[ -n "${OPT_BWLIMIT:-}" ]] && CLONE_RSYNC_OPTS+=(--bwlimit="$OPT_BWLIMIT")
   if ! clone_is_local_source; then
     CLONE_RSYNC_OPTS+=(-e "$(clone_ssh_transport)")
   fi
+}
+
+clone_rsync() {
+  local label="$1"
+  shift
+  local log_file rc
+  log_file="$(mktemp)"
+  log_info "  rsync: $label"
+  set +e
+  if [[ "${1:-}" == "sudo" ]]; then
+    "$@" 2>&1 | tee "$log_file"
+  else
+    rsync "$@" 2>&1 | tee "$log_file"
+  fi
+  rc="${PIPESTATUS[0]}"
+  set -e
+  if [[ "$rc" -ne 0 ]]; then
+    log_error "rsync failed for $label (exit $rc)"
+    log_error "Last rsync output:"
+    tail -40 "$log_file" >&2 || true
+    rm -f "$log_file"
+    return "$rc"
+  fi
+  rm -f "$log_file"
+  return 0
 }
 
 clone_stub_log() {
@@ -186,8 +211,8 @@ clone_ensure_sshpass() {
   fi
 
   log_info "Installing sshpass for SSH password authentication"
-  apt-get update >/dev/null
-  DEBIAN_FRONTEND=noninteractive apt-get install -y sshpass >/dev/null
+  laia_run_interruptible apt-get update
+  laia_run_interruptible env DEBIAN_FRONTEND=noninteractive apt-get install -y sshpass
 }
 
 clone_prompt_ssh_password() {
@@ -394,6 +419,7 @@ clone_stop_services() {
 # ─── D.2: Phase 1 — rsync LAIA_HOME ────────────────────────────────────────
 clone_phase1_laia_home() {
   log_step "Phase 1: LAIA_HOME (data)"
+  emit_json_event step_start clone:laia-home "Rsync LAIA_HOME"
 
   local src dst excludes_file
   src="$(clone_src_for laia_home)"
@@ -408,18 +434,20 @@ clone_phase1_laia_home() {
   CLONE_RSYNC_OPTS+=(--exclude-from="$excludes_file")
 
   log_info "  rsync $src → $dst"
-  if ! rsync "${CLONE_RSYNC_OPTS[@]}" "$src" "$dst" >/dev/null; then
+  if ! clone_rsync "LAIA_HOME" "${CLONE_RSYNC_OPTS[@]}" "$src" "$dst"; then
     rm -f "$excludes_file"
     die "Phase 1 rsync failed"
   fi
 
   rm -f "$excludes_file"
+  emit_json_event step_done clone:laia-home "LAIA_HOME copied"
   log_success "Phase 1 complete"
 }
 
 # ─── D.3: Phase 3 — rsync /srv/laia/users ──────────────────────────────────
 clone_phase3_users() {
   log_step "Phase 3: /srv/laia/users (PA-AGORA bind mounts)"
+  emit_json_event step_start clone:users "Rsync /srv/laia/users"
 
   local src dst excludes_file
   src="$(clone_src_for users)"
@@ -429,6 +457,7 @@ clone_phase3_users() {
   # (a brand-new origin may not have any agents yet).
   if clone_is_local_source && [[ ! -d "$OPT_SOURCE_DIR/users" ]]; then
     log_info "  Source has no users/ directory — skipping Phase 3"
+    emit_json_event step_done clone:users "No users directory at source"
     return 0
   fi
 
@@ -442,11 +471,11 @@ clone_phase3_users() {
     # Local: rsync directly with sudo for the write.
     if inst_is_override_mode; then
       mkdir -p "$dst"
-      rsync "${CLONE_RSYNC_OPTS[@]}" "$src" "$dst" >/dev/null \
+      clone_rsync "users" "${CLONE_RSYNC_OPTS[@]}" "$src" "$dst" \
         || { rm -f "$excludes_file"; die "Phase 3 rsync failed"; }
     else
       sudo mkdir -p "$dst"
-      sudo rsync "${CLONE_RSYNC_OPTS[@]}" "$src" "$dst" >/dev/null \
+      clone_rsync "users" sudo rsync "${CLONE_RSYNC_OPTS[@]}" "$src" "$dst" \
         || { rm -f "$excludes_file"; die "Phase 3 rsync failed"; }
     fi
   else
@@ -457,21 +486,22 @@ clone_phase3_users() {
     mkdir -p "$stage"
 
     log_info "  Staging in $stage"
-    rsync "${CLONE_RSYNC_OPTS[@]}" "$src" "$stage/" >/dev/null \
+    clone_rsync "users stage" "${CLONE_RSYNC_OPTS[@]}" "$src" "$stage/" \
       || { rm -f "$excludes_file"; die "Phase 3 stage rsync failed"; }
 
     log_info "  Promoting to $dst"
     if inst_is_override_mode; then
       mkdir -p "$dst"
-      rsync -a "$stage/" "$dst" >/dev/null
+      clone_rsync "users promote" -a --info=progress2,stats1,name1 --human-readable --outbuf=L "$stage/" "$dst"
     else
       sudo mkdir -p "$dst"
-      sudo rsync -a "$stage/" "$dst" >/dev/null
+      clone_rsync "users promote" sudo rsync -a --info=progress2,stats1,name1 --human-readable --outbuf=L "$stage/" "$dst"
     fi
     rm -rf "$stage" 2>/dev/null || true
   fi
 
   rm -f "$excludes_file"
+  emit_json_event step_done clone:users "Users data copied"
   log_success "Phase 3 complete"
 }
 
@@ -487,22 +517,22 @@ clone_rsync_to_privileged_dest() {
     [[ -e "${src%/}" ]] || { log_info "  Source missing for $label — skipping"; return 0; }
     if inst_is_override_mode; then
       mkdir -p "$dst"
-      rsync "${CLONE_RSYNC_OPTS[@]}" "$src" "$dst/" >/dev/null || die "$label rsync failed"
+      clone_rsync "$label" "${CLONE_RSYNC_OPTS[@]}" "$src" "$dst/" || die "$label rsync failed"
     else
       sudo mkdir -p "$dst"
-      sudo rsync "${CLONE_RSYNC_OPTS[@]}" "$src" "$dst/" >/dev/null || die "$label rsync failed"
+      clone_rsync "$label" sudo rsync "${CLONE_RSYNC_OPTS[@]}" "$src" "$dst/" || die "$label rsync failed"
     fi
   else
     local stage="$LAIA_USER_HOME/.laia-clone-stage/$(basename "$dst")"
     rm -rf "$stage" 2>/dev/null || true
     mkdir -p "$stage"
-    rsync "${CLONE_RSYNC_OPTS[@]}" "$src" "$stage/" >/dev/null || die "$label stage rsync failed"
+    clone_rsync "$label stage" "${CLONE_RSYNC_OPTS[@]}" "$src" "$stage/" || die "$label stage rsync failed"
     if inst_is_override_mode; then
       mkdir -p "$dst"
-      rsync -a --numeric-ids "$stage/" "$dst/" >/dev/null || die "$label promote failed"
+      clone_rsync "$label promote" -a --numeric-ids --info=progress2,stats1,name1 --human-readable --outbuf=L "$stage/" "$dst/" || die "$label promote failed"
     else
       sudo mkdir -p "$dst"
-      sudo rsync -a --numeric-ids "$stage/" "$dst/" >/dev/null || die "$label promote failed"
+      clone_rsync "$label promote" sudo rsync -a --numeric-ids --info=progress2,stats1,name1 --human-readable --outbuf=L "$stage/" "$dst/" || die "$label promote failed"
     fi
     rm -rf "$stage" 2>/dev/null || true
   fi
@@ -510,7 +540,9 @@ clone_rsync_to_privileged_dest() {
 
 clone_phase_h_rsync_agora_data() {
   log_step "Phase H: /srv/laia/agora"
+  emit_json_event step_start clone:rsync-agora "Rsync /srv/laia/agora"
   clone_rsync_to_privileged_dest "$(clone_src_for agora)" "$(clone_dest_agora_dir)" "agora data"
+  emit_json_event step_done clone:rsync-agora "AGORA data copied"
   log_success "Phase H agora data complete"
 }
 
@@ -521,21 +553,25 @@ clone_phase_h_rsync_users_data() {
 
 clone_phase_h_rsync_arch_data() {
   log_step "Phase H: LAIA-ARCH operational data"
+  emit_json_event step_start clone:rsync-arch "Rsync LAIA-ARCH operational data"
   local dst
   dst="$(clone_dest_arch_dir)"
 
   if clone_is_local_source && [[ -d "$OPT_SOURCE_DIR/arch" ]]; then
     clone_rsync_to_privileged_dest "$(clone_src_for arch)" "$dst" "arch data"
     clone_phase_h_rewrite_config_paths
+    emit_json_event step_done clone:rsync-arch "ARCH data copied"
     return 0
   fi
   if ! clone_is_local_source && clone_source_path_exists "$LAIA_ARCH_DIR_DEFAULT"; then
     clone_rsync_to_privileged_dest "$(clone_src_for arch)" "$dst" "arch data"
     clone_phase_h_rewrite_config_paths
+    emit_json_event step_done clone:rsync-arch "ARCH data copied"
     return 0
   fi
   if clone_is_local_source && [[ ! -d "$OPT_SOURCE_DIR/home/.laia" ]]; then
     log_info "  Source has no ARCH operational data — skipping"
+    emit_json_event step_done clone:rsync-arch "No ARCH operational data at source"
     return 0
   fi
 
@@ -568,24 +604,25 @@ clone_phase_h_rsync_arch_data() {
     CLONE_RSYNC_OPTS+=(--numeric-ids)
     if clone_is_local_source; then
       mkdir -p "$dst"
-      rsync "${CLONE_RSYNC_OPTS[@]}" "$OPT_SOURCE_DIR/home/.laia/$rel" "$dst/$rel" >/dev/null 2>&1 || true
+      clone_rsync "arch file $rel" "${CLONE_RSYNC_OPTS[@]}" "$OPT_SOURCE_DIR/home/.laia/$rel" "$dst/$rel" || true
     else
       local stage="$LAIA_USER_HOME/.laia-clone-stage/arch-files"
       mkdir -p "$stage"
-      rsync "${CLONE_RSYNC_OPTS[@]}" "${src_base}${rel}" "$stage/$rel" >/dev/null 2>&1 || true
+      clone_rsync "arch file $rel stage" "${CLONE_RSYNC_OPTS[@]}" "${src_base}${rel}" "$stage/$rel" || true
       if [[ -f "$stage/$rel" ]]; then
         if inst_is_override_mode; then
           mkdir -p "$dst"
-          rsync -a "$stage/$rel" "$dst/$rel" >/dev/null
+          clone_rsync "arch file $rel promote" -a --info=progress2,stats1,name1 --human-readable --outbuf=L "$stage/$rel" "$dst/$rel"
         else
           sudo mkdir -p "$dst"
-          sudo rsync -a "$stage/$rel" "$dst/$rel" >/dev/null
+          clone_rsync "arch file $rel promote" sudo rsync -a --info=progress2,stats1,name1 --human-readable --outbuf=L "$stage/$rel" "$dst/$rel"
         fi
       fi
     fi
   done < <(_clone_arch_legacy_file_specs)
 
   clone_phase_h_rewrite_config_paths
+  emit_json_event step_done clone:rsync-arch "ARCH data copied"
 }
 
 clone_phase_h_rewrite_config_paths() {
@@ -629,9 +666,11 @@ clone_phase_h_rewrite_config_paths() {
 
 clone_phase_h_rsync_arch_creds() {
   log_step "Phase H: LAIA-ARCH credentials"
+  emit_json_event step_start clone:rsync-arch-creds "Rsync LAIA-ARCH credentials"
   local dst src_base rel src_file dst_file
   if clone_is_local_source && [[ ! -d "$OPT_SOURCE_DIR/home/.laia" ]]; then
     log_info "  Source has no ~/.laia credentials — skipping"
+    emit_json_event step_done clone:rsync-arch-creds "No legacy ~/.laia credentials at source"
     return 0
   fi
   dst="$(clone_dest_arch_creds_dir)"
@@ -645,17 +684,18 @@ clone_phase_h_rsync_arch_creds() {
     src_file="${src_base}${rel}"
     dst_file="$dst/$rel"
     clone_rsync_base_opts
-    rsync "${CLONE_RSYNC_OPTS[@]}" "$src_file" "$dst_file" >/dev/null 2>&1 || true
+    clone_rsync "arch credential $rel" "${CLONE_RSYNC_OPTS[@]}" "$src_file" "$dst_file" || true
     [[ -f "$dst_file" ]] && chmod 600 "$dst_file"
   done
   if [[ "${OPT_KEEP_SESSION:-false}" == true ]]; then
     rel="admin-session.json"
     if ! clone_is_local_source || [[ -f "$OPT_SOURCE_DIR/home/.laia/$rel" ]]; then
       clone_rsync_base_opts
-      rsync "${CLONE_RSYNC_OPTS[@]}" "${src_base}${rel}" "$dst/$rel" >/dev/null 2>&1 || true
+      clone_rsync "arch credential $rel" "${CLONE_RSYNC_OPTS[@]}" "${src_base}${rel}" "$dst/$rel" || true
       [[ -f "$dst/$rel" ]] && chmod 600 "$dst/$rel"
     fi
   fi
+  emit_json_event step_done clone:rsync-arch-creds "ARCH credentials copied"
 }
 
 clone_phase_h_enumerate_slugs() {
@@ -682,30 +722,38 @@ clone_phase_h_enumerate_slugs() {
 
 clone_phase_h_rebuild_agora_container() {
   log_step "Phase H: rebuild laia-agora locally"
+  emit_json_event step_start clone:rebuild-agora "Rebuild laia-agora"
   if inst_is_override_mode || [[ -n "${LAIA_TEST_STUB_PATH:-}" ]]; then
     clone_stub_log "rebuild-3-provision-agora.sh"
     log_info "[stub] skipping rebuild-3-provision-agora.sh"
+    emit_json_event step_done clone:rebuild-agora "Rebuild laia-agora skipped in stub"
     return 0
   fi
   LAIA_ROOT="$LAIA_ROOT" bash "$LAIA_ROOT/infra/lxd/scripts/rebuild-3-provision-agora.sh"
+  emit_json_event step_done clone:rebuild-agora "laia-agora rebuilt"
 }
 
 clone_phase_h_rebuild_agent_container() {
   local slug="$1"
   log_step "Phase H: rebuild agent-$slug locally"
+  emit_json_event step_start "clone:rebuild-agent:$slug" "Rebuild agent-$slug"
   if inst_is_override_mode || [[ -n "${LAIA_TEST_STUB_PATH:-}" ]]; then
     clone_stub_log "rebuild-4-first-user.sh --slug $slug --existing-user-only"
     log_info "[stub] skipping rebuild-4-first-user.sh --slug $slug --existing-user-only"
+    emit_json_event step_done "clone:rebuild-agent:$slug" "Rebuild agent-$slug skipped in stub"
     return 0
   fi
   LAIA_ROOT="$LAIA_ROOT" bash "$LAIA_ROOT/infra/lxd/scripts/rebuild-4-first-user.sh" \
     --slug "$slug" --existing-user-only
+  emit_json_event step_done "clone:rebuild-agent:$slug" "agent-$slug rebuilt"
 }
 
 clone_phase_h_fix_uid_mapping() {
   log_step "Phase H: fix uid mappings"
+  emit_json_event step_start clone:uid-map "Fix LXD uid mappings"
   if inst_is_override_mode || [[ -n "${LAIA_TEST_STUB_PATH:-}" ]]; then
     log_info "[stub] skipping uid mapping fix"
+    emit_json_event step_done clone:uid-map "UID mapping skipped in stub"
     return 0
   fi
   # Probe the actual idmap base for the laia-agora container. If isolated or
@@ -718,16 +766,20 @@ clone_phase_h_fix_uid_mapping() {
   log_info "  chown base: $base (LXD idmap)"
   sudo chown -R "$base:$base" "$(clone_dest_agora_dir)" "$(clone_dest_users_dir)" 2>/dev/null \
     || log_warn "  chown reported partial failures (may be safe; verify with 'lxc exec laia-agora -- ls /opt/agora/data')"
+  emit_json_event step_done clone:uid-map "UID mappings fixed"
 }
 
 clone_phase_h_verify() {
   log_step "Phase H: verify"
+  emit_json_event step_start clone:verify-live "Verify live containers and health"
   if inst_is_override_mode || [[ -n "${LAIA_TEST_STUB_PATH:-}" ]]; then
     log_info "[stub] skipping live verify"
+    emit_json_event step_done clone:verify-live "Live verify skipped in stub"
     return 0
   fi
   lxc list
   curl -fsS "$LAIA_AGORA_HEALTH_URL" >/dev/null || die "AGORA health check failed"
+  emit_json_event step_done clone:verify-live "Live verify passed"
   log_success "Phase H verify passed"
 }
 
@@ -797,11 +849,11 @@ _clone_rsync_tool() {
     mkdir -p "$(dirname "$dst_target")"
   fi
 
-  local rsync_opts=(-a --info=stats1 "${exc_args[@]}")
+  local rsync_opts=(-a --info=progress2,stats1,name1 --human-readable --outbuf=L "${exc_args[@]}")
   clone_is_local_source || rsync_opts+=(-e "$(clone_ssh_transport)")
 
   log_info "  $rel"
-  if rsync "${rsync_opts[@]}" "$src_full" "$dst_target" 2>/dev/null; then
+  if clone_rsync "tool $rel" "${rsync_opts[@]}" "$src_full" "$dst_target"; then
     return 0
   else
     log_warn "    (rsync of $rel returned nonzero — likely missing at source)"

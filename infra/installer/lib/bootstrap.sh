@@ -67,7 +67,7 @@ boot_check_lxd_installed() {
   is_root || sudo_cmd="sudo"
 
   log_info "snap install lxd (can take 1-3 min on aarch64; output streams below)"
-  if ! $sudo_cmd snap install lxd; then
+  if ! laia_run_interruptible $sudo_cmd snap install lxd; then
     die "snap install lxd failed. Check 'sudo journalctl -u snapd -n 50' for details."
   fi
 
@@ -81,7 +81,7 @@ boot_check_lxd_installed() {
   done
 
   log_info "lxd init --auto"
-  if ! $sudo_cmd lxd init --auto; then
+  if ! laia_run_interruptible $sudo_cmd lxd init --auto; then
     die "lxd init --auto failed. Check 'sudo journalctl -u snap.lxd.daemon -n 50' for details."
   fi
 

@@ -184,6 +184,8 @@ resolve_admin_pass_file() {
 
 # ─── Main ───────────────────────────────────────────────────────────────────
 main() {
+  trap_errors
+  install_signal_traps
   parse_args "$@"
   resolve_admin_pass_file
 
