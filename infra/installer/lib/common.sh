@@ -161,17 +161,19 @@ _laia_signal_abort() {
 }
 
 install_signal_traps() {
-  trap '_laia_signal_abort INT' INT
-  trap '_laia_signal_abort TERM' TERM
-  trap '_laia_signal_abort QUIT' QUIT
+  trap '_laia_signal_abort INT; exit 130' INT
+  trap '_laia_signal_abort TERM; exit 130' TERM
+  trap '_laia_signal_abort QUIT; exit 130' QUIT
 }
 
 laia_run_interruptible() {
   "$@" &
   local pid=$! rc
   LAIA_ACTIVE_CHILD_PID="$pid"
+  set +e
   wait "$pid"
   rc=$?
+  set -e
   LAIA_ACTIVE_CHILD_PID=""
   return "$rc"
 }

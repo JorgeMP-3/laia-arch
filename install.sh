@@ -99,17 +99,19 @@ abort_now() {
 }
 
 install_signal_traps() {
-  trap 'abort_now INT' INT
-  trap 'abort_now TERM' TERM
-  trap 'abort_now QUIT' QUIT
+  trap 'abort_now INT; exit 130' INT
+  trap 'abort_now TERM; exit 130' TERM
+  trap 'abort_now QUIT; exit 130' QUIT
 }
 
 run_interruptible() {
   "$@" &
   local pid=$! rc
   LAIA_ACTIVE_CHILD_PID="$pid"
+  set +e
   wait "$pid"
   rc=$?
+  set -e
   LAIA_ACTIVE_CHILD_PID=""
   return "$rc"
 }
@@ -118,15 +120,15 @@ run_interruptible() {
 # via `curl … | sudo -E bash`, where bash's stdin is the (drained) curl
 # pipe. Without this, all interactive prompts return empty immediately
 # and the user doesn't even see them.
-ask_tty() {
-  local prompt="$1" ans=""
+ask_tty_into() {
+  local __var="$1" prompt="$2" ans=""
   if [[ -t 0 ]]; then
     read -r -p "$prompt" ans || ans=""
   elif [[ -r /dev/tty ]]; then
     printf '%s' "$prompt" >/dev/tty
     IFS= read -r ans </dev/tty || ans=""
   fi
-  printf '%s' "$ans"
+  printf -v "$__var" '%s' "$ans"
 }
 
 # ─── Help ────────────────────────────────────────────────────────────────────
@@ -252,11 +254,11 @@ collect_interactive_intent() {
     printf '  [2] Clone/migrate LAIA from another server\n'
     printf '  [3] Open the full wizard\n'
     local ans
-    ans="$(ask_tty 'Choose 1, 2 or 3 [3]: ')"
+    ask_tty_into ans 'Choose 1, 2 or 3 [3]: '
     case "${ans:-3}" in
-      1) OPT_MODE="install" ;;
-      2) OPT_MODE="clone" ;;
-      3) OPT_MODE="wizard" ;;
+      1) OPT_MODE="install"; log "Selected: install from zero" ;;
+      2) OPT_MODE="clone"; log "Selected: clone/migrate from another server" ;;
+      3) OPT_MODE="wizard"; log "Selected: full wizard" ;;
       *) die "Invalid choice: $ans" ;;
     esac
   fi
@@ -267,8 +269,8 @@ collect_interactive_intent() {
     fi
     step "Source server to clone from"
     local src_user src_host
-    src_user="$(ask_tty 'SSH username on the OLD server: ')"
-    src_host="$(ask_tty 'IP/hostname of the OLD server: ')"
+    ask_tty_into src_user 'SSH username on the OLD server: '
+    ask_tty_into src_host 'IP/hostname of the OLD server: '
     [[ -n "$src_user" ]] || die "Source SSH username is required."
     [[ -n "$src_host" ]] || die "Source IP/hostname is required."
     OPT_SOURCE="${src_user}@${src_host}"
@@ -356,7 +358,7 @@ ensure_prereqs() {
   fi
   log "Will apt-install: ${missing[*]}"
   if ! $OPT_YES; then
-    ans="$(ask_tty 'Proceed with apt install? [Y/n] ')"
+    ask_tty_into ans 'Proceed with apt install? [Y/n] '
     case "${ans:-y}" in [nN]*) die "Aborted by user." ;; esac
   fi
 
@@ -429,7 +431,7 @@ $([ -n "$OPT_CONFIG" ] && echo "  Config file:      $OPT_CONFIG")
   Unattended:       $OPT_YES
 EOF
   if ! $OPT_YES; then
-    ans="$(ask_tty 'Continue? [Y/n] ')"
+    ask_tty_into ans 'Continue? [Y/n] '
     case "${ans:-y}" in [nN]*) die "Aborted by user." ;; esac
   fi
 }
