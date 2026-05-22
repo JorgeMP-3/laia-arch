@@ -46,6 +46,39 @@ log_step() {
   _log_to_file STEP "$1"
 }
 
+# emit_json_event <event_type> <step_id> <label> [percent]
+# Emits a structured JSON event line to stdout when LAIA_JSON_PROGRESS=1.
+# Used by the laia-wizard frontend to render progress reliably without
+# having to scrape the human-readable log. The four event types match
+# install_wizard.contract.ProgressEvent.type:
+#   step_start | step_progress | step_done | step_error
+# When LAIA_JSON_PROGRESS is unset, this is a no-op so the binary's
+# normal CLI experience is unchanged.
+emit_json_event() {
+  [[ "${LAIA_JSON_PROGRESS:-0}" != "1" ]] && return 0
+  local event_type="${1:-step_progress}"
+  local step_id="${2:-}"
+  local label="${3:-}"
+  local percent="${4:-null}"
+  # Escape the few characters that must be escaped in JSON strings.
+  # We keep this in pure bash to avoid taking a hard dependency on jq.
+  _json_escape() {
+    local s="$1"
+    s="${s//\\/\\\\}"
+    s="${s//\"/\\\"}"
+    s="${s//$'\n'/\\n}"
+    s="${s//$'\r'/\\r}"
+    s="${s//$'\t'/\\t}"
+    printf '%s' "$s"
+  }
+  printf '{"event":"%s","step_id":"%s","label":"%s","percent":%s,"ts":"%s"}\n' \
+    "$(_json_escape "$event_type")" \
+    "$(_json_escape "$step_id")" \
+    "$(_json_escape "$label")" \
+    "$percent" \
+    "$(date -Iseconds)"
+}
+
 # die <msg> [exit_code]
 die() {
   log_error "$1"

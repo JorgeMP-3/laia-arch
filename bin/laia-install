@@ -48,6 +48,7 @@ OPT_INIT_LXD=false
 OPT_AUTH_FILE=""
 OPT_ADMIN_USER=""
 OPT_ADMIN_PASS=""
+OPT_ADMIN_PASS_FILE=""
 OPT_VERSION=""
 OPT_FROM_LOCAL=""
 
@@ -66,7 +67,14 @@ OPTIONS
     --minimal             Install bare host files only; skip factory bootstrap
     --auth-file PATH      Pre-stage auth.json from PATH
     --admin-user USER     LAIA admin username for AGORA
+    --admin-pass-file PATH
+                          Path to a file containing the admin password
+                          (recommended; mode 0600). The file is unlinked
+                          immediately after the password is read so it
+                          never lingers on disk.
     --admin-pass PASS     LAIA admin password for AGORA
+                          [DEPRECATED — visible via `ps`/proc; use
+                          --admin-pass-file in production]
     --init-lxd            Install/init LXD automatically if missing
     --no-systemd          Don't install systemd unit files
     --skip-pip            Don't create venvs / run pip install
@@ -74,6 +82,8 @@ OPTIONS
     --yes, -y             Non-interactive mode, accept defaults
     --force               Overwrite an existing install of the same version
     --dry-run             Print what would happen, don't change anything
+    --json-progress       Emit machine-readable JSON event lines to stdout
+                          for laia-wizard to render. Human log is unchanged.
     --help, -h            Show this help
 
 ENVIRONMENT
@@ -89,6 +99,9 @@ EXIT CODES
     1   Generic failure
     2   Bad arguments
     3   Missing prerequisites
+    4   Operation timed out
+    5   Network failure (download / GitHub clone)
+    6   Health check failed after install
 EOF
 }
 
@@ -121,6 +134,12 @@ parse_args() {
       --admin-pass)
         [[ $# -ge 2 && -n "${2:-}" ]] || die "--admin-pass requires PASS" 2
         OPT_ADMIN_PASS="$2"; shift 2 ;;
+      --admin-pass-file)
+        [[ $# -ge 2 && -n "${2:-}" ]] || die "--admin-pass-file requires PATH" 2
+        OPT_ADMIN_PASS_FILE="$2"; shift 2 ;;
+      --json-progress)
+        export LAIA_JSON_PROGRESS=1
+        shift ;;
       --init-lxd)      OPT_INIT_LXD=true; shift ;;
       --no-systemd)     OPT_NO_SYSTEMD=true; shift ;;
       --skip-pip)       OPT_SKIP_PIP=true; shift ;;
@@ -133,10 +152,42 @@ parse_args() {
   done
 }
 
+# resolve_admin_pass_file — if --admin-pass-file was given, read its content
+# into OPT_ADMIN_PASS and immediately unlink the file so the password never
+# survives the installer process. Rejected when both --admin-pass and
+# --admin-pass-file are given to avoid silent disagreements.
+resolve_admin_pass_file() {
+  [[ -z "$OPT_ADMIN_PASS_FILE" ]] && return 0
+
+  if [[ -n "$OPT_ADMIN_PASS" ]]; then
+    die "Cannot combine --admin-pass and --admin-pass-file" 2
+  fi
+  if [[ ! -f "$OPT_ADMIN_PASS_FILE" ]]; then
+    die "--admin-pass-file path not found: $OPT_ADMIN_PASS_FILE" 2
+  fi
+  if [[ ! -r "$OPT_ADMIN_PASS_FILE" ]]; then
+    die "--admin-pass-file not readable: $OPT_ADMIN_PASS_FILE" 2
+  fi
+
+  OPT_ADMIN_PASS="$(< "$OPT_ADMIN_PASS_FILE")"
+  # Strip a single trailing newline if present (heredocs / echo always add one).
+  OPT_ADMIN_PASS="${OPT_ADMIN_PASS%$'\n'}"
+
+  if [[ -z "$OPT_ADMIN_PASS" ]]; then
+    die "--admin-pass-file is empty: $OPT_ADMIN_PASS_FILE" 2
+  fi
+
+  # Unlink eagerly; the file's purpose was to bridge argv to memory.
+  rm -f "$OPT_ADMIN_PASS_FILE" 2>/dev/null || true
+  OPT_ADMIN_PASS_FILE=""
+}
+
 # ─── Main ───────────────────────────────────────────────────────────────────
 main() {
   parse_args "$@"
+  resolve_admin_pass_file
 
+  emit_json_event step_start install:preflight "Preflight checks"
   log_step "laia-install"
   log_info "Source tree:     ${OPT_FROM_LOCAL:-<clone from GitHub>}"
   log_info "Target version:  ${OPT_VERSION:-<auto-detect>}"
@@ -153,6 +204,7 @@ main() {
   inst_resolve_source
   inst_resolve_version
   inst_resolve_paths
+  emit_json_event step_done install:preflight "Preflight OK"
 
   if [[ "$OPT_DRY_RUN" == true ]]; then
     log_warn "Dry-run mode — stopping before any mutations."
@@ -165,6 +217,7 @@ main() {
     ensure_sudo_cached
   fi
 
+  emit_json_event step_start install:lay-down "Copy source, create venvs, install wrappers"
   inst_copy_source_to_dest
   inst_create_venvs
   inst_check_frontend
@@ -174,24 +227,33 @@ main() {
   inst_ensure_data_dir
   shell_rc_apply "$DATA_DIR"
   systemd_install_all
+  emit_json_event step_done install:lay-down "Host install complete"
 
   if [[ "$OPT_MINIMAL" == true ]]; then
     log_step "Factory bootstrap (SKIPPED — --minimal)"
+    emit_json_event step_done install:factory "Factory bootstrap skipped (--minimal)"
   else
+    emit_json_event step_start install:factory "Factory bootstrap (LXD + agora + admin)"
     fact_seed_cli_config
     fact_seed_authjson
     fact_persist_env_to_container
     boot_detect_arch
     boot_check_lxd_installed
+    emit_json_event step_start install:lxd-images "Build LXD images"
     boot_init_defaults
     boot_build_images
+    emit_json_event step_done install:lxd-images "LXD images ready"
+    emit_json_event step_start install:agora "Provision laia-agora container"
     boot_provision_agora
     boot_wait_for_agora_health
+    emit_json_event step_done install:agora "AGORA reachable"
     fact_seed_admin_user
     fact_seed_base_skills
+    emit_json_event step_done install:factory "Factory bootstrap complete"
   fi
 
   inst_print_summary
+  emit_json_event step_done install:finish "Installation complete"
 }
 
 main "$@"
