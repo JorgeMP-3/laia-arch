@@ -68,6 +68,21 @@ die()   { err "$@"; exit 1; }
 step()  { printf '\n%s%s═══ %s ═══════════════════════════════════════════════%s\n' \
            "$C_Y" "$C_B" "$1" "$C_0"; }
 
+# Read from /dev/tty when stdin is not a terminal — typical when invoked
+# via `curl … | sudo -E bash`, where bash's stdin is the (drained) curl
+# pipe. Without this, all interactive prompts return empty immediately
+# and the user doesn't even see them.
+ask_tty() {
+  local prompt="$1" ans=""
+  if [[ -t 0 ]]; then
+    read -r -p "$prompt" ans || ans=""
+  elif [[ -r /dev/tty ]]; then
+    printf '%s' "$prompt" >/dev/tty
+    IFS= read -r ans </dev/tty || ans=""
+  fi
+  printf '%s' "$ans"
+}
+
 # ─── Help ────────────────────────────────────────────────────────────────────
 usage() {
   cat <<EOF
@@ -237,7 +252,7 @@ ensure_prereqs() {
   fi
   log "Will apt-install: ${missing[*]}"
   if ! $OPT_YES; then
-    read -r -p "Proceed with apt install? [Y/n] " ans || ans=""
+    ans="$(ask_tty 'Proceed with apt install? [Y/n] ')"
     case "${ans:-y}" in [nN]*) die "Aborted by user." ;; esac
   fi
   apt-get update -qq
@@ -298,7 +313,7 @@ $([ -n "$OPT_CONFIG" ] && echo "  Config file:      $OPT_CONFIG")
   Unattended:       $OPT_YES
 EOF
   if ! $OPT_YES; then
-    read -r -p "Continue? [Y/n] " ans || ans=""
+    ans="$(ask_tty 'Continue? [Y/n] ')"
     case "${ans:-y}" in [nN]*) die "Aborted by user." ;; esac
   fi
 }
@@ -331,6 +346,20 @@ hand_off() {
   esac
 
   log "Exec: ${cmd[*]}"
+
+  # CRITICAL: when this script was launched via `curl | sudo -E bash`,
+  # our stdin is the (now-EOF) curl pipe, not the terminal. If we exec
+  # the wizard without reattaching stdin, rich.Prompt.ask blocks on a
+  # closed fd and the user can't type. Reopen /dev/tty as fd 0 before
+  # the exec so the interactive prompts actually work.
+  #
+  # We only need this for the `wizard` action (install/clone read no
+  # interactive input unless they're prompting for sudo, which sudo
+  # itself reads from /dev/tty directly).
+  if [[ ! -t 0 ]] && [[ -r /dev/tty ]]; then
+    log "Stdin is not a TTY (curl|bash invocation?). Reopening /dev/tty for interactive input."
+    exec sudo -E -- "${cmd[@]}" </dev/tty
+  fi
   # Preserve SUDO_USER so the subscripts can resolve $LAIA_USER properly.
   exec sudo -E -- "${cmd[@]}"
 }
