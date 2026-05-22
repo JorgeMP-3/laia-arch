@@ -255,9 +255,21 @@ ensure_prereqs() {
     ans="$(ask_tty 'Proceed with apt install? [Y/n] ')"
     case "${ans:-y}" in [nN]*) die "Aborted by user." ;; esac
   fi
-  apt-get update -qq
-  DEBIAN_FRONTEND=noninteractive apt-get install -y "${missing[@]}"
-  ok "Installed ${#missing[@]} packages."
+
+  # Show apt's own progress (no -qq, no -y on a silent pipe). This is
+  # what tells the user "yes, something is happening" while packages
+  # download and configure. Each line apt prints is a visible
+  # heartbeat; without it the user sees a blank screen for 30-60s
+  # and (justifiably) thinks the script froze.
+  log "Running 'apt-get update' (refresh package lists)..."
+  if ! apt-get update; then
+    die "apt-get update failed — check your internet connection / proxy."
+  fi
+  log "Running 'apt-get install' for ${#missing[@]} package(s)..."
+  if ! DEBIAN_FRONTEND=noninteractive apt-get install -y "${missing[@]}"; then
+    die "apt-get install failed — see output above for the offending package."
+  fi
+  ok "Installed ${#missing[@]} packages: ${missing[*]}"
 }
 
 # ─── Clone / update the repo ────────────────────────────────────────────────
