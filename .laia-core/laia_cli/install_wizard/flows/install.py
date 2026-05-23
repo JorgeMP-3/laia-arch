@@ -177,6 +177,7 @@ def _confirm_screen(state) -> WizardScreen:
         title="Confirmar instalación",
         description=(
             "Esto invocará `bin/laia-install` con tus elecciones. "
+            "La descarga/instalación de LXD empieza después de pulsar Instalar. "
             "Construir las imágenes LXD puede tomar 10-20 min la primera vez."
         ),
         fields=(
@@ -260,6 +261,17 @@ def execute(state) -> Iterator[ProgressEvent]:
     admin_user = v.get("admin_user") or "admin"
     admin_pass = v.get("admin_pass") or _autogen_password()
     init_lxd = bool(v.get("init_lxd", True))
+
+    if init_lxd:
+        yield ProgressEvent(
+            type="info",
+            step_id="install:lxd",
+            label=(
+                "LXD todavía no se descarga en las pantallas de preguntas; "
+                "empieza ahora durante la ejecución. Verás salida de snap/lxd "
+                "y latidos si tarda."
+            ),
+        )
     provider = v.get("llm_provider") or "unset"
     api_key = v.get("llm_api_key")
 

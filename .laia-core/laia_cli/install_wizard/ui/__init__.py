@@ -30,7 +30,7 @@ from __future__ import annotations
 import sys
 from typing import Any
 
-from rich.prompt import Confirm, Prompt
+from rich.prompt import Prompt
 from rich.text import Text
 
 from ..contract import (
@@ -197,11 +197,33 @@ def _ask_choice(f: Field, console) -> str:
 def _ask_yesno(f: Field, console) -> bool:
     console.print()
     console.print(comp.field_label_line(f.label, help_text=f.help_text))
-    return Confirm.ask(
-        f"  [{THEME.accent}]>[/]",
-        default=bool(f.default),
-        console=console,
-    )
+    default = bool(f.default)
+    suffix = "[Y/n]" if default else "[y/N]"
+    while True:
+        raw = Prompt.ask(
+            f"  [{THEME.accent}]>[/] {suffix}",
+            default="",
+            show_default=False,
+            console=console,
+        )
+        value = (raw or "").strip().lower()
+        if value == "":
+            return default
+        if value in ("b", "back", "atrás", "atras"):
+            raise _NavigationSentinel("back")
+        if value in ("q", "quit", "salir"):
+            raise _NavigationSentinel("quit")
+
+        # Be forgiving with natural terminal input: "y?", "yes.", "sí!",
+        # etc. Rich's Confirm is stricter and can look like a hang when the
+        # user fat-fingers punctuation.
+        normalized = value.strip(" .,!?:;")
+        if normalized in ("y", "yes", "s", "si", "sí", "true", "1"):
+            return True
+        if normalized in ("n", "no", "false", "0"):
+            return False
+        console.print(Text("  → responde y/n, s/n, enter=default, b=atrás, q=salir.",
+                           style=THEME.warning))
 
 
 def _ask_text(f: Field, console, *, password: bool) -> str:
