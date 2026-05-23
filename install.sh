@@ -248,19 +248,9 @@ validate_source() {
 collect_interactive_intent() {
   [[ -n "$OPT_CONFIG" ]] && return 0
 
-  if [[ "$OPT_MODE_EXPLICIT" == false && "$OPT_YES" == false ]]; then
-    step "What do you want to do?"
-    printf '  [1] Install LAIA from zero on this server\n'
-    printf '  [2] Clone/migrate LAIA from another server\n'
-    printf '  [3] Open the full wizard\n'
-    local ans
-    ask_tty_into ans 'Choose 1, 2 or 3 [3]: '
-    case "${ans:-3}" in
-      1) OPT_MODE="install"; log "Selected: install from zero" ;;
-      2) OPT_MODE="clone"; log "Selected: clone/migrate from another server" ;;
-      3) OPT_MODE="wizard"; log "Selected: full wizard" ;;
-      *) die "Invalid choice: $ans" ;;
-    esac
+  if [[ "$OPT_MODE_EXPLICIT" == false ]]; then
+    OPT_MODE="wizard"
+    log "Bootstrap mode: opening the full wizard after prerequisites."
   fi
 
   if [[ "$OPT_MODE" == "clone" && -z "$OPT_SOURCE" ]]; then
@@ -413,6 +403,10 @@ clone_or_update() {
 
 # ─── Plan summary (shown before any destructive action other than apt) ──────
 print_plan() {
+  if [[ "$OPT_MODE" == "wizard" && "$OPT_MODE_EXPLICIT" == false && -z "$OPT_CONFIG" ]]; then
+    return 0
+  fi
+
   step "Plan"
   local source_line=""
   if [[ "$OPT_MODE" == "clone" ]]; then

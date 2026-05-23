@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regression tests for the curl|sudo bootstrap prompt.
+# Regression tests for the curl|sudo bootstrap prompts.
 set -u
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -25,9 +25,42 @@ bootstrap_lib="$(mktemp)"
 trap 'rm -f "$bootstrap_lib"' EXIT
 sed '/^main "\$@"/,$d' "$BOOT" >"$bootstrap_lib"
 
-run_pty_case() {
-  local mode="$1"
-  python3 - "$bootstrap_lib" "$mode" <<'PY'
+echo "-> bootstrap default mode"
+
+default_output="$(
+  bash -c "
+    source '$bootstrap_lib'
+    OPT_CONFIG=''
+    OPT_MODE_EXPLICIT=false
+    OPT_YES=false
+    OPT_MODE=wizard
+    OPT_SOURCE=''
+    collect_interactive_intent
+    print_plan
+    echo AFTER:\$OPT_MODE
+  "
+)"
+
+if [[ "$default_output" == *"AFTER:wizard"* ]]; then
+  ok "default bootstrap selects wizard without asking mode"
+else
+  fail "default bootstrap did not leave OPT_MODE=wizard"
+fi
+
+if [[ "$default_output" != *"What do you want to do?"* && "$default_output" != *"Choose 1, 2 or 3"* ]]; then
+  ok "default bootstrap does not duplicate the wizard mode menu"
+else
+  fail "default bootstrap still printed the old mode menu"
+fi
+
+if [[ "$default_output" != *"Continue? [Y/n]"* ]]; then
+  ok "default wizard bootstrap skips the extra plan confirmation"
+else
+  fail "default wizard bootstrap still asks for plan confirmation"
+fi
+
+run_apt_interrupt_case() {
+  python3 - "$bootstrap_lib" <<'PY'
 import errno
 import os
 import pty
@@ -37,14 +70,14 @@ import signal
 import sys
 import time
 
-script, mode = sys.argv[1], sys.argv[2]
+script = sys.argv[1]
 cmd = (
     f"source {shlex.quote(script)}; "
     "install_signal_traps; "
-    "OPT_CONFIG=''; OPT_MODE_EXPLICIT=false; OPT_YES=false; "
-    "OPT_MODE=wizard; OPT_SOURCE=''; "
-    "collect_interactive_intent; "
-    "echo AFTER:$OPT_MODE"
+    "OPT_YES=false; OPT_NO_APT=false; "
+    "APT_PACKAGES=(fake-laia-test-package); "
+    "apt_missing(){ printf 'fake-laia-test-package\\n'; }; "
+    "ensure_prereqs"
 )
 
 pid, fd = pty.fork()
@@ -64,21 +97,16 @@ def read_some(timeout=0.1):
 
 buf = b""
 deadline = time.time() + 5
-while b"Choose 1, 2 or 3" not in buf and time.time() < deadline:
+while b"Proceed with apt install?" not in buf and time.time() < deadline:
     buf += read_some()
 
-if b"Choose 1, 2 or 3" not in buf:
+if b"Proceed with apt install?" not in buf:
     os.kill(pid, signal.SIGKILL)
     os.waitpid(pid, 0)
     print("NOT_READY")
     sys.exit(1)
 
-if mode == "choose":
-    os.write(fd, b"3\n")
-    want = b"AFTER:wizard"
-else:
-    os.write(fd, b"\x03")
-    want = b"Interrupted by SIGINT"
+os.write(fd, b"\x03")
 
 status = None
 deadline = time.time() + 5
@@ -95,32 +123,20 @@ else:
 
 sys.stdout.write(buf.decode(errors="replace"))
 
-if mode == "choose":
-    sys.exit(0 if want in buf else 1)
-
 if os.WIFEXITED(status):
     code = os.WEXITSTATUS(status)
     print(f"EXIT:{code}")
-    sys.exit(0 if code == 130 and want in buf else 1)
+    sys.exit(0 if code == 130 and b"Interrupted by SIGINT" in buf else 1)
 
 print(f"SIGNAL:{os.WTERMSIG(status)}")
 sys.exit(1)
 PY
 }
 
-echo "-> bootstrap menu"
+echo
+echo "-> bootstrap interrupt"
 
-if choose_output="$(run_pty_case choose)"; then
-  if [[ "$choose_output" == *"Selected: full wizard"* && "$choose_output" == *"AFTER:wizard"* ]]; then
-    ok "choice 3 returns from prompt and selects wizard"
-  else
-    fail "choice 3 output missing selected wizard marker"
-  fi
-else
-  fail "choice 3 pty case failed"
-fi
-
-if interrupt_output="$(run_pty_case interrupt)"; then
+if interrupt_output="$(run_apt_interrupt_case)"; then
   if [[ "$interrupt_output" == *"EXIT:130"* ]]; then
     ok "Ctrl-C during bootstrap prompt exits 130"
   else
