@@ -4,7 +4,7 @@ User journey:
 
 1. ``source_kind``   — pick LAN IP / Tailscale / Custom user@host.
 2. ``source_host``   — depending on kind, ask for the host string.
-3. ``ssh_auth``      — choose: existing key / generate new key / password.
+3. ``ssh_auth``      — choose: existing key / password / setup key first.
 4. ``ssh_password``  — only when the user picked password auth.
 5. ``options``       — bandwidth limit, keep-session, --resume.
 6. ``confirm``       — summary + ``run``.
@@ -122,7 +122,10 @@ _SSH_AUTH_SCREEN = WizardScreen(
                 Choice(value="password", label="Password SSH",
                        description="Se pedirá interactivamente; usa sshpass por debajo."),
                 Choice(value="setup", label="Generar clave y copiarla al viejo",
-                       description="Salta al flow de connectivity y vuelve."),
+                       description=(
+                           "Crea ~/.ssh/id_ed25519 si falta, copia la clave "
+                           "pública al origen y continúa."
+                       )),
             ),
             validator="non_empty",
         ),
@@ -188,12 +191,18 @@ _OPTIONS_SCREEN = WizardScreen(
 
 def _confirm_screen(state) -> WizardScreen:
     v = state.values
+    setup_note = (
+        "\n  SSH setup:    añadirá la clave pública a authorized_keys del origen"
+        if v.get("ssh_auth_mode") == "setup"
+        else ""
+    )
     summary = (
         f"  Origen:       {v.get('source_host', '?')}  ({v.get('source_kind', '?')})\n"
         f"  Auth:         {v.get('ssh_auth_mode', '?')}\n"
         f"  Bwlimit:      {v.get('bwlimit') or '(ninguno)'}\n"
         f"  Keep session: {'sí' if v.get('keep_session') else 'no'}\n"
         f"  Resume:       {'sí' if v.get('resume') else 'no'}"
+        f"{setup_note}"
     )
     return WizardScreen(
         id="confirm",
@@ -201,7 +210,8 @@ def _confirm_screen(state) -> WizardScreen:
         description=(
             "Esto invocará `bin/laia-clone` con tus elecciones. "
             "Si /opt/laia no existe en este host, se instalará primero "
-            "automáticamente (laia-install --minimal)."
+            "automáticamente (laia-install --minimal). "
+            "Los datos LAIA del servidor origen se leen y se copian; no se borran."
         ),
         fields=(
             Field(name="_summary", type="info", label="Resumen", default=summary),
@@ -261,6 +271,93 @@ def _secret_to_tempfile(secret: str, prefix: str = "laia-ssh-pass-"):
         except OSError:
             pass
 
+
+def _target_user_context() -> tuple[str | None, Path]:
+    """Return the real operator user/home even when wizard runs under sudo."""
+    user = (
+        os.environ.get("LAIA_USER")
+        or os.environ.get("SUDO_USER")
+        or (None if os.geteuid() == 0 else os.environ.get("USER"))
+    )
+    home_raw = (
+        os.environ.get("LAIA_USER_HOME")
+        or os.environ.get("HOME")
+        or str(Path.home())
+    )
+    return user if user and user != "root" else None, Path(home_raw)
+
+
+def _as_operator(cmd: list[str]) -> list[str]:
+    """Run SSH helper commands as the non-root operator when possible."""
+    user, home = _target_user_context()
+    if user:
+        return ["sudo", "-u", user, "env", f"HOME={home}", *cmd]
+    return cmd
+
+
+def _setup_ssh_key_for_source(source: str, root: Path) -> Iterator[ProgressEvent]:
+    """Generate/copy an SSH key before cloning."""
+    _user, home = _target_user_context()
+    key_path = home / ".ssh" / "id_ed25519"
+
+    yield ProgressEvent(
+        type="warning",
+        step_id="ssh-setup",
+        label=(
+            "Se copiará una clave pública a ~/.ssh/authorized_keys del origen. "
+            "No se borran ni modifican datos LAIA del servidor viejo."
+        ),
+    )
+
+    if key_path.exists():
+        yield ProgressEvent(
+            type="info",
+            step_id="ssh-keygen",
+            label=f"{key_path} ya existe — no se sobreescribe.",
+        )
+    else:
+        yield from stream_command(
+            _as_operator([
+                "ssh-keygen", "-t", "ed25519", "-N", "", "-f", str(key_path),
+            ]),
+            step_id="ssh-keygen",
+            label=f"Generando clave SSH en {key_path}",
+            cwd=root,
+        )
+
+    host_only = source.split("@", 1)[1] if "@" in source else source
+    yield from stream_command(
+        ["ssh-keyscan", "-T", "5", "-H", host_only],
+        step_id="ssh-keyscan",
+        label=f"Mostrando huella SSH de {host_only}",
+        cwd=root,
+    )
+    yield from stream_command(
+        _as_operator([
+            "ssh-copy-id",
+            "-o", "StrictHostKeyChecking=ask",
+            "-o", "ConnectTimeout=15",
+            source,
+        ]),
+        step_id="ssh-copy-id",
+        label=f"Copiando clave pública a {source}",
+        cwd=root,
+        idle_timeout_s=5 * 60,
+    )
+    yield from stream_command(
+        _as_operator([
+            "ssh",
+            "-o", "BatchMode=yes",
+            "-o", "ConnectTimeout=15",
+            source,
+            "true",
+        ]),
+        step_id="ssh-verify",
+        label=f"Verificando acceso SSH con clave a {source}",
+        cwd=root,
+    )
+
+
 def execute(state) -> Iterator[ProgressEvent]:
     v = state.values
     source = v.get("source_host")
@@ -269,24 +366,6 @@ def execute(state) -> Iterator[ProgressEvent]:
             type="step_error",
             step_id="validate",
             label="Origen no especificado.",
-        )
-        return
-
-    # The `setup` ssh_auth_mode means the user has no key set up yet. We
-    # don't auto-jump flows in MVP — refuse with a clear, actionable error
-    # rather than letting laia-clone fail mid-rsync with an opaque SSH
-    # message. This matches the "fail loudly at the boundary" principle.
-    if v.get("ssh_auth_mode") == "setup":
-        yield ProgressEvent(
-            type="step_error",
-            step_id="ssh-auth",
-            label=(
-                "Necesitas configurar la clave SSH antes de clonar. "
-                "Sal de este flow, ejecuta `sudo laia-wizard` y elige "
-                "el modo Connectivity. Luego vuelve aquí con "
-                "'usar mi clave SSH existente'."
-            ),
-            extra={"hint": "laia-wizard --mode connectivity (también disponible)"},
         )
         return
 
@@ -320,6 +399,14 @@ def execute(state) -> Iterator[ProgressEvent]:
         cmd.append("--resume")
 
     env_extra: dict[str, str] = {}
+    if v.get("ssh_auth_mode") == "setup":
+        yield from _setup_ssh_key_for_source(source, root)
+        yield ProgressEvent(
+            type="info",
+            step_id="ssh-auth",
+            label="Clave SSH configurada; continuando con la clonación.",
+        )
+
     if v.get("ssh_auth_mode") == "password":
         password = v.get("ssh_password") or ""
         if not password:
