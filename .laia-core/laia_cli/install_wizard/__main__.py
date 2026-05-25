@@ -284,7 +284,29 @@ def main(argv: list[str] | None = None) -> int:
         from . import _headless_ui
         ui = _headless_ui.HeadlessUI({})
     else:
-        ui = _load_ui(args.text_ui)
+        # Textual UI opt-in: LAIA_UI=textual env var (set by the bash
+        # wrapper or the operator). Headless / --yes paths above keep
+        # going through the rich-based legacy UI, since they don't read
+        # from stdin. The --text-ui flag still forces the dev fallback.
+        ui_pref = os.environ.get("LAIA_UI", "").strip().lower()
+        if ui_pref == "textual" and not args.text_ui:
+            from . import tui as textual_ui
+
+            if not textual_ui.is_textual_available():
+                print(
+                    "  ⚠  LAIA_UI=textual pero la dependencia textual no está "
+                    "instalada. Pip-installa `.laia-core[install_wizard]` "
+                    "o vuelve a `LAIA_UI=rich`. Cayendo a la UI rich.",
+                    file=sys.stderr,
+                )
+                ui = _load_ui(args.text_ui)
+            else:
+                # Textual takes over the whole run — it owns its own engine
+                # loop and signal handling, so we short-circuit here and
+                # bypass the sync _run() path entirely.
+                return textual_ui.run_textual_wizard(args, state_mod, WizardEngine)
+        else:
+            ui = _load_ui(args.text_ui)
 
     from ._headless_ui import HeadlessMissingField
 
