@@ -30,6 +30,48 @@ añade una línea `- **Resuelto**: 2026-MM-DD en commit <hash>`.
 
 ---
 
+## install-wizard-ui-tests-stale (resolved)
+
+- **Descubierto**: 2026-05-25 por codex durante la implementación del runner de
+  integridad.
+- **Síntoma**: `tests/wizard/test_ui_*.py` y
+  `tests/installer/test_wizard_yesno_input.sh` fallan al importar
+  `laia_cli.install_wizard.ui`.
+- **Causa raíz**: los tests unitarios atacaban internals (`_ask_yesno`,
+  `_NavigationSentinel`, `Prompt.ask`) de la capa rich `install_wizard.ui`
+  que se borró en Fase 4 del remake del wizard (commit del flip a Textual).
+  La cobertura equivalente vive ahora en `.laia-core/tests/test_tui_app.py`
+  contra el FormScreen Textual.
+- **Resuelto**: 2026-05-25 — borrados los 4 archivos de test obsoletos
+  (`tests/installer/test_wizard_yesno_input.sh`,
+  `tests/wizard/test_ui_components.py`, `tests/wizard/test_ui_render.py`,
+  `tests/wizard/test_ui_progress.py`) junto con la capa rich que testeaban.
+- **Verificación**: `tests/installer/run_all.sh` 29/29 verde tras la
+  limpieza; `pytest tests/wizard/` baja a 159/160 (la failure restante
+  `test_clone_security::test_clone_execute_aborts_on_ssh_setup_mode` es
+  pre-existente y testea comportamiento intencional que NO es parte del
+  remake — ver entrada propia abajo).
+
+## clone-ssh-setup-mode-continues (open)
+
+- **Descubierto**: 2026-05-25 por claude-code al correr `pytest tests/wizard/`
+  durante Fase 4. La falla es pre-existente; el test viene del commit
+  `5e786ac5` (codex añadiendo asserts de seguridad).
+- **Síntoma**: `tests/wizard/test_clone_security.py::test_clone_execute_aborts_on_ssh_setup_mode`
+  asserta que cuando `ssh_auth_mode='setup'` el flow `execute()` debe yieldar
+  `step_error` ANTES de invocar `bin/laia-clone`. El código actual hace el
+  setup SSH y luego sí continúa al clone, contradiciendo el test.
+- **Causa raíz sospechada**: divergencia entre intent (la sesión de "sólo
+  setup" debería ser una pasada separada, no fold-into-clone) y la
+  implementación heredada en `flows/clone.py:402-408` que continúa.
+- **Reproducción**: `cd .laia-core && PYTHONPATH=. venv/bin/python -m pytest
+  ../tests/wizard/test_clone_security.py -k aborts_on_ssh_setup -o addopts=""`.
+- **Workaround**: usar `ssh_auth_mode='existing'` después del setup manual,
+  o no marcar la opción setup si quieres clonar en la misma ejecución.
+- **Owner**: sin asignar — decisión de Jorge sobre si la semántica correcta
+  es "abort después de setup" o "encadenar setup + clone".
+- **Estado**: open.
+
 ## wizard-clone-tty (resolved)
 
 - **Descubierto**: 2026-05-25 por claude-code durante prueba en VM Ubuntu 26.04 arm64.
