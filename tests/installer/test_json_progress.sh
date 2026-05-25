@@ -160,6 +160,104 @@ else
 fi
 
 echo
+echo "→ log_step auto-emits step_start with a derived step_id"
+out=$(
+  LAIA_JSON_PROGRESS=1 bash -c '
+    set -e
+    source "'"$LAIA_ROOT"'/infra/installer/lib/common.sh"
+    log_step "Phase H: rsync data"
+  ' 2>/dev/null | grep '^{"event"' || true
+)
+if [[ -z "$out" ]]; then
+  nope "log_step did not auto-emit a JSON event"
+else
+  if python3 - <<PY
+import sys, json
+events = [json.loads(l) for l in """$out""".splitlines() if l.strip()]
+starts = [e for e in events if e.get("event") == "step_start"]
+if not starts:
+    print("no step_start emitted by log_step", file=sys.stderr); sys.exit(1)
+e = starts[0]
+if e.get("step_id") != "phase-h-rsync-data":
+    print(f"unexpected derived step_id: {e.get('step_id')!r}", file=sys.stderr); sys.exit(1)
+if e.get("label") != "Phase H: rsync data":
+    print(f"unexpected label: {e.get('label')!r}", file=sys.stderr); sys.exit(1)
+PY
+  then
+    ok "log_step emits step_start with derived id 'phase-h-rsync-data'"
+  else
+    nope "log_step derived id / label off (see stderr)"
+  fi
+fi
+
+echo
+echo "→ log_step honors an explicit step_id when given as second arg"
+out=$(
+  LAIA_JSON_PROGRESS=1 bash -c '
+    set -e
+    source "'"$LAIA_ROOT"'/infra/installer/lib/common.sh"
+    log_step "Phase H" "clone:rsync-agora"
+  ' 2>/dev/null | grep '^{"event"' || true
+)
+if python3 - <<PY
+import sys, json
+events = [json.loads(l) for l in """$out""".splitlines() if l.strip()]
+starts = [e for e in events if e.get("event") == "step_start"]
+if not starts:
+    print("no step_start emitted", file=sys.stderr); sys.exit(1)
+if starts[0].get("step_id") != "clone:rsync-agora":
+    print(f"explicit step_id ignored: {starts[0].get('step_id')!r}", file=sys.stderr); sys.exit(1)
+PY
+then
+  ok "log_step uses explicit step_id when provided"
+else
+  nope "log_step did not honor explicit step_id"
+fi
+
+echo
+echo "→ log_step_done emits step_done"
+out=$(
+  LAIA_JSON_PROGRESS=1 bash -c '
+    set -e
+    source "'"$LAIA_ROOT"'/infra/installer/lib/common.sh"
+    log_step "Phase H" "clone:rsync"
+    log_step_done "Rsync OK"
+  ' 2>/dev/null | grep '^{"event"' || true
+)
+if python3 - <<PY
+import sys, json
+events = [json.loads(l) for l in """$out""".splitlines() if l.strip()]
+dones = [e for e in events if e.get("event") == "step_done"]
+if not dones:
+    print("no step_done emitted by log_step_done", file=sys.stderr); sys.exit(1)
+if dones[0].get("step_id") != "clone:rsync":
+    print(f"log_step_done lost the current step_id: {dones[0].get('step_id')!r}", file=sys.stderr); sys.exit(1)
+if dones[0].get("label") != "Rsync OK":
+    print(f"log_step_done label off: {dones[0].get('label')!r}", file=sys.stderr); sys.exit(1)
+PY
+then
+  ok "log_step_done emits step_done with current step_id and label"
+else
+  nope "log_step_done did not emit a clean step_done"
+fi
+
+echo
+echo "→ Without LAIA_JSON_PROGRESS, log_step is silent on JSON"
+out=$(
+  bash -c '
+    set -e
+    source "'"$LAIA_ROOT"'/infra/installer/lib/common.sh"
+    log_step "Phase X"
+    log_step_done
+  ' 2>/dev/null | grep '^{"event"' || true
+)
+if [[ -z "$out" ]]; then
+  ok "log_step / log_step_done emit no JSON when LAIA_JSON_PROGRESS is unset"
+else
+  nope "JSON leaked without LAIA_JSON_PROGRESS"
+fi
+
+echo
 echo "═══════════════════════════════════════════════════"
 printf "  PASS: %d   FAIL: %d\n" "$PASS" "$FAIL"
 if [[ $FAIL -gt 0 ]]; then

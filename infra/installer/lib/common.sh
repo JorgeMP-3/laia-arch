@@ -40,10 +40,39 @@ log_success() { printf '%s✓%s %s\n' "$C_GRN" "$C_RST" "$1";        _log_to_fil
 log_warn()    { printf '%s⚠%s %s\n' "$C_YEL" "$C_RST" "$1" >&2;    _log_to_file WARN  "$1"; }
 log_error()   { printf '%s✗%s %s\n' "$C_RED" "$C_RST" "$1" >&2;    _log_to_file ERROR "$1"; }
 
+# log_step <label> [step_id]
+# Print the phase banner AND auto-emit a step_start JSON event when
+# LAIA_JSON_PROGRESS=1 — that way every phase boundary surfaces to the
+# wizard parser without each caller having to remember a paired
+# emit_json_event call (a recurring source of drift before this).
+# step_id defaults to a slug derived from the label.
 log_step() {
+  local label="$1" step_id="${2:-}"
+  if [[ -z "$step_id" ]]; then
+    # Derive a stable id: lower-case, non-alnum → '-', collapse runs of '-'.
+    step_id="$(printf '%s' "$label" \
+      | tr '[:upper:]' '[:lower:]' \
+      | tr -c 'a-z0-9' '-' \
+      | sed 's/--*/-/g; s/^-//; s/-$//')"
+    [[ -n "$step_id" ]] || step_id="step"
+  fi
   printf '\n%s%s═══ %s ═══════════════════════════════════════════════%s\n' \
-    "$C_YEL" "$C_BLD" "$1" "$C_RST"
-  _log_to_file STEP "$1"
+    "$C_YEL" "$C_BLD" "$label" "$C_RST"
+  _log_to_file STEP "$label"
+  emit_json_event step_start "$step_id" "$label"
+}
+
+# log_step_done [label] [step_id]
+# Symmetric closer for log_step — emits step_done JSON when JSON mode is
+# on, and prints a brief success banner. Defaults to the most recent
+# LAIA_CURRENT_STEP so callers can just write `log_step_done` after the
+# matching log_step.
+log_step_done() {
+  local label="${1:-OK}" step_id="${2:-${LAIA_CURRENT_STEP:-}}"
+  if [[ -n "$label" && "$label" != "OK" ]]; then
+    log_success "$label"
+  fi
+  emit_json_event step_done "$step_id" "$label"
 }
 
 # emit_json_event <event_type> <step_id> <label> [percent]

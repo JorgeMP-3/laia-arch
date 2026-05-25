@@ -401,8 +401,7 @@ clone_stop_services() {
 
 # ─── D.2: Phase 1 — rsync LAIA_HOME ────────────────────────────────────────
 clone_phase1_laia_home() {
-  log_step "Phase 1: LAIA_HOME (data)"
-  emit_json_event step_start clone:laia-home "Rsync LAIA_HOME"
+  log_step "Phase 1: LAIA_HOME (data)" clone:laia-home
 
   local src dst excludes_file
   src="$(clone_src_for laia_home)"
@@ -429,8 +428,7 @@ clone_phase1_laia_home() {
 
 # ─── D.3: Phase 3 — rsync /srv/laia/users ──────────────────────────────────
 clone_phase3_users() {
-  log_step "Phase 3: /srv/laia/users (PA-AGORA bind mounts)"
-  emit_json_event step_start clone:users "Rsync /srv/laia/users"
+  log_step "Phase 3: /srv/laia/users (PA-AGORA bind mounts)" clone:users
 
   local src dst excludes_file
   src="$(clone_src_for users)"
@@ -522,8 +520,7 @@ clone_rsync_to_privileged_dest() {
 }
 
 clone_phase_h_rsync_agora_data() {
-  log_step "Phase H: /srv/laia/agora"
-  emit_json_event step_start clone:rsync-agora "Rsync /srv/laia/agora"
+  log_step "Phase H: /srv/laia/agora" clone:rsync-agora
   clone_rsync_to_privileged_dest "$(clone_src_for agora)" "$(clone_dest_agora_dir)" "agora data"
   emit_json_event step_done clone:rsync-agora "AGORA data copied"
   log_success "Phase H agora data complete"
@@ -535,8 +532,7 @@ clone_phase_h_rsync_users_data() {
 }
 
 clone_phase_h_rsync_arch_data() {
-  log_step "Phase H: LAIA-ARCH operational data"
-  emit_json_event step_start clone:rsync-arch "Rsync LAIA-ARCH operational data"
+  log_step "Phase H: LAIA-ARCH operational data" clone:rsync-arch
   local dst
   dst="$(clone_dest_arch_dir)"
 
@@ -648,8 +644,7 @@ clone_phase_h_rewrite_config_paths() {
 }
 
 clone_phase_h_rsync_arch_creds() {
-  log_step "Phase H: LAIA-ARCH credentials"
-  emit_json_event step_start clone:rsync-arch-creds "Rsync LAIA-ARCH credentials"
+  log_step "Phase H: LAIA-ARCH credentials" clone:rsync-arch-creds
   local dst src_base rel src_file dst_file
   if clone_is_local_source && [[ ! -d "$OPT_SOURCE_DIR/home/.laia" ]]; then
     log_info "  Source has no ~/.laia credentials — skipping"
@@ -704,8 +699,7 @@ clone_phase_h_enumerate_slugs() {
 }
 
 clone_phase_h_rebuild_agora_container() {
-  log_step "Phase H: rebuild laia-agora locally"
-  emit_json_event step_start clone:rebuild-agora "Rebuild laia-agora"
+  log_step "Phase H: rebuild laia-agora locally" clone:rebuild-agora
   if inst_is_override_mode || [[ -n "${LAIA_TEST_STUB_PATH:-}" ]]; then
     clone_stub_log "rebuild-3-provision-agora.sh"
     log_info "[stub] skipping rebuild-3-provision-agora.sh"
@@ -718,8 +712,7 @@ clone_phase_h_rebuild_agora_container() {
 
 clone_phase_h_rebuild_agent_container() {
   local slug="$1"
-  log_step "Phase H: rebuild agent-$slug locally"
-  emit_json_event step_start "clone:rebuild-agent:$slug" "Rebuild agent-$slug"
+  log_step "Phase H: rebuild agent-$slug locally" "clone:rebuild-agent:$slug"
   if inst_is_override_mode || [[ -n "${LAIA_TEST_STUB_PATH:-}" ]]; then
     clone_stub_log "rebuild-4-first-user.sh --slug $slug --existing-user-only"
     log_info "[stub] skipping rebuild-4-first-user.sh --slug $slug --existing-user-only"
@@ -732,8 +725,7 @@ clone_phase_h_rebuild_agent_container() {
 }
 
 clone_phase_h_fix_uid_mapping() {
-  log_step "Phase H: fix uid mappings"
-  emit_json_event step_start clone:uid-map "Fix LXD uid mappings"
+  log_step "Phase H: fix uid mappings" clone:uid-map
   if inst_is_override_mode || [[ -n "${LAIA_TEST_STUB_PATH:-}" ]]; then
     log_info "[stub] skipping uid mapping fix"
     emit_json_event step_done clone:uid-map "UID mapping skipped in stub"
@@ -753,8 +745,7 @@ clone_phase_h_fix_uid_mapping() {
 }
 
 clone_phase_h_verify() {
-  log_step "Phase H: verify"
-  emit_json_event step_start clone:verify-live "Verify live containers and health"
+  log_step "Phase H: verify" clone:verify-live
   if inst_is_override_mode || [[ -n "${LAIA_TEST_STUB_PATH:-}" ]]; then
     log_info "[stub] skipping live verify"
     emit_json_event step_done clone:verify-live "Live verify skipped in stub"
