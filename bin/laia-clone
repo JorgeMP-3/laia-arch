@@ -197,8 +197,20 @@ resolve_bwlimit_file() {
   OPT_BWLIMIT_FILE=""
 }
 
-# resolve_ssh_pass_file — read --ssh-pass-file into SSHPASS, unlink it, and
-# switch the clone transport into sshpass mode before preflight.
+# resolve_ssh_pass_file — read --ssh-pass-file, move it into a private
+# directory under /run, and switch the clone transport into sshpass mode.
+#
+# Security note: we deliberately do NOT export SSHPASS to the env. The
+# previous implementation did, which made the password visible in `ps -e`
+# (and any debug log that dumped the environment) for the lifetime of the
+# laia-clone process. Instead, we keep the password in a 0600 file owned
+# by root and pass `-f <path>` to every sshpass invocation. sshpass reads
+# the file directly without exporting it.
+#
+# The file lives under /run/laia-clone-$$ (tmpfs, root-only) and is
+# unlinked + dir-removed in clone_cleanup_sshpass_file (called from the
+# EXIT trap installed in main()).
+CLONE_SSHPASS_FILE=""
 resolve_ssh_pass_file() {
   [[ -z "$OPT_SSH_PASS_FILE" ]] && return 0
   if [[ ! -f "$OPT_SSH_PASS_FILE" ]]; then
@@ -208,19 +220,49 @@ resolve_ssh_pass_file() {
     die "--ssh-pass-file not readable: $OPT_SSH_PASS_FILE" 2
   fi
 
-  SSHPASS="$(< "$OPT_SSH_PASS_FILE")"
-  SSHPASS="${SSHPASS%$'\n'}"
+  local content
+  content="$(< "$OPT_SSH_PASS_FILE")"
+  content="${content%$'\n'}"
   rm -f "$OPT_SSH_PASS_FILE" 2>/dev/null || true
   OPT_SSH_PASS_FILE=""
 
-  if [[ -z "$SSHPASS" ]]; then
+  if [[ -z "$content" ]]; then
     die "--ssh-pass-file is empty" 2
   fi
-  export SSHPASS
+
+  # Relocate the secret into a private root-only dir. /run is tmpfs on
+  # systemd hosts; /tmp is the fallback on minimal images. mktemp -p
+  # picks the first writable one.
+  local secret_dir
+  for candidate in /run /var/run /tmp; do
+    if [[ -d "$candidate" && -w "$candidate" ]]; then
+      secret_dir="$candidate"
+      break
+    fi
+  done
+  : "${secret_dir:=/tmp}"
+
+  local dir
+  dir="$(mktemp -d "$secret_dir/laia-clone-XXXXXX")"
+  chmod 700 "$dir"
+  CLONE_SSHPASS_FILE="$dir/sshpass"
+  (umask 077 && printf '%s' "$content" > "$CLONE_SSHPASS_FILE")
+  chmod 600 "$CLONE_SSHPASS_FILE"
+  unset content
+
+  export CLONE_SSHPASS_FILE
   CLONE_SSH_USE_PASSWORD=true
 
   # Fail here, before source checks, if sshpass cannot be made available.
   clone_ensure_sshpass
+}
+
+# Called from EXIT trap to scrub the secret file even on crash.
+clone_cleanup_sshpass_file() {
+  if [[ -n "${CLONE_SSHPASS_FILE:-}" ]]; then
+    rm -f "$CLONE_SSHPASS_FILE" 2>/dev/null || true
+    rmdir "$(dirname "$CLONE_SSHPASS_FILE")" 2>/dev/null || true
+  fi
 }
 
 # validate_options — reject any user-supplied value that has shell
@@ -305,6 +347,8 @@ clone_install_first_if_needed() {
 main() {
   trap_errors
   install_signal_traps
+  # Scrub the SSH password file on ANY exit path (success, die, SIGINT).
+  trap 'clone_cleanup_sshpass_file' EXIT
   parse_args "$@"
   resolve_bwlimit_file
   resolve_ssh_pass_file
@@ -351,21 +395,28 @@ main() {
     clone_phase1_laia_home
   fi
 
-  # --resume MVP: skip rsync agora if destination DB already has 20+ tables.
-  local skip_agora=false
+  # --resume: each rsync phase is now marker-driven (see clone_phase_state_dir
+  # in infra/installer/lib/clone.sh). When a phase completes it writes a
+  # .done marker under $LAIA_HOME/.clone-state/; on the next --resume the
+  # phase function checks the marker and skips.
+  #
+  # The legacy heuristic (skip agora if destination DB already has 20+
+  # tables) stays as a SAFETY NET for resumes from older clones that
+  # predate the marker scheme. When it fires, we pre-write the marker so
+  # the phase function picks it up and behavior is consistent thereafter.
   if [[ "$OPT_RESUME" == true ]]; then
     local dest_db tbl_count
     dest_db="$(clone_dest_agora_dir)/agora.db"
     if [[ -f "$dest_db" ]] && command -v sqlite3 >/dev/null 2>&1; then
       tbl_count="$(sqlite3 "$dest_db" "select count(*) from sqlite_master where type='table';" 2>/dev/null || echo 0)"
-      if [[ "${tbl_count:-0}" -ge 20 ]]; then
-        log_info "--resume: destination agora.db has $tbl_count tables — skipping rsync agora"
-        skip_agora=true
+      if [[ "${tbl_count:-0}" -ge 20 ]] && ! clone_phase_should_skip "rsync-agora"; then
+        log_info "--resume: legacy clone has agora.db with $tbl_count tables but no marker — synthesizing rsync-agora marker."
+        clone_phase_mark_done "rsync-agora"
       fi
     fi
   fi
   emit_json_event step_start clone:rsync "Rsync data (agora + users + arch)"
-  [[ "$skip_agora" == true ]] || clone_phase_h_rsync_agora_data
+  clone_phase_h_rsync_agora_data
   clone_phase_h_rsync_users_data
   clone_phase_h_rsync_arch_data
   clone_phase_h_rsync_arch_creds

@@ -225,6 +225,12 @@ main() {
   inst_check_frontend
   inst_finalize_permissions
   inst_switch_symlink
+  # From this point on, /opt/laia points at the new versioned dir. If
+  # ANYTHING below fails (wrappers, systemd units, factory bootstrap,
+  # agora provisioning), restore the previous symlink target — leaving
+  # the host pointing at a known-good version while the operator
+  # investigates the new versioned dir on disk.
+  inst_install_rollback_trap
   inst_install_wrappers
   inst_ensure_data_dir
   shell_rc_apply "$DATA_DIR"
@@ -253,6 +259,11 @@ main() {
     fact_seed_base_skills
     emit_json_event step_done install:factory "Factory bootstrap complete"
   fi
+
+  # Install succeeded end-to-end — clear the rollback trap so any
+  # post-script cleanup doesn't accidentally trigger a revert.
+  inst_clear_rollback_trap
+  trap_errors  # reinstall the standard diagnostic ERR trap
 
   inst_print_summary
   emit_json_event step_done install:finish "Installation complete"

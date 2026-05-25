@@ -72,13 +72,18 @@ boot_check_lxd_installed() {
   fi
 
   log_info "Waiting for LXD daemon to be ready (max 60s)..."
-  local i
+  local i lxd_ready=false
   for ((i = 0; i < 60; i++)); do
     if $sudo_cmd lxd waitready --timeout=1 >/dev/null 2>&1; then
+      lxd_ready=true
       break
     fi
     sleep 1
   done
+  if [[ "$lxd_ready" != true ]]; then
+    die "LXD daemon did not become ready in 60s. Check 'sudo journalctl -u snap.lxd.daemon -n 50' and re-run."
+  fi
+  log_info "LXD daemon ready after ${i}s"
 
   log_info "lxd init --auto"
   if ! laia_run_interruptible $sudo_cmd lxd init --auto; then

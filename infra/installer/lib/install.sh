@@ -451,13 +451,29 @@ inst_finalize_permissions() {
 # fully atomic if the symlink already exists pointing elsewhere, so we use the
 # rename trick: create symlink with a tmp name in the same dir, then rename
 # over the canonical path.
+#
+# Side effect for rollback support: BEFORE switching, capture the previous
+# target into INST_SYMLINK_PREVIOUS so an ERR trap installed by the caller
+# (see inst_install_rollback_trap) can restore it if any later step (factory
+# bootstrap, agora provisioning, etc.) fails. Without this, a partial install
+# leaves /opt/laia pointing at a broken version with no automatic recovery.
+INST_SYMLINK_PREVIOUS=""
 inst_switch_symlink() {
   log_step "Switching $INST_PREFIX → $(basename "$INST_DEST")"
 
-  local target dir tmp
+  local target dir tmp prev=""
   target="$(basename "$INST_DEST")"
   dir="$(dirname "$INST_PREFIX")"
   tmp="$INST_PREFIX.tmp.$$"
+
+  # Capture previous symlink target (relative name within INST_ROOT) so the
+  # rollback trap can restore it. Empty means there was no previous install
+  # — in that case the trap will remove the symlink entirely on failure.
+  if [[ -L "$INST_PREFIX" ]]; then
+    prev="$(readlink "$INST_PREFIX" 2>/dev/null || true)"
+  fi
+  INST_SYMLINK_PREVIOUS="$prev"
+  export INST_SYMLINK_PREVIOUS
 
   if inst_is_override_mode; then
     ln -s "$target" "$tmp"
@@ -466,7 +482,62 @@ inst_switch_symlink() {
     sudo ln -s "$target" "$tmp"
     sudo mv -T "$tmp" "$INST_PREFIX"
   fi
-  log_success "Symlink updated"
+  log_success "Symlink updated (prev=${prev:-none})"
+}
+
+# inst_rollback_symlink — restore /opt/laia to its pre-install state.
+# Called from an ERR/EXIT trap installed by bin/laia-install when the
+# install fails AFTER the symlink switch.
+inst_rollback_symlink() {
+  local prev="${INST_SYMLINK_PREVIOUS:-}"
+  local tmp="$INST_PREFIX.rollback.tmp.$$"
+
+  log_warn "Rolling back $INST_PREFIX to previous target (${prev:-<none>})"
+
+  if [[ -z "$prev" ]]; then
+    # No previous install — remove the broken symlink. The new versioned
+    # dir at $INST_DEST is left in place so the operator can inspect it.
+    if inst_is_override_mode; then
+      rm -f "$INST_PREFIX" 2>/dev/null || true
+    else
+      sudo rm -f "$INST_PREFIX" 2>/dev/null || true
+    fi
+    log_warn "Removed $INST_PREFIX (no previous install to restore)"
+    return 0
+  fi
+
+  if inst_is_override_mode; then
+    ln -s "$prev" "$tmp"
+    mv -T "$tmp" "$INST_PREFIX"
+  else
+    sudo ln -s "$prev" "$tmp"
+    sudo mv -T "$tmp" "$INST_PREFIX"
+  fi
+  log_warn "Symlink restored to $prev"
+  log_warn "The new versioned dir at $INST_DEST is left on disk for inspection."
+}
+
+# inst_install_rollback_trap — install EXIT-time rollback handler.
+#
+# Bash's ERR trap doesn't fire for explicit `exit N` (which `die` uses), so
+# we use EXIT instead with a check on `$?`. We also flip a guard variable
+# (INST_ROLLBACK_ARMED) so the cleanup at successful completion can
+# disable rollback before exit.
+#
+# Caller should invoke this RIGHT AFTER inst_switch_symlink so any
+# subsequent failure (wrappers, systemd, factory bootstrap, agora
+# provisioning, signal interrupt) triggers rollback.
+INST_ROLLBACK_ARMED=false
+inst_install_rollback_trap() {
+  INST_ROLLBACK_ARMED=true
+  trap 'rc=$?; if [[ "$INST_ROLLBACK_ARMED" == true && $rc -ne 0 ]]; then inst_rollback_symlink; fi; exit "$rc"' EXIT
+  trap 'rc=$?; if [[ "$INST_ROLLBACK_ARMED" == true ]]; then inst_rollback_symlink; fi; exit "${rc:-130}"' INT TERM
+}
+
+# inst_clear_rollback_trap — called on successful main() completion so the
+# EXIT-time check sees the flag disarmed and skips the revert.
+inst_clear_rollback_trap() {
+  INST_ROLLBACK_ARMED=false
 }
 
 # ─── B.6: /usr/local/bin wrappers ───────────────────────────────────────────

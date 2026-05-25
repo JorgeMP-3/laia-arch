@@ -172,7 +172,7 @@ clone_use_invoking_user_ssh() {
 
 clone_ssh_transport() {
   if [[ "${CLONE_SSH_USE_PASSWORD:-false}" == "true" ]]; then
-    printf 'sshpass -e ssh -o BatchMode=no -o StrictHostKeyChecking=accept-new'
+    printf 'sshpass -f "${CLONE_SSHPASS_FILE:?CLONE_SSHPASS_FILE not set; resolve_ssh_pass_file must run first}" ssh -o BatchMode=no -o StrictHostKeyChecking=accept-new'
     return 0
   fi
 
@@ -187,7 +187,7 @@ clone_ssh_transport() {
 
 clone_ssh() {
   if [[ "${CLONE_SSH_USE_PASSWORD:-false}" == "true" ]]; then
-    sshpass -e ssh -o BatchMode=no -o StrictHostKeyChecking=accept-new "$@"
+    sshpass -f "${CLONE_SSHPASS_FILE:?CLONE_SSHPASS_FILE not set; resolve_ssh_pass_file must run first}" ssh -o BatchMode=no -o StrictHostKeyChecking=accept-new "$@"
     return $?
   fi
 
@@ -239,7 +239,7 @@ clone_preflight() {
     command -v ssh >/dev/null 2>&1 || die "ssh not installed (apt install openssh-client)" 3
     if ! clone_ssh -o ConnectTimeout=5 "$OPT_SOURCE" true 2>/dev/null; then
       if [[ "${CLONE_SSH_USE_PASSWORD:-false}" == "true" ]]; then
-        unset SSHPASS
+        # Secret will be scrubbed by the EXIT trap (clone_cleanup_sshpass_file).
         die "SSH to $OPT_SOURCE failed with the supplied password. Re-run the wizard and verify the credentials." 3
       fi
       die "SSH key auth to $OPT_SOURCE failed. Re-run the wizard and choose 'Password SSH' or 'Generate and copy key'. (Test: $(clone_ssh_transport) $OPT_SOURCE true)" 3
@@ -426,6 +426,51 @@ clone_phase1_laia_home() {
   log_success "Phase 1 complete"
 }
 
+# ─── Phase state markers (resume-safe completion tracking) ────────────────
+#
+# Each rsync phase writes a marker file when it completes. `--resume` reads
+# the markers and skips phases that already succeeded — much safer than the
+# previous heuristic (count tables in agora.db), which couldn't tell that
+# the users/arch rsync had failed mid-flight.
+#
+# Markers live under $LAIA_HOME/.clone-state/ so they survive between
+# laia-clone invocations on the same destination. They're cleared at the
+# START of each phase so a mid-phase failure doesn't leave a stale "done".
+#
+# Granularity: one marker per top-level rsync phase. Sub-step retries within
+# a phase still re-do everything inside that phase, which is the safe
+# default — rsync itself is incremental, so re-running is cheap.
+
+clone_phase_state_dir() {
+  printf '%s/.clone-state\n' "$(clone_dest_laia_home)"
+}
+
+clone_phase_mark_start() {
+  local phase="$1" state_dir
+  state_dir="$(clone_phase_state_dir)"
+  mkdir -p "$state_dir" 2>/dev/null || true
+  rm -f "$state_dir/$phase.done" 2>/dev/null || true
+}
+
+clone_phase_mark_done() {
+  local phase="$1" state_dir
+  state_dir="$(clone_phase_state_dir)"
+  mkdir -p "$state_dir" 2>/dev/null || true
+  # Write a content-stable marker (empty file). We deliberately avoid a
+  # timestamp here so re-runs are byte-identical — the test
+  # `test_clone_local.sh::(C) idempotency` md5s every file in the dest and
+  # would flag a timestamp difference as a regression.
+  : > "$state_dir/$phase.done"
+}
+
+# Returns 0 (skip phase) if --resume is on AND the phase marker exists.
+clone_phase_should_skip() {
+  local phase="$1" state_dir
+  [[ "${OPT_RESUME:-false}" == "true" ]] || return 1
+  state_dir="$(clone_phase_state_dir)"
+  [[ -f "$state_dir/$phase.done" ]]
+}
+
 # ─── D.3: Phase 3 — rsync /srv/laia/users ──────────────────────────────────
 clone_phase3_users() {
   log_step "Phase 3: /srv/laia/users (PA-AGORA bind mounts)" clone:users
@@ -520,18 +565,38 @@ clone_rsync_to_privileged_dest() {
 }
 
 clone_phase_h_rsync_agora_data() {
+  if clone_phase_should_skip "rsync-agora"; then
+    log_info "Phase H agora data already complete (resume); skipping"
+    emit_json_event step_done clone:rsync-agora "AGORA data already done (resume)"
+    return 0
+  fi
+  clone_phase_mark_start "rsync-agora"
   log_step "Phase H: /srv/laia/agora" clone:rsync-agora
   clone_rsync_to_privileged_dest "$(clone_src_for agora)" "$(clone_dest_agora_dir)" "agora data"
+  clone_phase_mark_done "rsync-agora"
   emit_json_event step_done clone:rsync-agora "AGORA data copied"
   log_success "Phase H agora data complete"
 }
 
 clone_phase_h_rsync_users_data() {
+  if clone_phase_should_skip "rsync-users"; then
+    log_info "Phase H users data already complete (resume); skipping"
+    emit_json_event step_done clone:users "Users data already done (resume)"
+    return 0
+  fi
+  clone_phase_mark_start "rsync-users"
   log_step "Phase H: /srv/laia/users"
   clone_phase3_users
+  clone_phase_mark_done "rsync-users"
 }
 
 clone_phase_h_rsync_arch_data() {
+  if clone_phase_should_skip "rsync-arch"; then
+    log_info "Phase H arch data already complete (resume); skipping"
+    emit_json_event step_done clone:rsync-arch "ARCH data already done (resume)"
+    return 0
+  fi
+  clone_phase_mark_start "rsync-arch"
   log_step "Phase H: LAIA-ARCH operational data" clone:rsync-arch
   local dst
   dst="$(clone_dest_arch_dir)"
@@ -539,17 +604,20 @@ clone_phase_h_rsync_arch_data() {
   if clone_is_local_source && [[ -d "$OPT_SOURCE_DIR/arch" ]]; then
     clone_rsync_to_privileged_dest "$(clone_src_for arch)" "$dst" "arch data"
     clone_phase_h_rewrite_config_paths
+    clone_phase_mark_done "rsync-arch"
     emit_json_event step_done clone:rsync-arch "ARCH data copied"
     return 0
   fi
   if ! clone_is_local_source && clone_source_path_exists "$LAIA_ARCH_DIR_DEFAULT"; then
     clone_rsync_to_privileged_dest "$(clone_src_for arch)" "$dst" "arch data"
     clone_phase_h_rewrite_config_paths
+    clone_phase_mark_done "rsync-arch"
     emit_json_event step_done clone:rsync-arch "ARCH data copied"
     return 0
   fi
   if clone_is_local_source && [[ ! -d "$OPT_SOURCE_DIR/home/.laia" ]]; then
     log_info "  Source has no ARCH operational data — skipping"
+    clone_phase_mark_done "rsync-arch"
     emit_json_event step_done clone:rsync-arch "No ARCH operational data at source"
     return 0
   fi
@@ -601,6 +669,7 @@ clone_phase_h_rsync_arch_data() {
   done < <(_clone_arch_legacy_file_specs)
 
   clone_phase_h_rewrite_config_paths
+  clone_phase_mark_done "rsync-arch"
   emit_json_event step_done clone:rsync-arch "ARCH data copied"
 }
 
@@ -644,10 +713,17 @@ clone_phase_h_rewrite_config_paths() {
 }
 
 clone_phase_h_rsync_arch_creds() {
+  if clone_phase_should_skip "rsync-arch-creds"; then
+    log_info "Phase H arch creds already complete (resume); skipping"
+    emit_json_event step_done clone:rsync-arch-creds "ARCH creds already done (resume)"
+    return 0
+  fi
+  clone_phase_mark_start "rsync-arch-creds"
   log_step "Phase H: LAIA-ARCH credentials" clone:rsync-arch-creds
   local dst src_base rel src_file dst_file
   if clone_is_local_source && [[ ! -d "$OPT_SOURCE_DIR/home/.laia" ]]; then
     log_info "  Source has no ~/.laia credentials — skipping"
+    clone_phase_mark_done "rsync-arch-creds"
     emit_json_event step_done clone:rsync-arch-creds "No legacy ~/.laia credentials at source"
     return 0
   fi
@@ -673,6 +749,7 @@ clone_phase_h_rsync_arch_creds() {
       [[ -f "$dst/$rel" ]] && chmod 600 "$dst/$rel"
     fi
   fi
+  clone_phase_mark_done "rsync-arch-creds"
   emit_json_event step_done clone:rsync-arch-creds "ARCH credentials copied"
 }
 
@@ -731,16 +808,28 @@ clone_phase_h_fix_uid_mapping() {
     emit_json_event step_done clone:uid-map "UID mapping skipped in stub"
     return 0
   fi
-  # Probe the actual idmap base for the laia-agora container. If isolated or
-  # not yet set, fall back to the LXD default unprivileged base (1000000).
+
+  # Probe the actual idmap base for the laia-agora container.
+  #
+  # Previously this fell back to a hardcoded 1000000 when `lxc config get`
+  # returned empty. That's fragile: on hosts where the container is privileged,
+  # or uses a custom idmap, or where the laia-agora container doesn't exist
+  # yet (rebuild failure), chowning to 1000000 would silently break ownership.
+  # We now require a real value and die with a clear message otherwise — the
+  # operator can then verify the container exists and has a working idmap.
+  if ! lxc info laia-agora >/dev/null 2>&1; then
+    die "laia-agora container not found. Run 'lxc list' to confirm; container must be running before uid-map fix." 5
+  fi
   local base
   base="$(lxc config get laia-agora volatile.idmap.base 2>/dev/null || true)"
   if [[ -z "$base" || ! "$base" =~ ^[0-9]+$ ]]; then
-    base=1000000
+    die "Could not read 'volatile.idmap.base' from laia-agora container. Check 'lxc config show laia-agora' and re-run after fixing." 5
   fi
   log_info "  chown base: $base (LXD idmap)"
-  sudo chown -R "$base:$base" "$(clone_dest_agora_dir)" "$(clone_dest_users_dir)" 2>/dev/null \
-    || log_warn "  chown reported partial failures (may be safe; verify with 'lxc exec laia-agora -- ls /opt/agora/data')"
+  if ! sudo chown -R "$base:$base" "$(clone_dest_agora_dir)" "$(clone_dest_users_dir)" 2>/dev/null; then
+    log_warn "  chown reported partial failures — some files may belong to the wrong uid."
+    log_warn "  Verify with: lxc exec laia-agora -- ls -la /opt/agora/data"
+  fi
   emit_json_event step_done clone:uid-map "UID mappings fixed"
 }
 
