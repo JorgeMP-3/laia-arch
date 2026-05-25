@@ -16,6 +16,15 @@
   - `wip/codex/agora-ui-marketplace-tab`
   - `wip/jorge/workflow-folder`
 - Para PRs serios usa `feat/<area>` o `fix/<area>`.
+- `main` es la rama de integración/desarrollo validado. La VM dev de Jorge puede
+  instalar desde aquí con `--branch main`.
+- `stable` es la rama de producción. El instalador por defecto apunta a `stable`
+  y el ThinkStation debe desplegar desde ahí.
+- No trabajes directo en `stable`. `stable` solo recibe merges fast-forward desde
+  `main`, o hotfixes aprobados por Jorge.
+- Los tags semver `vX.Y.Z` se crean solo sobre `stable`.
+- El flujo completo de promote, deploy, rollback y hotfix está en
+  `workflow/release-flow.md`.
 
 ## Commits
 

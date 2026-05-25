@@ -14,6 +14,7 @@ a tocar algo en este repositorio, **lee esto primero**.
 | `changelog.md` | Bitácora de cambios materiales. Se actualiza al cerrar turno. |
 | `security.md` | Bitácora de hallazgos y acciones de seguridad. |
 | `problems.md` | Bitácora de problemas descubiertos. Se anota AL DESCUBRIRLOS. |
+| `release-flow.md` | Flujo dev/prod: `main`, `stable`, tags, promote, rollback. |
 | `plans/` | Planes activos. Un archivo por plan. |
 
 ## Orden de lectura

@@ -33,6 +33,14 @@ El desarrollador y único operador de LAIA-ARCH es **Jorge Miralles Pérez**. Di
    - `workflow/security.md` si tocaste credenciales, permisos, red o secrets.
 5. **Nunca edites `LAIA_ECOSYSTEM.md` sin consentimiento explícito de Jorge.**
 
+## Branching operativo
+
+- `main` es desarrollo/integración validada.
+- `stable` es producción. El instalador por defecto debe apuntar a `stable`.
+- No hagas commits directos a `stable` salvo hotfix aprobado por Jorge.
+- Los tags `vX.Y.Z` se crean solo sobre `stable`.
+- El runbook completo vive en `workflow/release-flow.md`.
+
 ## A dónde ir después
 
 | Archivo | Cuándo |

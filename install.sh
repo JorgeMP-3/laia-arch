@@ -6,15 +6,15 @@
 # or whoever will own LAIA on this machine):
 #
 #   # Interactive wizard (recommended for humans, asks everything):
-#   curl -fsSL https://raw.githubusercontent.com/JorgeMP-3/laia-arch/feat/installer-wizard/install.sh \
+#   curl -fsSL https://raw.githubusercontent.com/JorgeMP-3/laia-arch/stable/install.sh \
 #     | sudo -E bash
 #
 #   # Headless clone of an existing LAIA host (CI / scripted):
-#   curl -fsSL https://raw.githubusercontent.com/JorgeMP-3/laia-arch/feat/installer-wizard/install.sh \
+#   curl -fsSL https://raw.githubusercontent.com/JorgeMP-3/laia-arch/stable/install.sh \
 #     | sudo -E bash -s -- --mode clone --source laia-hermes@old.example.com --yes
 #
 #   # Headless fresh install:
-#   curl -fsSL https://raw.githubusercontent.com/JorgeMP-3/laia-arch/feat/installer-wizard/install.sh \
+#   curl -fsSL https://raw.githubusercontent.com/JorgeMP-3/laia-arch/stable/install.sh \
 #     | sudo -E bash -s -- --mode install --yes
 #
 # What this script does, in order:
@@ -37,7 +37,7 @@ set -euo pipefail
 
 # ─── Defaults ────────────────────────────────────────────────────────────────
 DEFAULT_REPO_URL="https://github.com/JorgeMP-3/laia-arch.git"
-DEFAULT_BRANCH="feat/installer-wizard"   # switch to 'main' after the merge
+DEFAULT_BRANCH="stable"
 DEFAULT_MODE="wizard"
 
 LAIA_REPO_URL="${LAIA_REPO_URL:-$DEFAULT_REPO_URL}"

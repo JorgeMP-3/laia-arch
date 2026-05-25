@@ -43,5 +43,9 @@ Lo que puede salir mal y cómo mitigarlo.
   — Guía para validar install + clone en VM real antes de Fase 5.
   Comandos concretos para Multipass, qué verificar, dónde mirar si algo
   falla. Owner: jorge (operador), claude-code (autor).
+- [`2026-05-25-dev-stable-versioning.md`](2026-05-25-dev-stable-versioning.md)
+  — Runbook aprobado para separar desarrollo y producción: `main` para dev,
+  `stable` para prod, tags semver sobre `stable`, promote manual y rollback.
+  Owner: próxima IA implementadora, con Jorge aprobando cambios materiales.
 - [`integrity-tests.md`](integrity-tests.md) — Runner de integridad por capas.
   Owner: codex.

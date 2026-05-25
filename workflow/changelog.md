@@ -15,6 +15,24 @@ Formato:
 
 ---
 
+## 2026-05-25 — Plan dev/stable convertido a runbook para otra IA (codex)
+
+- Reescrito `workflow/plans/2026-05-25-dev-stable-versioning.md` como runbook
+  ejecutable para una IA implementadora: contexto obligatorio, alcance, fases
+  numeradas, comandos, verificaciones, riesgos y criterios de hecho.
+- Añadido el plan al índice de `workflow/plans/README.md` para que aparezca
+  entre los planes activos.
+- Ejecutado el plan: `install.sh` ahora apunta por defecto a `stable`, se añadió
+  `tests/installer/test_install_default_branch.sh`, y se creó
+  `workflow/release-flow.md` con promote, deploy, rollback y hotfix.
+- Actualizados `AGENTS.md`, `workflow/00-start-here.md` y
+  `workflow/02-how-to-work.md` para documentar `main` como dev y `stable` como
+  producción.
+- Verificación: `bash -n install.sh`, `git diff --check`,
+  `bash tests/installer/test_install_default_branch.sh` y
+  `bash tests/installer/run_all.sh` pasan.
+- No se tocó `LAIA_ECOSYSTEM.md`.
+
 ## 2026-05-25 (cont. 7) — Hardening installer + cloner pre-Fase-5 (claude-code)
 
 Auditoría sistemática del installer y cloner antes de pasar a Fase 5,
