@@ -15,6 +15,89 @@ Formato:
 
 ---
 
+## 2026-05-25 (cont. 7) — Hardening installer + cloner pre-Fase-5 (claude-code)
+
+Auditoría sistemática del installer y cloner antes de pasar a Fase 5,
+seguida de fixes priorizados. Jorge pidió "100% de garantía de que
+cumplan al trabajo de forma organizada y profesional".
+
+**Auditoría** (2 Explore agents en paralelo): inventario completo de
+`install.sh` + `bin/laia-install` + `infra/installer/lib/{install,
+factory,bootstrap}.sh` para installer, y `bin/laia-clone` +
+`infra/installer/lib/clone.sh` para cloner. Producto: lista priorizada
+de issues por severidad (5 CRITICAL, 7 HIGH, ~15 MEDIUM/LOW, lista de
+gaps de tests). Jorge eligió alcance CRITICAL + HIGH.
+
+**CRITICAL fixes** (commit `9c20c3fe`):
+
+1. **Install rollback post-symlink** (`bin/laia-install`,
+   `infra/installer/lib/install.sh`): `inst_switch_symlink` captura el
+   target previo en `INST_SYMLINK_PREVIOUS`. `inst_install_rollback_trap`
+   registra un EXIT trap (ERR no fire en `die` que llama `exit` directo)
+   que revierte el symlink si cualquier paso post-symlink falla.
+   `inst_clear_rollback_trap` desarma al éxito.
+
+2. **LXD waitready honesto** (`bootstrap.sh:74-94`): el loop de 60s
+   ahora trackea `lxd_ready`; si timeout sin éxito, `die` con mensaje
+   claro + apuntador al journalctl. Antes "salía silenciosamente" y
+   `lxd init --auto` corría contra daemon no-listo.
+
+3. **SSHPASS via -f file, no -e env** (`bin/laia-clone`,
+   `clone.sh`): `resolve_ssh_pass_file` reubica el secreto en
+   `/run/laia-clone-XXXX/sshpass` (0600, tmpfs preferido). Todas las
+   invocaciones de sshpass usan `-f $CLONE_SSHPASS_FILE`. EXIT trap
+   scrub. Antes `export SSHPASS` lo dejaba visible en `ps -e`.
+
+4. **UID mapping verification** (`clone.sh::clone_phase_h_fix_uid_mapping`):
+   muere con exit 5 + mensaje claro si `lxc info laia-agora` falla o
+   `volatile.idmap.base` está vacío. Antes caía a hardcoded 1000000,
+   corrompiendo ownership en silent.
+
+5. **Clone phase markers + resume robusto** (`clone.sh`, `bin/laia-clone`):
+   nuevos `clone_phase_mark_start` / `mark_done` / `should_skip` en
+   `$LAIA_HOME/.clone-state/<phase>.done` (byte-vacío, md5-estable).
+   Aplicado a rsync-agora, rsync-users, rsync-arch, rsync-arch-creds.
+   `--resume` ahora salta solo phases con marker. Heurística legacy
+   (agora.db con ≥ 20 tablas) sigue como safety-net que sintetiza marker.
+
+**HIGH fixes** (commit `a1fd7546`):
+
+6. **verify deeper** (`clone_phase_h_verify`): query agora.db por
+   tablas (≥ 10) y users (≥ 1). Antes solo `lxc list` + `curl health`,
+   que pasaban con DB corrupta.
+7. **SSH connect timeout configurable** (`clone.sh:240`):
+   `LAIA_SSH_TIMEOUT` (default 15s, antes hardcoded 5s).
+8. **admin reset schema validation** (`factory.sh::fact_reset_imported_admin_password`):
+   PRAGMA table_info antes del UPDATE; die exit 6 si `users` no
+   existe o le faltan `username`/`password`.
+9. **sed anchor** (`clone_phase_h_rewrite_config_paths`): false alarm
+   del audit — el comportamiento actual es correcto (`paths:` nesta las
+   keys; los comentarios `#` no se ven afectados porque `#` no es
+   `[[:space:]]`). Reverted con comentario explicativo inline.
+
+**Tests + VM smoke** (commit `d06aee97`):
+
+- Nuevo `tests/installer/test_clone_hardening.sh` (6 asserts) cubre las
+  primitivas de phase markers, `LAIA_SSH_TIMEOUT`, schema validation, y
+  guards anti-`export SSHPASS`.
+- `tests/installer/vm-wizard-e2e.sh` actualizado a `bin/laia wizard` (Fase 4).
+- Nuevo `workflow/plans/2026-05-25-installer-vm-smoke.md` con guía
+  paso-a-paso para Jorge: comandos Multipass, qué verificar, dónde
+  mirar si falla.
+
+**Tests:** `tests/installer/run_all.sh` **30/30** verde (29 prior +
+test_clone_hardening). `pytest .laia-core/tests/test_tui_app.py` 7/7.
+
+**Pendiente (decisiones-de-Jorge antes de Fase 5)**:
+- Validación VM real (ver plan VM smoke).
+- HIGH #11 (centralizar logs de factory bootstrap a
+  `~/.cache/laia-wizard/runs/`) — diferido por scope.
+- Decisión sobre `flows/connectivity.py` (todavía modo oculto).
+- Decisión sobre la semántica de `ssh_auth_mode='setup'` (pre-existing
+  failure de test).
+
+---
+
 ## 2026-05-25 — Runner de integridad por capas (codex)
 
 - Añadido `tests/run_integrity.py`, runner stdlib-only con tiers `static`,
