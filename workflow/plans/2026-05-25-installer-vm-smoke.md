@@ -65,18 +65,71 @@ curl -fsSL \
 
 ## Smoke 2 — Clone desde la VM smoke a una segunda VM (~15-20 min)
 
-Levanta una segunda VM (`laia-smoke-clone`) limpia, copia tu SSH key de
-la VM cliente a la VM `laia-smoke` (origen), y dentro de la nueva VM:
+**Atención a los placeholders**: cada `<algo>` en los snippets de abajo
+es una variable que tienes que sustituir por un valor real ANTES de
+pegar el comando. Pegar literal `<algo>` te dará errores de bash
+("No such file or directory"). Si dudas, copia la línea a un editor,
+sustituye, y pega después.
+
+### Paso 1: asegúrate de tener una SSH key
 
 ```bash
-# En la VM cliente, copia tu key a la VM origen:
-multipass exec laia-smoke -- bash -c 'mkdir -p ~/.ssh && cat >> ~/.ssh/authorized_keys' < ~/.ssh/id_ed25519.pub
+ls -la ~/.ssh/id_ed25519.pub ~/.ssh/id_rsa.pub 2>/dev/null
+```
 
-# Dentro de laia-smoke-clone:
+Si no hay ninguna, genera una nueva (sin passphrase para automatizar):
+
+```bash
+ssh-keygen -t ed25519 -N "" -f ~/.ssh/id_ed25519
+```
+
+Toma nota de cuál usas (la mayoría usará `~/.ssh/id_ed25519.pub`).
+
+### Paso 2: averigua la IP de la VM origen
+
+```bash
+multipass info laia-smoke | grep IPv4
+```
+
+Te dará algo tipo `IPv4: 10.151.42.50`. Apunta esa IP — la usarás en
+el paso 4 sustituyendo `<IP-LAIA-SMOKE>`.
+
+### Paso 3: levanta la VM destino y copia tu key a la origen
+
+```bash
+# Levanta destino (si no la tienes ya):
+multipass launch 26.04 --name laia-smoke-clone --memory 4G --disk 30G --cpus 2
+
+# Copia tu key pública a laia-smoke (la VM ORIGEN) para que clone pueda
+# autenticarse por SSH sin password. Sustituye id_ed25519.pub por la
+# que tengas si es distinta:
+multipass exec laia-smoke -- bash -c \
+  'mkdir -p ~/.ssh && chmod 700 ~/.ssh && cat >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys' \
+  < ~/.ssh/id_ed25519.pub
+
+# Verifica que SSH funciona desde tu host (NO desde la VM):
+ssh -o StrictHostKeyChecking=accept-new ubuntu@<IP-LAIA-SMOKE> "hostname"
+# Debe imprimir 'laia-smoke' sin pedirte password.
+```
+
+### Paso 4: entra a laia-smoke-clone y lanza el clone
+
+```bash
+multipass shell laia-smoke-clone
+```
+
+Dentro de la VM destino, sustituye `<IP-LAIA-SMOKE>` por la IP del
+paso 2 (ejemplo: `10.151.42.50`):
+
+```bash
 curl -fsSL \
   https://raw.githubusercontent.com/JorgeMP-3/laia-arch/feat/installer-wizard/install.sh \
-  | sudo -E bash -s -- --mode clone --source ubuntu@<IP-de-laia-smoke> --yes
+  | sudo -E bash -s -- --mode clone --source ubuntu@<IP-LAIA-SMOKE> --yes
 ```
+
+Si el `<IP-LAIA-SMOKE>` queda literal el comando falla con
+`bash: IP-LAIA-SMOKE: No such file or directory`. Sustituye SIEMPRE
+antes de pegar.
 
 **Verificaciones**:
 
@@ -91,24 +144,27 @@ curl -fsSL \
 
 ## Smoke 3 — Resume tras Ctrl+C (~5 min)
 
+Sustituye `<IP-LAIA-SMOKE>` por la IP real de la VM origen.
+
 ```bash
-# Lanza un clone y mata con Ctrl+C tras 30 s:
+# Dentro de laia-smoke-clone, lanza un clone y mata con Ctrl+C tras 30s.
+# El kill simula una caída de red o el operador cancelando.
 sudo bash -c '
-  /home/ubuntu/LAIA/bin/laia clone --source ubuntu@<IP-origen> --yes &
+  /home/ubuntu/LAIA/bin/laia clone --source ubuntu@<IP-LAIA-SMOKE> --yes &
+  pid=$!
   sleep 30
-  kill -INT $!
-  wait $! 2>/dev/null
+  kill -INT "$pid"
+  wait "$pid" 2>/dev/null
 '
 
-# Las phases que SÍ completaron deben tener marker:
-ls ~/.laia/.clone-state/
+# Las phases que SÍ completaron deben tener marker (archivo vacío .done):
+ls -la ~/.laia/.clone-state/ 2>/dev/null || sudo ls -la /root/.laia/.clone-state/
 
-# Re-ejecuta con --resume:
-sudo /home/ubuntu/LAIA/bin/laia clone --source ubuntu@<IP-origen> --yes --resume
+# Re-ejecuta con --resume — debe saltar las phases ya marcadas:
+sudo /home/ubuntu/LAIA/bin/laia clone --source ubuntu@<IP-LAIA-SMOKE> --yes --resume
 
-# El log debe mostrar:
+# El log debe mostrar, para cada phase con marker:
 #   "Phase H xxx data already complete (resume); skipping"
-# para cada phase que YA estaba marcada.
 ```
 
 ## Cómo reportar resultados
