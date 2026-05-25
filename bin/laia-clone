@@ -313,8 +313,6 @@ clone_install_first_if_needed() {
     else
       sudo rm -rf "$prefix" "$root"/laia-v*
     fi
-  elif [[ -e "$prefix" ]]; then
-    return 0
   fi
 
   if inst_is_override_mode && [[ -z "${LAIA_INSTALL_ROOT_OVERRIDE:-}" ]]; then
@@ -322,22 +320,52 @@ clone_install_first_if_needed() {
     return 0
   fi
 
+  # Decide what still needs to be done. /opt/laia and the LXD images are
+  # independent — a previous attempt may have installed the host files but
+  # died before (or during) image builds (e.g. SIGTTIN before we added -T,
+  # or a network drop). Each is checked separately so resumes don't skip
+  # the missing half.
+  local need_host=true
+  local need_images=true
+  if [[ -e "$prefix" && "$needs_clean" != true ]]; then
+    need_host=false
+  fi
+  if command -v lxc >/dev/null 2>&1 \
+       && lxc image info laia-agora >/dev/null 2>&1 \
+       && lxc image info laia-agent >/dev/null 2>&1; then
+    need_images=false
+  fi
+
+  if [[ "$need_host" == false && "$need_images" == false ]]; then
+    log_info "Install-first: /opt/laia and LXD images already present — skipping"
+    return 0
+  fi
+
   log_step "Install-first"
-  local version
-  version="$(detect_version "$LAIA_ROOT" "" 2>/dev/null || printf 'v0.0.0-clone\n')"
 
-  "$LAIA_ROOT/bin/laia-install" \
-    --from-local "$LAIA_ROOT" \
-    --version "$version" \
-    --minimal \
-    --skip-pip \
-    --skip-frontend \
-    --yes || die "install-first laia-install --minimal failed"
+  if [[ "$need_host" == true ]]; then
+    local version
+    version="$(detect_version "$LAIA_ROOT" "" 2>/dev/null || printf 'v0.0.0-clone\n')"
 
-  boot_detect_arch
-  boot_check_lxd_installed
-  boot_init_defaults
-  boot_build_images
+    "$LAIA_ROOT/bin/laia-install" \
+      --from-local "$LAIA_ROOT" \
+      --version "$version" \
+      --minimal \
+      --skip-pip \
+      --skip-frontend \
+      --yes || die "install-first laia-install --minimal failed"
+  else
+    log_info "  /opt/laia already installed — skipping host install"
+  fi
+
+  if [[ "$need_images" == true ]]; then
+    boot_detect_arch
+    boot_check_lxd_installed
+    boot_init_defaults
+    boot_build_images
+  else
+    log_info "  LXD images laia-agent + laia-agora present — skipping build"
+  fi
 }
 
 # ─── Main ───────────────────────────────────────────────────────────────────
