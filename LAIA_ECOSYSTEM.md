@@ -321,7 +321,7 @@ de usuarios sin permiso.
 
 > 📅 Sección añadida 2026-05-21 — Define las locations definitivas y el contrato de `laia-install` / `laia-clone`. Reemplaza cualquier referencia previa a `~/.laia/` como home operacional de LAIA-ARCH.
 
-El sistema tiene **tres locations** con propósitos no solapados. Cada una con su semántica de clone y sus permisos. Confundirlas lleva a `agora.db` duplicados y `laia-clone` ambiguo (ver §8.5 contrato).
+El sistema tiene **tres locations** con propósitos no solapados. Cada una con su semántica de clone y sus permisos. Confundirlas lleva a `agora.db` duplicados y `laia-clone` ambiguo (ver §8.6 contrato).
 
 ### 8.1 — `/opt/laia/` — Código del producto
 
@@ -364,16 +364,20 @@ Toda la verdad operacional del producto. Bind-mounted a los containers correspon
 │       ├── workspace/               → agent-<slug>:/var/lib/laia/workspace
 │       └── plugins/                 → agent-<slug>:/opt/laia/plugins
 │
-├── arch/                            ← datos operacionales del LAIA-ARCH (NO sensibles)
-│   ├── workspaces/                  (workspaces personales de Jorge ARCH)
-│   ├── memories/                    (memorias persistentes)
-│   ├── learnings/                   (aprendizajes acumulados)
+├── arch/                            ← runtime sensible/operacional de LAIA-ARCH
 │   ├── cron/                        (jobs programados)
 │   ├── sessions/                    (historial de sesiones)
+│   ├── sandboxes/                   (ejecución temporal / peligrosa)
+│   ├── atlas/                       (snapshot de paths)
+│   ├── logs/                        (logs operacionales)
+│   ├── platforms/                   (estado/config de integraciones)
+│   ├── orchestrator-runs/           (logs/state de orquestaciones)
+│   ├── migration/                   (artefactos de migración)
+│   ├── whatsapp/                    (state de WhatsApp si aplica)
 │   ├── state.db                     (workspace store de Jorge ARCH)
+│   ├── response_store.db            (store interno de respuestas)
 │   ├── SOUL.md                      (identidad del LAIA-ARCH)
-│   ├── config.yaml                  (config no sensible)
-│   └── skills/                      (skills personales que Jorge desarrolla)
+│   └── config.yaml                  (config operacional)
 │
 ├── backups/
 └── state/
@@ -382,7 +386,25 @@ Toda la verdad operacional del producto. Bind-mounted a los containers correspon
 - **Creado por:** `laia-install` crea estructura vacía. `laia-clone` rsynchea contenido desde origen.
 - **Permisos:** root:laia-arch 0750 a nivel `/srv/laia/`, subdirs con UID/GID mapeado a las idmaps LXD del destino tras `clone_phase_h_fix_uid_mapping`.
 
-### 8.3 — `/home/laia-arch/.laia/` — Credenciales sensibles del LAIA-ARCH
+### 8.3 — `/home/laia-arch/LAIA-ARCH/` — Mesa viva de LAIA-ARCH
+
+Datos interactivos que Jorge/LAIA-ARCH crea, edita, instala o reorganiza con frecuencia.
+Owner `laia-arch`, mode 0700. Es el `LAIA_HOME` humano del operador.
+
+```
+/home/laia-arch/
+└── LAIA-ARCH/
+    ├── workspaces/                  (workspaces personales de Jorge ARCH)
+    ├── memories/                    (memorias persistentes editables)
+    ├── skills/                      (skills personales que Jorge desarrolla)
+    └── plugins/                     (plugins personales que Jorge desarrolla)
+```
+
+**NO contiene:** sesiones, sandboxes, atlas, cron, logs, SOUL.md, config.yaml,
+state.db, response_store.db, `.env`, `auth.json`. Eso vive en `/srv/laia/arch/`
+o en el directorio de credenciales legacy de §8.4.
+
+### 8.4 — `/home/laia-arch/.laia/` — Credenciales sensibles del LAIA-ARCH
 
 SOLO información sensible. Mode 0600. Es el único directorio del HOME relevante para el ecosistema LAIA. Bind-mounted readonly al container `laia-agora` para que el backend pueda leer `auth.json` sin reescribirlo.
 
@@ -394,11 +416,14 @@ SOLO información sensible. Mode 0600. Es el único directorio del HOME relevant
     └── admin-session.json           (sesión activa LAIA-ARCH en AGORA)
 ```
 
-**NO contiene:** workspaces, memories, learnings, cron, sessions, SOUL.md, state.db, config.yaml, skills, mlx-servers, cache, logs, bin, checkpoints. Esos viven en `/srv/laia/arch/` (datos operacionales) o no existen (runtime regenerable).
+**NO contiene:** workspaces, memories, skills, plugins, cron, sessions, SOUL.md,
+state.db, response_store.db, config.yaml, mlx-servers, cache, logs, bin,
+checkpoints. Esos viven en `/home/laia-arch/LAIA-ARCH/`, `/srv/laia/arch/` o
+no existen (runtime regenerable).
 
 - **Creado por:** `laia-install` inicializa con placeholders. `laia-clone` rsynchea sólo los 3 archivos sensibles, mode 0600.
 
-### 8.4 — Lo que NO está en ningún sitio del producto
+### 8.5 — Lo que NO está en ningún sitio del producto
 
 Estos archivos pueden existir en el origen pero NO forman parte de LAIA. NO se transfieren:
 
@@ -407,7 +432,7 @@ Estos archivos pueden existir en el origen pero NO forman parte de LAIA. NO se t
 - `~/.hermes.*`, `~/.claude-cuenta*`, `~/snap`, `~/.vscode-server` — residuos del operador, no del producto.
 - Containers LXD legacy (`laia-<slug>` con naming viejo, containers stopped sin uso) — el filtro `clone_phase_h_enumerate_slugs` solo enumera slugs presentes en `agora.db`.
 
-### 8.5 — Contrato de transferencia `laia-clone`
+### 8.6 — Contrato de transferencia `laia-clone`
 
 Tabla canónica de qué cruza la red en una migración:
 
@@ -416,7 +441,8 @@ Tabla canónica de qué cruza la red en una migración:
 | `/opt/laia/` | NO | `laia-install` recrea en destino | Versionado limpio |
 | `/srv/laia/agora/` | **SÍ** | rsync íntegro | Incluye `agora.db` (fuente única) |
 | `/srv/laia/users/<slug>/{home,workspace,plugins}` | **SÍ** | rsync por slug enumerado de `agora.db` | UID/GID re-mapeados |
-| `/srv/laia/arch/` | **SÍ** | rsync íntegro | Workspaces, memories, learnings, cron de Jorge ARCH |
+| `/srv/laia/arch/` | **SÍ** | rsync sensible/runtime | SOUL, config, sessions, sandboxes, atlas, cron, logs, DBs internas |
+| `/home/laia-arch/LAIA-ARCH/{workspaces,memories,skills,plugins}` | **SÍ** | rsync live ARCH | Zona editable/interactiva del operador |
 | `/srv/laia/backups/`, `/srv/laia/state/` | **SÍ** | rsync íntegro | |
 | `~/.laia/auth.json` | **SÍ** | rsync único archivo, mode 0600 | Canonical |
 | `~/.laia/.env` | **SÍ** | rsync único archivo, mode 0600 | Secretos |
@@ -426,7 +452,7 @@ Tabla canónica de qué cruza la red en una migración:
 | Containers vía `lxc export/import` | NO | — | Rompe arm64↔amd64; se reconstruyen locales |
 | Snapshots LXD legacy | NO | — | No enumerados |
 
-### 8.6 — Flujo `laia-install` (producto comercial)
+### 8.7 — Flujo `laia-install` (producto comercial)
 
 ```
 Cliente con Ubuntu limpio
@@ -436,7 +462,7 @@ Cliente con Ubuntu limpio
   └─ Resultado: factory-default vivo, listo para alta de empleados via UI
 ```
 
-### 8.7 — Flujo `laia-clone` (migración entre máquinas — PULL pattern)
+### 8.8 — Flujo `laia-clone` (migración entre máquinas — PULL pattern)
 
 **Patrón pull:** `laia-clone` se ejecuta EN el servidor nuevo (destino), apuntando con `--source` al viejo (origen). El nuevo se autoinstala primero y luego tira los datos del viejo por SSH. NUNCA se ejecuta desde el origen empujando hacia el destino.
 
@@ -446,7 +472,11 @@ Cliente con Ubuntu limpio
 - Cross-arch (arm64 origen → amd64 destino) funciona porque la reconstrucción se hace en el destino con su arch nativa.
 - Terminas logueado en el destino, listo para configurar nginx/dominio sin volver al origen.
 
-**Path remapping en transit:** el origen puede tener layout dev (datos operacionales del ARCH en `~/.laia/`) o layout factory (`/srv/laia/arch/`). El clone normaliza siempre al layout factory en destino. Esto significa que `laia-clone` lee de cualquiera de las dos locations en el viejo y escribe a `/srv/laia/arch/` en el nuevo.
+**Path remapping en transit:** el origen puede tener layout dev (datos del ARCH en `~/.laia/`) o layout factory (`/srv/laia/arch/` + `/home/laia-arch/LAIA-ARCH/`). El clone normaliza siempre al layout factory en destino:
+
+- `workspaces`, `memories`, `skills`, `plugins` → `/home/laia-arch/LAIA-ARCH/`.
+- `SOUL.md`, `config.yaml`, `sessions`, `sandboxes`, `atlas`, `cron`, `logs`, DBs internas y runtime sensible → `/srv/laia/arch/`.
+- Credenciales (`auth.json`, `.env`) → `/home/laia-arch/.laia/` mientras AGORA siga montándolas desde ahí.
 
 ```
 Viejo (origen, contactado por SSH)        Nuevo (destino, ejecuta el comando)
@@ -457,12 +487,14 @@ Viejo (origen, contactado por SSH)        Nuevo (destino, ejecuta el comando)
   /srv/laia/agora/         ◄── rsync ─── /srv/laia/agora/
   /srv/laia/users/<slug>/  ◄── rsync ─── /srv/laia/users/<slug>/
                                                 │
-  Datos operacionales ARCH (con remap):
+  Datos LAIA-ARCH (con remap):
     /srv/laia/arch/         (si existe)
-    o ~/.laia/{workspaces,memories,cron,sessions,
+    o ~/.laia/{workspaces,memories,skills,plugins,
+                cron,sessions,sandboxes,logs,
                 state.db,SOUL.md,config.yaml,
-                atlas,platforms,plugins,...}
-                            ◄── rsync ─── /srv/laia/arch/<dir>
+                atlas,platforms,...}
+                            ◄── rsync ─── /home/laia-arch/LAIA-ARCH/<live-dir>
+                                          /srv/laia/arch/<runtime-dir>
                                           (+ rewrite paths: en config.yaml)
                                                 │
   Credenciales sensibles:

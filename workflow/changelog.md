@@ -15,6 +15,18 @@ Formato:
 
 ---
 
+## 2026-05-25 — LAIA_ECOSYSTEM canonicaliza layout LAIA-ARCH (codex)
+
+- Actualizado `LAIA_ECOSYSTEM.md` §8 para que el documento canónico refleje
+  el split ya implementado en `laia-clone`: `workspaces`, `memories`,
+  `skills` y `plugins` viven en el `LAIA_HOME` editable del operador,
+  mientras `SOUL.md`, `config.yaml`, `sessions`, `sandboxes`, `atlas`,
+  `cron`, `logs` y DBs internas quedan en `/srv/laia/arch`.
+- El contrato de transferencia de `laia-clone` queda alineado con los tests
+  `test_clone_phase_h.sh` y `test_path_rewrite_cross_user.sh`.
+- No se cambiaron rutas de credenciales (`auth.json`, `.env`); siguen
+  documentadas como compatibilidad legacy en `~/.laia/`.
+
 ## 2026-05-25 — Split LAIA-ARCH live data vs sensitive runtime (codex)
 
 - Ajustado `laia-clone` para separar datos legacy de LAIA-ARCH:
