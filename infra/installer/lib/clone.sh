@@ -215,22 +215,6 @@ clone_ensure_sshpass() {
   laia_run_interruptible env DEBIAN_FRONTEND=noninteractive apt-get install -y sshpass
 }
 
-clone_prompt_ssh_password() {
-  [[ -r /dev/tty && -w /dev/tty ]] || \
-    die "SSH to $OPT_SOURCE failed and no TTY is available to ask for a password" 3
-
-  clone_ensure_sshpass
-
-  local password
-  printf 'SSH password for %s: ' "$OPT_SOURCE" >/dev/tty
-  IFS= read -r -s password </dev/tty
-  printf '\n' >/dev/tty
-  [[ -n "$password" ]] || die "SSH password cannot be empty" 3
-
-  export SSHPASS="$password"
-  CLONE_SSH_USE_PASSWORD=true
-}
-
 clone_source_path_exists() {
   local path="$1"
   if clone_is_local_source; then
@@ -254,12 +238,11 @@ clone_preflight() {
   else
     command -v ssh >/dev/null 2>&1 || die "ssh not installed (apt install openssh-client)" 3
     if ! clone_ssh -o ConnectTimeout=5 "$OPT_SOURCE" true 2>/dev/null; then
-      log_warn "SSH key auth to $OPT_SOURCE failed; asking for SSH password"
-      clone_prompt_ssh_password
-      if ! clone_ssh -o ConnectTimeout=5 "$OPT_SOURCE" true 2>/dev/null; then
+      if [[ "${CLONE_SSH_USE_PASSWORD:-false}" == "true" ]]; then
         unset SSHPASS
-        die "SSH to $OPT_SOURCE failed. Test: $(clone_ssh_transport) $OPT_SOURCE true" 3
+        die "SSH to $OPT_SOURCE failed with the supplied password. Re-run the wizard and verify the credentials." 3
       fi
+      die "SSH key auth to $OPT_SOURCE failed. Re-run the wizard and choose 'Password SSH' or 'Generate and copy key'. (Test: $(clone_ssh_transport) $OPT_SOURCE true)" 3
     fi
     log_success "SSH to $OPT_SOURCE works"
   fi
