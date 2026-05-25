@@ -30,6 +30,25 @@ añade una línea `- **Resuelto**: 2026-MM-DD en commit <hash>`.
 
 ---
 
+## backend-suite-laia-chat-test-leak (open)
+
+- **Descubierto**: 2026-05-25 por codex durante `tests/run_integrity.py --tier unit`
+  fuera del sandbox.
+- **Síntoma**: la suite completa de `services/agora-backend/tests/` falla en
+  `test_laia_chat_endpoint_employee_uses_base_toolset` y
+  `test_laia_chat_endpoint_admin_streams`. El SSE devuelve
+  `worker crashed: test_session_id_defaults_to_user_scoped.<locals>._capture()
+  got an unexpected keyword argument 'mode'`.
+- **Causa raíz sospechada**: fuga de monkeypatch/callback entre tests del chat
+  engine y tests de LAIA coordinator, o singleton de AgentPool/chat worker no
+  reseteado entre casos.
+- **Reproducción**:
+  `cd services/agora-backend && .venv/bin/python -m pytest tests/ -q`.
+- **Workaround**: ejecutar los ficheros afectados de forma aislada para diagnosis;
+  la suite completa sigue siendo roja hasta resetear el estado compartido.
+- **Owner**: sin asignar.
+- **Estado**: open.
+
 ## install-wizard-ui-tests-stale (resolved)
 
 - **Descubierto**: 2026-05-25 por codex durante la implementación del runner de
@@ -116,7 +135,7 @@ añade una línea `- **Resuelto**: 2026-MM-DD en commit <hash>`.
 - **Pendiente relacionado**: la carpeta `~/laia-partial-install.02XwlG/` que motivó el
   bloque sigue existiendo en el home. Decisión sobre borrarla, abierta — ver changelog.
 
-## wizard-prompts-sin-contexto (open)
+## wizard-prompts-sin-contexto (resolved)
 
 - **Descubierto**: 2026-05-25 por Jorge durante prueba del wizard.
 - **Síntoma**: prompts del wizard con defaults raros o sin default sin explicación
@@ -125,10 +144,23 @@ añade una línea `- **Resuelto**: 2026-MM-DD en commit <hash>`.
     pasa si lo dejas vacío vs si lo cambias.
   - "¿Mantener sesión de admin del viejo?" sin default y sin pista de qué teclear.
   - "¿Modo --resume (saltar fases ya completadas)?" sin default visible.
-- **Causa raíz sospechada**: los prompts del wizard no han sido revisados con UX como
-  objetivo. Heredados del modo CLI no-interactivo donde se asume conocimiento previo.
-- **Reproducción**: lanzar `laia-wizard` en cualquier modo, prestar atención a los
-  prompts.
+- **Causa raíz**: doble — la prosa de `help_text` era escasa, y la UI legacy
+  `rich.prompt` no renderizaba `help_text` de manera prominente aunque
+  estuviera. La data estaba ahí; la presentación no la mostraba.
+- **Resuelto**: 2026-05-25 — combinación de cambios en Fase 3 y Fase 4 del
+  remake del wizard:
+  - Fase 3 part 2 (commit `b31287b8`): `help_text` reescrito para los 3
+    campos en `flows/clone.py::_OPTIONS_SCREEN`. De 50-100 chars a 200-330
+    chars cada uno con guía explícita: bwlimit explica WAN vs LAN y qué
+    pasa con vacío; keep_session deja claro que `No` es recomendado y
+    describe el flujo de credenciales; resume tiene "primera vez? `No`"
+    up-front.
+  - Fase 4 part 1 (commit `58b6e88e`): la UI Textual es default; renderiza
+    `help_text` inline bajo el label de cada campo con estilo `field-help`
+    (color muted, padding consistente). La UI rich legacy se borró.
+- **Verificación**: cualquier `Field` con `help_text` ahora muestra ese texto
+  bajo el input en la UI Textual. Probar con `laia wizard --mode clone` y
+  ver las pantallas de opciones.
 - **Workaround**: dejar todo en default y rezar.
 - **Owner**: sin asignar.
 - **Estado**: open.

@@ -23,6 +23,82 @@ Formato:
   `make integrity`, `make integrity-deployed` y `make integrity-lxd-e2e`.
 - Creado `workflow/plans/integrity-tests.md` para dejar registrada la ejecución
   por fases y los gates de seguridad (`LAIA_RUN_LXD_E2E=1`, `LAIA_E2E_LLM_KEY`).
+- Verificación: `static` verde; `local-runtime` verde fuera del sandbox;
+  `lxd-e2e` y `llm-e2e` skippean sin flags; `unit` detecta dos problemas
+  existentes abiertos en `workflow/problems.md`.
+
+## 2026-05-25 (cont. 6) — Fase 4 del installer remake: Textual default + reorg de entrada (claude-code)
+
+Esta fase completa el remake del wizard salvo la Fase 5 (modo headless TOML
++ pirámide de tests).
+
+**Part 1 — Flip default + borrado de UI legacy** (commit `58b6e88e`):
+
+- Textual deja de ser opt-in; ahora es la UI por defecto del wizard.
+  `LAIA_UI=rich|dev|text` cae al fallback `_dev_ui` (stdin/stdout plano);
+  `--text-ui` mantiene el mismo papel; headless / `--yes` sigue por su
+  path independiente.
+- Borrados los 5 archivos de la capa rich legacy en
+  `.laia-core/laia_cli/install_wizard/ui/` — 959 LOC de UI muerta:
+  `__init__.py`, `components.py`, `console.py`, `progress.py`, `theme.py`.
+  `_load_ui` reemplazado por `_load_dev_ui` (one-liner).
+- Tests obsoletos eliminados con la capa que testeaban:
+  `tests/installer/test_wizard_yesno_input.sh`,
+  `tests/wizard/test_ui_{components,render,progress}.py`. La cobertura
+  equivalente vive en `.laia-core/tests/test_tui_app.py` contra el
+  FormScreen Textual.
+- Cierra `workflow/problems.md::install-wizard-ui-tests-stale` (flagged
+  por codex durante el runner de integridad — ahora con causa raíz y
+  resolución).
+- Detectado pero NO resuelto en esta fase:
+  `tests/wizard/test_clone_security.py::test_clone_execute_aborts_on_ssh_setup_mode`
+  falla con código pre-existente (commit `5e786ac5`). Asserta que
+  `ssh_auth_mode='setup'` debería abortar antes de invocar clone, pero el
+  flow continúa. Logged en `problems.md::clone-ssh-setup-mode-continues`
+  como decisión-de-Jorge pendiente.
+
+**Part 2 — Unificación bajo `bin/laia` + borrado de `bin/laia-wizard`**
+(commit `54062002`):
+
+- `bin/laia` (dispatcher existente que cubría install/clone/release/
+  rollback/init/status) absorbe 3 subcomandos nuevos:
+  - `laia wizard` — wizard interactivo (menú install/clone).
+  - `laia diagnose` — health check (read-only).
+  - `laia reset` — wipe (peligroso, doble confirmación).
+  Cada uno hace `exec python -m laia_cli.install_wizard [--mode <x>]`.
+- Borrado `bin/laia-wizard`. Su lógica de python-discovery (LAIA_ROOT,
+  venv prefencia, PYTHONPATH, log dir) se movió a `bin/laia`.
+- `install.sh:474` actualizado: `cmd=("$bin/laia" "wizard")` en lugar de
+  `cmd=("$bin/laia-wizard")`. Help text y comentarios consistentes.
+- El flow `flows/connectivity.py` NO se borró aún: ya no aparece en el
+  menú (Fase 3 lo quitó), pero sigue invocable via `--mode connectivity`
+  para scripts. La decisión "borrar definitivamente y inlinear como step
+  opcional en install/clone" queda abierta para sesión futura — clone
+  ya tiene SSH setup inline (`ssh_auth_mode='setup'`).
+
+**Cierre de bug**:
+
+- `workflow/problems.md::wizard-prompts-sin-contexto` cerrado como
+  resolved en esta sesión. Combinación de Fase 3 part 2 (help_text
+  expandido) + Fase 4 part 1 (Textual renderiza help_text inline bajo
+  cada label).
+
+**Pendiente para Fase 5**:
+
+- Implementar `headless.py` con `tomllib` para `laia install --config
+  wizard.toml --yes` sin TTY.
+- Env vars override: `LAIA_<FIELD_UPPER>=value`.
+- Tests pytest nuevos: validators (232 LOC sin cobertura), secret tmpfile,
+  TUI screens completas con `App.run_test()`.
+- E2E reducido a 2 smoke tests en VM (install + clone).
+- Cobertura Python: subir de ~0% a >60%.
+
+**Pendiente decisión-de-Jorge**:
+
+- ¿Borrar `flows/connectivity.py` y cambiar el aviso tailscale en
+  `flows/clone.py:86`?
+- ¿Cambiar la semántica de `ssh_auth_mode='setup'` a "setup-only,
+  abort después" (lo que pide el test de codex)?
 
 ## 2026-05-25 (cont. 5) — Fase 3 del installer remake: Textual UI opt-in (claude-code)
 

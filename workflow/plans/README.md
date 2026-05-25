@@ -35,8 +35,8 @@ Lo que puede salir mal y cómo mitigarlo.
 
 - [`2026-05-25-installer-textual-remake.md`](2026-05-25-installer-textual-remake.md)
   — Remake del wizard de instalación/clonado con Textual. **En curso**:
-  Fases 1-3 completadas (bug TTY cerrado, contrato JSON, Textual opt-in);
-  Fases 4-5 pendientes (flip default + borrado legacy; headless TOML +
-  tests). Owner: claude-code.
+  Fases 1-4 completadas (bug TTY cerrado, contrato JSON, Textual default,
+  legacy rich borrado, unificado bajo `bin/laia`); Fase 5 pendiente
+  (headless TOML + pirámide de tests). Owner: claude-code.
 - [`integrity-tests.md`](integrity-tests.md) — Runner de integridad por capas.
   Owner: codex.

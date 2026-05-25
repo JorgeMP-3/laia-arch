@@ -120,26 +120,39 @@ Commits: `3ecd44c4` (skeleton) + `b31287b8` (menú + help_text).
   `App.run_test()`. Cobre composición, value collection, `depends_on`,
   back/quit, ExecuteScreen con todos los `ProgressEvent` types. **7/7 verde.**
 
-#### Fase 4 — Flip default + borrado legacy + subcomandos (PENDIENTE, ~2 días)
+#### Fase 4 — Flip default + borrado legacy + subcomandos (COMPLETADA 2026-05-25)
 
-- Flip `LAIA_UI=textual` como default en `__main__.py`.
-- Borrar `ui/__init__.py`, `ui/components.py`, `ui/console.py`,
-  `ui/progress.py`, `ui/theme.py` (~959 LOC).
-- Decidir destino de `_headless_ui.py` y `_dev_ui.py`:
-  - Si Fase 5 cubre headless via TOML → borrar.
-  - Si no, mover `headless.py` a top-level y borrar `_dev_ui.py`.
-- Mover `flows/diagnose.py` → `.laia-core/laia_cli/diagnose.py`
-  (subcomando `laia diagnose`, Textual single-screen).
-- Mover `flows/reset.py` → `.laia-core/laia_cli/reset.py`
-  (subcomando `laia reset`, Textual modal con doble confirmación).
-- Borrar `bin/laia-wizard`; el shim único es `bin/laia` que despacha a
-  subcomandos.
-- Borrar `flows/connectivity.py`; inlinear el step como sub-screen opcional
-  dentro de `flows/install.py` y `flows/clone.py`. **Decisión abierta**:
-  ¿se pregunta siempre, o sólo si `ssh-keyscan` detecta que no hay key
-  válida al origen?
-- Actualizar `Makefile` y `install.sh` para no referenciar binarios borrados.
-- Cerrar bug `wizard-prompts-sin-contexto` en `workflow/problems.md`.
+Commits: `58b6e88e` (part 1) + `54062002` (part 2).
+
+- ✅ Flip `LAIA_UI=textual` como default en `__main__.py`.
+  `LAIA_UI=rich|dev|text` cae al fallback `_dev_ui`. `--text-ui`
+  sigue forzando `_dev_ui`.
+- ✅ Borrados los 5 archivos de `ui/` legacy (959 LOC neto).
+  `_load_ui` reemplazado por `_load_dev_ui` (one-liner).
+- ✅ `bin/laia-wizard` borrado. `bin/laia` absorbe los subcomandos
+  `wizard`, `diagnose`, `reset`. Cada uno hace
+  `exec python -m laia_cli.install_wizard [--mode <x>]`.
+- ✅ `install.sh:474` actualizado a `bin/laia wizard`. Help text y
+  comentarios consistentes.
+- ✅ Tests obsoletos eliminados:
+  `tests/installer/test_wizard_yesno_input.sh`,
+  `tests/wizard/test_ui_{components,render,progress}.py`. Cierra
+  `workflow/problems.md::install-wizard-ui-tests-stale`.
+- ✅ Bug `workflow/problems.md::wizard-prompts-sin-contexto` cerrado
+  (combinación de Fase 3 part 2 + Fase 4 part 1).
+
+**Diferido a sesión futura (decisiones-de-Jorge, NO bloquean Fase 5)**:
+
+- `flows/connectivity.py` se mantiene como modo oculto (no en menú,
+  invocable via `--mode connectivity`). El "inlinear como step opcional"
+  necesita decidir: ¿preguntar siempre, o sólo si `ssh-keyscan` falla?
+  Clone ya tiene SSH setup inline via `ssh_auth_mode='setup'`.
+- `flows/diagnose.py` y `flows/reset.py` NO se movieron a top-level
+  `laia_cli/{diagnose,reset}.py`. Razón: ya funcionan correctamente en
+  el engine; mover archivos sin cambiar comportamiento añade ruido.
+- `test_clone_security.py::test_clone_execute_aborts_on_ssh_setup_mode`
+  falla con expectativa pre-existente que Jorge no ha aprobado. Logged
+  en `problems.md::clone-ssh-setup-mode-continues`.
 
 #### Fase 5 — Modo headless + pirámide de tests (PENDIENTE, ~2-3 días)
 
