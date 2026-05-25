@@ -838,8 +838,15 @@ clone_phase_h_rebuild_agent_container() {
     emit_json_event step_done "clone:rebuild-agent:$slug" "Rebuild agent-$slug skipped in stub"
     return 0
   fi
-  LAIA_ROOT="$LAIA_ROOT" bash "$LAIA_ROOT/infra/lxd/scripts/rebuild-4-first-user.sh" \
-    --slug "$slug" --existing-user-only
+  # RUN_SMOKE=0: the in-rebuild-4 smoke uses hardcoded dev-admin credentials
+  # and doesn't see the clone's reset password (post-clone the admin password
+  # is a random string in $LAIA_HOME/.admin-credentials). clone_phase5_smoke
+  # does its own /api/health probe at the end; the deep smoke is a manual
+  # follow-up via `bash infra/dev/smoke-test.sh --slug $slug` once the
+  # operator has the new credentials.
+  LAIA_ROOT="$LAIA_ROOT" RUN_SMOKE=0 \
+    bash "$LAIA_ROOT/infra/lxd/scripts/rebuild-4-first-user.sh" \
+      --slug "$slug" --existing-user-only
   emit_json_event step_done "clone:rebuild-agent:$slug" "agent-$slug rebuilt"
 }
 

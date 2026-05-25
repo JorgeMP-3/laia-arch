@@ -27,6 +27,19 @@ STATE_DIR="${LAIA_STATE_DIR:-$HOME/.laia/state}"
 STATE_FILE="$STATE_DIR/laia-state-${SLUG}.json"
 [[ -f "$STATE_FILE" ]] || STATE_FILE="/tmp/laia-state-${SLUG}.json"
 
+# Resolve admin credentials. Default values are the dev defaults; if the
+# host was cloned, ~/LAIA-ARCH/.admin-credentials holds the username +
+# password that the clone reset to. Honor explicit env overrides first.
+ADMIN_USER="${ADMIN_USER:-jorge}"
+ADMIN_PASSWORD="${ADMIN_PASSWORD:-dev-admin}"
+ADMIN_CREDS_FILE="${LAIA_HOME:-$HOME/LAIA-ARCH}/.admin-credentials"
+if [[ -z "${ADMIN_USER_OVERRIDE:-}" && -z "${ADMIN_PASSWORD_OVERRIDE:-}" && -r "$ADMIN_CREDS_FILE" ]]; then
+  _au="$(awk -F: '/^username:/ {gsub(/^[[:space:]]+|[[:space:]]+$/,"",$2); print $2; exit}' "$ADMIN_CREDS_FILE" 2>/dev/null)"
+  _ap="$(awk -F: '/^password:/ {gsub(/^[[:space:]]+|[[:space:]]+$/,"",$2); print $2; exit}' "$ADMIN_CREDS_FILE" 2>/dev/null)"
+  [[ -n "$_au" ]] && ADMIN_USER="$_au"
+  [[ -n "$_ap" ]] && ADMIN_PASSWORD="$_ap"
+fi
+
 if [[ -t 1 ]]; then
   GRN='\033[1;32m'; YEL='\033[1;33m'; RED='\033[1;31m'; CYN='\033[1;36m'; RST='\033[0m'
 else GRN=''; YEL=''; RED=''; CYN=''; RST=''; fi
@@ -70,10 +83,11 @@ else
   fail "health no responde: $(cat /tmp/laia-smoke-health.err 2>/dev/null)"
 fi
 
-log "2/5 login admin"
+log "2/5 login admin (user=$ADMIN_USER)"
 ADMIN_JSON="$(curl -fsS -X POST "$API_URL/api/login" \
   -H 'Content-Type: application/json' \
-  -d '{"username":"jorge","password":"dev-admin"}' 2>/tmp/laia-smoke-admin.err || true)"
+  -d "$(jq -nc --arg u "$ADMIN_USER" --arg p "$ADMIN_PASSWORD" '{username:$u, password:$p}')" \
+  2>/tmp/laia-smoke-admin.err || true)"
 ADMIN_TOKEN="$(printf '%s' "$ADMIN_JSON" | jq -r '.access_token // empty' 2>/dev/null)"
 if [[ -n "$ADMIN_TOKEN" ]]; then ok "admin token obtenido"; else fail "admin login falló: $(cat /tmp/laia-smoke-admin.err 2>/dev/null)"; fi
 
