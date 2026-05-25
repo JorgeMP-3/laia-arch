@@ -266,19 +266,24 @@ clone_preflight() {
     # instructions instead of letting rsync fail with a cryptic error
     # halfway through.
     CLONE_REMOTE_SUDO=false
+    local _ssh_user="${OPT_SOURCE%@*}"
     if clone_ssh "$OPT_SOURCE" 'test -r /srv/laia/agora 2>/dev/null && test -r /srv/laia/users 2>/dev/null' >/dev/null 2>&1; then
       log_info "Source data readable by SSH user — no sudo escalation needed"
     elif clone_ssh "$OPT_SOURCE" 'sudo -n rsync --version >/dev/null 2>&1' >/dev/null 2>&1; then
       CLONE_REMOTE_SUDO=true
-      log_success "Source needs root for /srv/laia — NOPASSWD sudo detected, will use --rsync-path=\"sudo rsync\""
+      log_success "Source needs root for /srv/laia — NOPASSWD sudo detected, will use --rsync-path=sudo rsync"
     else
-      die "SSH user can't read /srv/laia on $OPT_SOURCE and has no NOPASSWD sudo for rsync.
+      die "SSH user '$_ssh_user' can't read /srv/laia on $OPT_SOURCE and has no NOPASSWD sudo for rsync.
    Fix on the SOURCE (one of):
-     a) Allow read for the SSH user (least invasive):
-        sudo chmod -R a+rX /srv/laia /home/$(echo \"$OPT_SOURCE\" | cut -d@ -f1)/LAIA-ARCH 2>/dev/null
-     b) Or enable NOPASSWD sudo for rsync (clean, reusable):
-        echo '$(echo \"$OPT_SOURCE\" | cut -d@ -f1) ALL=(root) NOPASSWD: /usr/bin/rsync' | sudo tee /etc/sudoers.d/laia-clone-rsync
-        sudo chmod 0440 /etc/sudoers.d/laia-clone-rsync
+     a) NOPASSWD sudo for rsync (recommended, reusable):
+          ssh $OPT_SOURCE
+          echo '$_ssh_user ALL=(root) NOPASSWD: /usr/bin/rsync' | sudo tee /etc/sudoers.d/laia-clone-rsync
+          sudo chmod 0440 /etc/sudoers.d/laia-clone-rsync
+          exit
+     b) Or grant read access (quick but coarse):
+          ssh $OPT_SOURCE
+          sudo chmod -R a+rX /srv/laia /home/$_ssh_user/LAIA-ARCH 2>/dev/null
+          exit
    Then re-run laia-clone." 3
     fi
     export CLONE_REMOTE_SUDO
