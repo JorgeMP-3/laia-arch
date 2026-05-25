@@ -98,11 +98,19 @@ clone_src_for() {
 
 # clone_rsync_base — common rsync options array. Mode-aware for -e ssh.
 # Sets a global array CLONE_RSYNC_OPTS the callers can extend.
+#
+# When CLONE_REMOTE_SUDO=true (set by clone_preflight after detecting the
+# SSH user can't read /srv/laia but has NOPASSWD sudo), --rsync-path is
+# set so the remote rsync runs as root. This makes hardened sources
+# (root-owned data dirs) work without manual chmod.
 clone_rsync_base_opts() {
   CLONE_RSYNC_OPTS=(-a --info=progress2,stats1,name1 --human-readable --outbuf=L)
   [[ -n "${OPT_BWLIMIT:-}" ]] && CLONE_RSYNC_OPTS+=(--bwlimit="$OPT_BWLIMIT")
   if ! clone_is_local_source; then
     CLONE_RSYNC_OPTS+=(-e "$(clone_ssh_transport)")
+    if [[ "${CLONE_REMOTE_SUDO:-false}" == "true" ]]; then
+      CLONE_RSYNC_OPTS+=(--rsync-path="sudo rsync")
+    fi
   fi
 }
 
@@ -248,6 +256,32 @@ clone_preflight() {
       die "SSH key auth to $OPT_SOURCE failed. Re-run the wizard and choose 'Password SSH' or 'Generate and copy key'. (Test: $(clone_ssh_transport) $OPT_SOURCE true)" 3
     fi
     log_success "SSH to $OPT_SOURCE works"
+
+    # Detect whether the SSH user can read LAIA's data dirs directly.
+    # `/srv/laia/agora` is root-owned in hardened production setups, so a
+    # non-root SSH user can't read it. We probe and, if it fails, try
+    # NOPASSWD sudo. If sudo works, all rsync invocations are auto-prefixed
+    # with --rsync-path="sudo rsync" so the remote rsync runs as root and
+    # has full read access. If neither works, we die with explicit fix
+    # instructions instead of letting rsync fail with a cryptic error
+    # halfway through.
+    CLONE_REMOTE_SUDO=false
+    if clone_ssh "$OPT_SOURCE" 'test -r /srv/laia/agora 2>/dev/null && test -r /srv/laia/users 2>/dev/null' >/dev/null 2>&1; then
+      log_info "Source data readable by SSH user — no sudo escalation needed"
+    elif clone_ssh "$OPT_SOURCE" 'sudo -n rsync --version >/dev/null 2>&1' >/dev/null 2>&1; then
+      CLONE_REMOTE_SUDO=true
+      log_success "Source needs root for /srv/laia — NOPASSWD sudo detected, will use --rsync-path=\"sudo rsync\""
+    else
+      die "SSH user can't read /srv/laia on $OPT_SOURCE and has no NOPASSWD sudo for rsync.
+   Fix on the SOURCE (one of):
+     a) Allow read for the SSH user (least invasive):
+        sudo chmod -R a+rX /srv/laia /home/$(echo \"$OPT_SOURCE\" | cut -d@ -f1)/LAIA-ARCH 2>/dev/null
+     b) Or enable NOPASSWD sudo for rsync (clean, reusable):
+        echo '$(echo \"$OPT_SOURCE\" | cut -d@ -f1) ALL=(root) NOPASSWD: /usr/bin/rsync' | sudo tee /etc/sudoers.d/laia-clone-rsync
+        sudo chmod 0440 /etc/sudoers.d/laia-clone-rsync
+   Then re-run laia-clone." 3
+    fi
+    export CLONE_REMOTE_SUDO
   fi
 
   # Local LAIA_HOME must exist — i.e. laia-install must have run.
@@ -324,13 +358,8 @@ __pycache__/
 node_modules/
 .tmp/
 *.swp
-EOF
-  if [[ "$OPT_WITH_MLX_MODELS" != true ]]; then
-    # Heavy local models — 1.4 GB on the dev box. Re-downloadable.
-    cat <<'EOF'
 mlx-servers/
 EOF
-  fi
 }
 
 _clone_excludes_users() {
@@ -1010,9 +1039,6 @@ clone_print_summary() {
   printf '  %sLXD containers:%s  rebuilt locally from destination images\n' "$C_BLD" "$C_RST"
   if [[ -n "$OPT_ONLY_AGENT" ]]; then
     printf '  %sOnly agent:%s      %s\n' "$C_BLD" "$C_RST" "$OPT_ONLY_AGENT"
-  fi
-  if [[ "$OPT_WITH_MLX_MODELS" == true ]]; then
-    printf '  %sMLX models:%s      included (heavy — %s\n)' "$C_BLD" "$C_RST" "mlx-servers/"
   fi
   printf '\n'
 }

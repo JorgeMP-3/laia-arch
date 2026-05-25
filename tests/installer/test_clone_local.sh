@@ -13,7 +13,7 @@
 #       logs/x.log        ← excluded
 #       gateway.pid       ← excluded
 #       __pycache__/x.pyc ← excluded
-#       mlx-servers/big   ← excluded unless --with-mlx-models
+#       mlx-servers/big   ← excluded (heavy local models, re-downloadable)
 #     users/
 #       jorge/home/.bashrc, jorge/home/.profile
 #       jorge/__pycache__/x.pyc  ← excluded by Phase 3
@@ -131,7 +131,7 @@ assert "cache/ excluded"           "$([[ ! -d $DLA/cache ]] && echo 0 || echo 1)
 assert "logs/ excluded"            "$([[ ! -d $DLA/logs ]] && echo 0 || echo 1)"
 assert "gateway.pid excluded"      "$([[ ! -f $DLA/gateway.pid ]] && echo 0 || echo 1)"
 assert "__pycache__ excluded"      "$([[ ! -d $DLA/__pycache__ ]] && echo 0 || echo 1)"
-assert "mlx-servers/ excluded (default)" "$([[ ! -d $DLA/mlx-servers ]] && echo 0 || echo 1)"
+assert "mlx-servers/ excluded"           "$([[ ! -d $DLA/mlx-servers ]] && echo 0 || echo 1)"
 
 # ── Phase 3 layout ────────────────────────────────────────────────────────
 echo
@@ -201,29 +201,10 @@ assert "all-file md5 unchanged across re-run (rsync is additive but stable)" \
   "$([[ "$md5_before" == "$md5_after" ]] && echo 0 || echo 1)"
 
 # ──────────────────────────────────────────────────────────────────────────
-# (D) --with-mlx-models flips the mlx-servers/ exclude
+# (D) Argument validation
 # ──────────────────────────────────────────────────────────────────────────
 echo
-echo "=== (D) --with-mlx-models includes heavy models ======================"
-
-# Wipe the LAIA-ARCH dest mlx-servers dir to confirm the next run creates it.
-rm -rf "$DLA/mlx-servers"
-
-if ! "$BIN/laia-clone" \
-    --source-dir "$SRC" --yes --no-lxd --with-mlx-models \
-    >"$TMPDIR_TEST/run-D.log" 2>&1; then
-  echo "✗ clone --with-mlx-models failed:"
-  cat "$TMPDIR_TEST/run-D.log"
-  exit 1
-fi
-assert "mlx-servers/big now copied (no longer excluded)" \
-  "$([[ -f $DLA/mlx-servers/big ]] && echo 0 || echo 1)"
-
-# ──────────────────────────────────────────────────────────────────────────
-# (E) Argument validation
-# ──────────────────────────────────────────────────────────────────────────
-echo
-echo "=== (E) argument validation =========================================="
+echo "=== (D) argument validation =========================================="
 
 # --source-dir + user@host together → error
 if "$BIN/laia-clone" --source-dir "$SRC" dummy@example.com --yes >/dev/null 2>&1; then

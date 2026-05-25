@@ -96,7 +96,7 @@ sleep 8
 # ── install OS deps ─────────────────────────────────────────────────────────
 
 info "installing OS packages"
-lxc exec "$BASE_CONTAINER" -- bash -lc '
+lxc exec -T "$BASE_CONTAINER" -- bash -lc '
   set -euo pipefail
   export DEBIAN_FRONTEND=noninteractive
   apt-get update -y
@@ -125,7 +125,7 @@ info "uploading source to container"
 lxc file push "$TAR" "$BASE_CONTAINER/tmp/laia-agora-src.tar.gz"
 
 info "extracting source to /opt/agora/app"
-lxc exec "$BASE_CONTAINER" -- bash -lc '
+lxc exec -T "$BASE_CONTAINER" -- bash -lc '
   set -euo pipefail
   mkdir -p /opt/agora/app /opt/agora/data /opt/agora/data/workspaces
   tar -xzf /tmp/laia-agora-src.tar.gz -C /opt/agora/app
@@ -136,7 +136,7 @@ lxc exec "$BASE_CONTAINER" -- bash -lc '
 # ── seed config.yaml so workspace-context activates with the collective ws ──
 
 info "seeding /opt/agora/data/config.yaml (workspace-context active = collective)"
-lxc exec "$BASE_CONTAINER" -- bash -lc '
+lxc exec -T "$BASE_CONTAINER" -- bash -lc '
   set -euo pipefail
   cat > /opt/agora/data/config.yaml <<"EOF"
 # Bootstrapped by build-agora-image.sh — overridden on first config edit.
@@ -154,7 +154,7 @@ EOF
 # ── build venv ──────────────────────────────────────────────────────────────
 
 info "building Python venv with agora-backend + .laia-core deps"
-lxc exec "$BASE_CONTAINER" -- bash -lc '
+lxc exec -T "$BASE_CONTAINER" -- bash -lc '
   set -euo pipefail
   python3 -m venv /opt/agora/venv
   /opt/agora/venv/bin/pip install --upgrade pip setuptools wheel
@@ -185,7 +185,7 @@ lxc exec "$BASE_CONTAINER" -- bash -lc '
 # ── install systemd unit ────────────────────────────────────────────────────
 
 info "fixing ownership for agora user (data dir + venv + app)"
-lxc exec "$BASE_CONTAINER" -- bash -lc '
+lxc exec -T "$BASE_CONTAINER" -- bash -lc '
   set -euo pipefail
   # The agora user needs RW on /opt/agora/data (bind mount source from
   # /srv/laia/agora — gets chowned again by create-agora.sh post-mount)
@@ -196,7 +196,7 @@ lxc exec "$BASE_CONTAINER" -- bash -lc '
 '
 
 info "installing hardened systemd unit for agora-backend"
-lxc exec "$BASE_CONTAINER" -- bash -lc '
+lxc exec -T "$BASE_CONTAINER" -- bash -lc '
   cat > /etc/systemd/system/agora-backend.service <<"EOF"
 [Unit]
 Description=AGORA Backend — orchestrator API + AIAgent pool

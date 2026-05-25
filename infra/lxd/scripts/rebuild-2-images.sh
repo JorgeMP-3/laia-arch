@@ -7,8 +7,8 @@
 # o en .laia-core/ requiere rebuild para entrar en efecto dentro de los
 # containers.
 #
-# Tardas ~5-8 min cada imagen en ARM aarch64 (apt update + pip install).
-# Total esperado: 10-15 min.
+# Tardas ~3-6 min cada imagen en amd64, ~5-10 min en arm64 (apt + pip).
+# Total esperado: 6-12 min (amd64), 10-20 min (arm64).
 #
 # Logs detallados: /tmp/build-base.log y /tmp/build-agora.log.
 
@@ -89,11 +89,15 @@ done
 
 # run_build <name> <script> <log>
 #   Streams output to stdout AND tee'd to log file, with a periodic heartbeat
-#   if the underlying build emits no output. Set LAIA_BUILD_QUIET=1 to fall
-#   back to silent-with-log (legacy behavior).
+#   that shows elapsed time and the last log line so the operator sees real
+#   progress (apt/pip don't emit anything for minutes at a time).
+#   Env:
+#     LAIA_BUILD_QUIET=1     → silent-with-log (legacy, for CI)
+#     LAIA_BUILD_HEARTBEAT=N → seconds between heartbeats (default 15)
 run_build() {
   local name="$1" script="$2" logf="$3"
   local quiet="${LAIA_BUILD_QUIET:-0}"
+  local interval="${LAIA_BUILD_HEARTBEAT:-15}"
   log "ejecutando $(basename "$script") — log: $logf (~5-10 min)"
   : >"$logf"
   if [[ "$quiet" == "1" ]]; then
@@ -104,14 +108,27 @@ run_build() {
     ok "imagen '$name' construida"
     return 0
   fi
-  # Heartbeat watchdog: prints a tick every 60s while parent shell is alive.
-  # Self-terminates when parent dies (kill -0 $$ fails), so no explicit reap
-  # needed if the script aborts ungracefully.
+  # Heartbeat watchdog: every $interval seconds while the parent is alive,
+  # print elapsed [MM:SS] + last non-empty line of $logf (ANSI-stripped,
+  # truncated to 100 chars). Self-terminates when parent dies.
+  local start_epoch
+  start_epoch="$(date +%s)"
   ( ppid=$$
     while kill -0 "$ppid" 2>/dev/null; do
-      sleep 60
-      printf "  ${CYN}…${RST} [%s] sigue construyendo %s (log: %s)\n" \
-        "$(date +%H:%M:%S)" "$name" "$logf"
+      sleep "$interval"
+      kill -0 "$ppid" 2>/dev/null || break
+      local now elapsed mm ss last
+      now="$(date +%s)"
+      elapsed=$(( now - start_epoch ))
+      mm=$(( elapsed / 60 )); ss=$(( elapsed % 60 ))
+      last="$(tail -n 5 "$logf" 2>/dev/null \
+              | tr -d '\r' \
+              | sed -E 's/\x1b\[[0-9;]*[a-zA-Z]//g' \
+              | grep -v '^[[:space:]]*$' \
+              | tail -n 1 \
+              | cut -c1-100)"
+      [[ -z "$last" ]] && last="(aún sin salida — apt/pip en silencio)"
+      printf "  ${CYN}…${RST} [%02d:%02d] %s · %s\n" "$mm" "$ss" "$name" "$last"
     done
   ) &
   local hb=$!
@@ -119,11 +136,14 @@ run_build() {
   LAIA_ROOT="$REPO" bash "$script" 2>&1 | tee "$logf" || rc=$?
   kill "$hb" 2>/dev/null || true
   wait "$hb" 2>/dev/null || true
+  local total mm ss
+  total=$(( $(date +%s) - start_epoch ))
+  mm=$(( total / 60 )); ss=$(( total % 60 ))
   if [[ "$rc" -ne 0 ]]; then
     echo "--- últimas 30 líneas de $logf ---"; tail -30 "$logf"
-    die "$(basename "$script") falló — ver $logf"
+    die "$(basename "$script") falló tras ${mm}m${ss}s — ver $logf"
   fi
-  ok "imagen '$name' construida"
+  ok "imagen '$name' construida en ${mm}m${ss}s"
 }
 
 # ────────────────────────────────────────────────────────────────────────────

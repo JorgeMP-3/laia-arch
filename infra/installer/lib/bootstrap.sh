@@ -66,7 +66,7 @@ boot_check_lxd_installed() {
   local sudo_cmd=""
   is_root || sudo_cmd="sudo"
 
-  log_info "snap install lxd (can take 1-3 min on aarch64; output streams below)"
+  log_info "snap install lxd (~30s on amd64, 1-3 min on aarch64; output streams below)"
   if ! laia_run_interruptible $sudo_cmd snap install lxd; then
     die "snap install lxd failed. Check 'sudo journalctl -u snapd -n 50' for details."
   fi
@@ -129,7 +129,7 @@ boot_build_images() {
   [[ -x "$script" || -f "$script" ]] || die "Missing bootstrap script: $script"
   log_info "Running: LAIA_ROOT=$LAIA_ROOT bash $script"
   log_info "  Build streams stdout + tees to /tmp/build-{base,agora}.log"
-  log_info "  Expected: 10-20 min on aarch64; heartbeat every 60s"
+  log_info "  Expected: ~6-12 min on amd64, 10-20 min on aarch64; heartbeat every 15s"
   log_info "  → if you suspect a hang, tail /tmp/build-*.log in another shell"
   LAIA_ROOT="$LAIA_ROOT" bash "$script" \
     || die "rebuild-2-images.sh failed → tail /tmp/build-base.log /tmp/build-agora.log"

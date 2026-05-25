@@ -93,11 +93,14 @@ sleep 8
 # ── install OS deps ─────────────────────────────────────────────────────────
 
 info "installing OS packages"
-lxc exec "$BASE_CONTAINER" -- bash -lc '
+lxc exec -T "$BASE_CONTAINER" -- bash -lc '
   set -euo pipefail
   export DEBIAN_FRONTEND=noninteractive
-  apt-get update -y
-  apt-get install -y --no-install-recommends \
+  # stdbuf -oL -eL forces line-buffered stdout/stderr so progress reaches the
+  # log in real time (without it, lxc exec keeps everything in apt buffers
+  # until the command finishes, making the build look hung from outside).
+  stdbuf -oL -eL apt-get update -y
+  stdbuf -oL -eL apt-get install -y --no-install-recommends \
     python3 python3-venv python3-pip \
     git curl ca-certificates jq sqlite3 ripgrep less \
     sudo
@@ -115,7 +118,7 @@ info "uploading executor source"
 lxc file push "$TAR" "$BASE_CONTAINER/tmp/laia-executor-src.tar.gz"
 
 info "installing laia-executor into /opt/laia-executor"
-lxc exec "$BASE_CONTAINER" -- bash -lc '
+lxc exec -T "$BASE_CONTAINER" -- bash -lc '
   set -euo pipefail
   tar -xzf /tmp/laia-executor-src.tar.gz -C /tmp/
   rm /tmp/laia-executor-src.tar.gz
@@ -124,7 +127,7 @@ lxc exec "$BASE_CONTAINER" -- bash -lc '
 '
 
 info "building python venv at /opt/laia-executor/venv"
-lxc exec "$BASE_CONTAINER" -- bash -lc '
+lxc exec -T "$BASE_CONTAINER" -- bash -lc '
   set -euo pipefail
   python3 -m venv /opt/laia-executor/venv
   /opt/laia-executor/venv/bin/pip install --upgrade pip setuptools wheel
@@ -135,7 +138,7 @@ ok "venv built"
 # ── install systemd unit ────────────────────────────────────────────────────
 
 info "installing laia-executor.service"
-lxc exec "$BASE_CONTAINER" -- bash -lc '
+lxc exec -T "$BASE_CONTAINER" -- bash -lc '
   set -euo pipefail
   install -m 0644 /opt/laia-executor/systemd/laia-executor.service \
       /etc/systemd/system/laia-executor.service
@@ -148,7 +151,7 @@ lxc exec "$BASE_CONTAINER" -- bash -lc '
 # ── smoke test (import only — service starts in create-agent.sh) ────────────
 
 info "smoke test: import laia_executor"
-lxc exec "$BASE_CONTAINER" -- bash -lc '
+lxc exec -T "$BASE_CONTAINER" -- bash -lc '
   set -euo pipefail
   /opt/laia-executor/venv/bin/python -c "
 import laia_executor

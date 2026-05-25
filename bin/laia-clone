@@ -38,7 +38,6 @@ OPT_SOURCE_DIR=""
 OPT_YES=false
 OPT_DRY_RUN=false
 OPT_WITH_TOOLS=false
-OPT_WITH_MLX_MODELS=false
 OPT_NO_LXD=false
 OPT_ONLY_AGENT=""
 OPT_KEEP_SESSION=false
@@ -88,7 +87,6 @@ OPTIONS
                           for laia-wizard password mode; avoids password argv.
     --with-tools          Also clone personal CLI configs (Claude Code, Codex,
                           OpenCode, .gitconfig, .pm2, .docker)
-    --with-mlx-models     Also clone heavy local models (LAIA-ARCH/mlx-servers/)
     --no-lxd              Compatibility no-op; containers are rebuilt locally.
     --only-agent <slug>   Rebuild only this agent container after data import.
     --preflight-only      Stop after source/destination checks.
@@ -148,7 +146,6 @@ parse_args() {
         export LAIA_JSON_PROGRESS=1
         shift ;;
       --with-tools)    OPT_WITH_TOOLS=true; shift ;;
-      --with-mlx-models) OPT_WITH_MLX_MODELS=true; shift ;;
       --no-lxd)        OPT_NO_LXD=true; shift ;;
       --preflight-only) OPT_PREFLIGHT_ONLY=true; shift ;;
       --resume)         OPT_RESUME=true; shift ;;
@@ -358,7 +355,6 @@ main() {
   log_step "laia-clone"
   log_info "Source:           ${OPT_SOURCE_DIR:-$OPT_SOURCE}"
   log_info "With tools:       $OPT_WITH_TOOLS"
-  log_info "With MLX models:  $OPT_WITH_MLX_MODELS"
   log_info "LXD containers:   rebuild locally"
   [[ -n "$OPT_ONLY_AGENT" ]] && log_info "Only agent:       $OPT_ONLY_AGENT"
   [[ -n "$OPT_BWLIMIT" ]] && log_info "Rsync bwlimit:    $OPT_BWLIMIT"
