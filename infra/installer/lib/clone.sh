@@ -237,7 +237,10 @@ clone_preflight() {
     log_success "Source (local): $OPT_SOURCE_DIR"
   else
     command -v ssh >/dev/null 2>&1 || die "ssh not installed (apt install openssh-client)" 3
-    if ! clone_ssh -o ConnectTimeout=5 "$OPT_SOURCE" true 2>/dev/null; then
+    # SSH connect timeout: default 15s (was hardcoded 5s, which gave
+    # false negatives on slow WAN links). Override via LAIA_SSH_TIMEOUT.
+    local _ssh_timeout="${LAIA_SSH_TIMEOUT:-15}"
+    if ! clone_ssh -o "ConnectTimeout=$_ssh_timeout" "$OPT_SOURCE" true 2>/dev/null; then
       if [[ "${CLONE_SSH_USE_PASSWORD:-false}" == "true" ]]; then
         # Secret will be scrubbed by the EXIT trap (clone_cleanup_sshpass_file).
         die "SSH to $OPT_SOURCE failed with the supplied password. Re-run the wizard and verify the credentials." 3
@@ -686,6 +689,11 @@ clone_phase_h_rewrite_config_paths() {
   #   - agora_data  → /srv/laia/agora/agora.db      (real bind-mounted DB)
   # Additionally, sweep any leftover /home/<user>/.laia/ literals to
   # /srv/laia/arch/ (covers other path keys the user may have customized).
+  # Note on the regex: `^[[:space:]]*` is INTENTIONAL — the canonical
+  # config.yaml nests the three keys under `paths:` (so they're indented
+  # by 2 spaces). Restricting to top-level only would break the rewrite.
+  # Commented lines (`#  laia_root: …`) don't match because `#` isn't
+  # whitespace, so anchored to `[[:space:]]*` is safe in practice.
   local sed_prog
   sed_prog='
     s#^([[:space:]]*laia_root:[[:space:]]*).*#\1/opt/laia#
@@ -840,8 +848,33 @@ clone_phase_h_verify() {
     emit_json_event step_done clone:verify-live "Live verify skipped in stub"
     return 0
   fi
+  # 1. Containers present.
   lxc list
-  curl -fsS "$LAIA_AGORA_HEALTH_URL" >/dev/null || die "AGORA health check failed"
+
+  # 2. AGORA health endpoint.
+  curl -fsS "$LAIA_AGORA_HEALTH_URL" >/dev/null \
+    || die "AGORA health check failed at $LAIA_AGORA_HEALTH_URL — backend container is up but health endpoint is unreachable." 6
+
+  # 3. agora.db structural integrity. A shallow `lxc list` + `curl health`
+  #    can pass while the DB itself was rsync'd partial. Require the users
+  #    table to exist and have ≥ 1 row (the admin we just reset). Without
+  #    this, a partially-clone-d DB would slip through as "verified".
+  local db tbl_count user_count
+  db="$(clone_dest_agora_dir)/agora.db"
+  if [[ -f "$db" ]] && command -v sqlite3 >/dev/null 2>&1; then
+    tbl_count="$(sqlite3 "$db" "select count(*) from sqlite_master where type='table';" 2>/dev/null || echo 0)"
+    if [[ "${tbl_count:-0}" -lt 10 ]]; then
+      die "agora.db has only $tbl_count tables — clone likely did not finish copying schema. Re-run with --resume after investigating." 6
+    fi
+    user_count="$(sqlite3 "$db" "select count(*) from users;" 2>/dev/null || echo 0)"
+    if [[ "${user_count:-0}" -lt 1 ]]; then
+      die "agora.db has 0 rows in users — at least the admin row should exist after fact_reset_imported_admin_password. Re-run with --resume." 6
+    fi
+    log_info "  agora.db: $tbl_count tables, $user_count users"
+  else
+    log_warn "  agora.db or sqlite3 missing — skipping DB integrity check"
+  fi
+
   emit_json_event step_done clone:verify-live "Live verify passed"
   log_success "Phase H verify passed"
 }

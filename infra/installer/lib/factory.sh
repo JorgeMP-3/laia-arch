@@ -187,6 +187,22 @@ fact_reset_imported_admin_password() {
     return 0
   fi
 
+  # Schema sanity: refuse to UPDATE if the users table doesn't have the
+  # columns we're about to mutate. A pre-pbkdf2 legacy DB or a corrupted
+  # clone would otherwise hit `sqlite3 UPDATE failed` with a vague message;
+  # we'd rather die clearly here so the operator knows the source DB is
+  # incompatible.
+  local users_cols
+  users_cols="$(sqlite3 "$db" "PRAGMA table_info(users);" 2>/dev/null || true)"
+  if [[ -z "$users_cols" ]]; then
+    die "agora.db has no 'users' table or sqlite3 cannot read it. The imported DB is incompatible with this LAIA version." 6
+  fi
+  for required in username password; do
+    if ! grep -qw "$required" <<<"$users_cols"; then
+      die "agora.db 'users' table is missing required column '$required'. Source DB schema is incompatible with this LAIA version." 6
+    fi
+  done
+
   # Find the canonical agora admin (first row by id; usernames may vary by deployment).
   local admin
   admin="$(sqlite3 "$db" "select username from users where role='agora_admin' and coalesce(active,1)=1 order by id limit 1;" 2>/dev/null || true)"
