@@ -42,6 +42,9 @@ USAGE
 SUBCOMMANDS
     install     Install LAIA on a clean host
     clone       Clone state from another LAIA server (data + LXD containers)
+    wizard      Interactive wizard (install or clone, menu-driven)
+    diagnose    Health check the existing install (read-only)
+    reset       Wipe LAIA from this host (DANGEROUS — double confirmation)
     release     Promote a dev tree at ~/.laia to /opt/laia-vX.Y.Z and restart
     rollback    Switch /opt/laia symlink back to a previous version
     init        Bootstrap LAIA-AGORA (LXD images + AGORA backend + first user)
@@ -56,6 +59,12 @@ EXAMPLES
     sudo laia release                  # detects version from git tag
     laia clone laia-hermes@server.example.com --with-tools
     sudo laia rollback                 # revert to previous version
+    sudo laia wizard                   # menu-driven install or clone
+    laia diagnose                      # health check, no mutations
+
+ENVIRONMENT
+    LAIA_UI=textual|rich   Wizard UI. Default textual (since Fase 4).
+                           'rich' falls back to a minimal stdin/stdout UI.
 EOF
 }
 
@@ -89,6 +98,48 @@ main() {
       [[ -x "$init_script" ]] || die "AGORA init script not found: $init_script"
       shift
       exec bash "$init_script" "$@"
+      ;;
+    wizard|diagnose|reset)
+      # The interactive wizard and its single-screen utilities all share
+      # the same Python entry point (laia_cli.install_wizard). bin/laia-wizard
+      # used to be a separate shim — Fase 4 of the wizard remake collapsed
+      # it into this dispatcher so there's only one public entry.
+      local sub="$1"; shift
+      local core_dir="$LAIA_ROOT/.laia-core"
+      if [[ ! -d "$core_dir/laia_cli/install_wizard" ]]; then
+        die "install_wizard package not found at $core_dir/laia_cli/install_wizard"
+      fi
+      # python3 is hard-required; if missing, try apt as root.
+      if ! command -v python3 >/dev/null 2>&1; then
+        if [[ "${EUID:-$(id -u)}" -eq 0 ]] && command -v apt-get >/dev/null 2>&1; then
+          log_info "Installing python3"
+          DEBIAN_FRONTEND=noninteractive apt-get update -qq
+          DEBIAN_FRONTEND=noninteractive apt-get install -y python3
+        else
+          die "python3 not found. Install it manually or re-run as root."
+        fi
+      fi
+      # Prefer the .laia-core install venv (where Textual lives); else system python.
+      local py="python3"
+      if [[ -x "$core_dir/venv/bin/python" ]]; then
+        py="$core_dir/venv/bin/python"
+      elif [[ -x "/opt/laia/.laia-core/venv/bin/python" ]]; then
+        py="/opt/laia/.laia-core/venv/bin/python"
+      fi
+      export LAIA_ROOT
+      export PYTHONPATH="$core_dir${PYTHONPATH:+:$PYTHONPATH}"
+      local log_dir="${XDG_CACHE_HOME:-$HOME/.cache}"
+      mkdir -p "$log_dir" 2>/dev/null || true
+      printf '[%s] laia %s %s\n' "$(date -Iseconds)" "$sub" "$*" \
+        >>"$log_dir/laia-wizard.log" 2>/dev/null || true
+      # TTY reattach is owned by install.sh (curl|bash hand-off) plus
+      # __main__._reattach_tty() (last line of defense). NEVER add another
+      # /dev/tty redirect here — see workflow/problems.md::wizard-clone-tty.
+      if [[ "$sub" == "wizard" ]]; then
+        exec "$py" -m laia_cli.install_wizard "$@"
+      else
+        exec "$py" -m laia_cli.install_wizard --mode "$sub" "$@"
+      fi
       ;;
     *)
       log_error "Unknown subcommand: $1"

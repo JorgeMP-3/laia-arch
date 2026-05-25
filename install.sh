@@ -26,7 +26,7 @@
 #   3. Clones (or fast-forwards) the LAIA repo into ~/LAIA so the host has
 #      a permanent dev tree — `laia-release`, future updates, and bug-report
 #      reproduction all need it.
-#   4. Hands off to bin/laia-wizard (interactive) or bin/laia-install /
+#   4. Hands off to bin/laia (wizard | install | clone subcommand) or bin/laia-install /
 #      bin/laia-clone (headless), depending on --mode.
 #
 # Anything destructive (apt-install, mkdir under $HOME, sudo write to /opt
@@ -151,7 +151,7 @@ OPTIONS
                           Default: $DEFAULT_BRANCH
     --laia-dir PATH       Where to clone the repo. Default: \$SUDO_USER's
                           \$HOME/LAIA, e.g. /home/jorge/LAIA.
-    --config FILE         YAML/JSON config passed through to laia-wizard
+    --config FILE         YAML/JSON config passed through to laia wizard
                           for fully unattended runs.
     --yes, -y             Skip all confirmations (apt install, plan summary,
                           wizard prompts). Required for CI / curl|bash auto.
@@ -159,7 +159,7 @@ OPTIONS
                           they're already there; useful in containers).
     --                    Everything after this is passed verbatim to the
                           subcommand (bin/laia-install, bin/laia-clone,
-                          bin/laia-wizard).
+                          bin/laia wizard).
     -h, --help            Show this help.
 
 ENVIRONMENT
@@ -471,7 +471,9 @@ hand_off() {
       cmd+=("${PASSTHRU_ARGS[@]+"${PASSTHRU_ARGS[@]}"}")
       ;;
     wizard)
-      cmd=("$bin/laia-wizard")
+      # bin/laia-wizard was collapsed into `bin/laia wizard` in Fase 4
+      # of the wizard remake — single public entry point for the host CLI.
+      cmd=("$bin/laia" "wizard")
       [[ -n "$OPT_CONFIG" ]] && cmd+=(--config "$OPT_CONFIG")
       $OPT_YES && cmd+=(--yes)
       [[ -n "$OPT_SOURCE" ]] && cmd+=(--mode clone)
