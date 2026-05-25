@@ -33,5 +33,10 @@ Lo que puede salir mal y cómo mitigarlo.
 
 ## Planes activos
 
-(Sin planes formales en `plans/` todavía. El primer plan estructurado entrará aquí
-cuando empiece una tarea no-trivial.)
+- [`2026-05-25-installer-textual-remake.md`](2026-05-25-installer-textual-remake.md)
+  — Remake del wizard de instalación/clonado con Textual. **En curso**:
+  Fases 1-3 completadas (bug TTY cerrado, contrato JSON, Textual opt-in);
+  Fases 4-5 pendientes (flip default + borrado legacy; headless TOML +
+  tests). Owner: claude-code.
+- [`integrity-tests.md`](integrity-tests.md) — Runner de integridad por capas.
+  Owner: codex.

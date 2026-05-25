@@ -15,6 +15,99 @@ Formato:
 
 ---
 
+## 2026-05-25 — Runner de integridad por capas (codex)
+
+- Añadido `tests/run_integrity.py`, runner stdlib-only con tiers `static`,
+  `unit`, `local-runtime`, `deployed`, `lxd-e2e` y `llm-e2e`.
+- `make test` ahora ejecuta la ruta rápida `static + unit`; añadidos
+  `make integrity`, `make integrity-deployed` y `make integrity-lxd-e2e`.
+- Creado `workflow/plans/integrity-tests.md` para dejar registrada la ejecución
+  por fases y los gates de seguridad (`LAIA_RUN_LXD_E2E=1`, `LAIA_E2E_LLM_KEY`).
+
+## 2026-05-25 (cont. 5) — Fase 3 del installer remake: Textual UI opt-in (claude-code)
+
+- **Textual UI añadida** detrás del flag `LAIA_UI=textual`. La UI legacy
+  `rich.prompt` sigue siendo default; el operador opta in con el env var.
+  Files nuevos en `.laia-core/laia_cli/install_wizard/tui/` (~700 LOC):
+  - `app.py` — `LaiaWizardApp` (host), `FormScreen` (render dinámico de
+    cualquier `WizardScreen`), `ExecuteScreen` (`RichLog` + `ProgressBar`
+    alimentados por los `ProgressEvent` del engine).
+  - `__init__.py` — exporta `run_textual_wizard()` + `is_textual_available()`.
+- **Threading model**: engine sync corre en `run_worker(thread=True)`; cada
+  push de screen cruza al main thread con `call_from_thread(push_screen_wait)`.
+  El engine y los flows NO cambian de API — el contrato `WizardScreen` /
+  `ProgressEvent` que ya era UI-agnóstico encaja directo.
+- **Render dinámico de los 7 `Field.type`**: text, password, choice, checklist,
+  yesno, path, info. `depends_on`, `help_text`, `placeholder`, `secret`
+  honrados. `RadioButton` lleva el `value` original en un atributo custom
+  para recuperarlo al submit aunque el label tenga adornos como
+  `"(recomendado)"`.
+- **Mitigaciones**: `umask(0o077)` en `App.on_mount` (Textual corre bajo
+  sudo en este flujo); shell-escape no expuesto.
+- **Dispatch**: `__main__.py` chequea `LAIA_UI` en el env; si `textual` y
+  `textual` está importable, short-circuita a `tui.run_textual_wizard()`.
+  Headless / `--yes` y rich siguen yendo por el path antiguo.
+- **Dependencia opcional**: `.laia-core/pyproject.toml` añade extra
+  `install_wizard = ["textual>=0.50,<10"]`. La instalación quedará
+  cableada en `install.sh` cuando Fase 4 flipee el default.
+- **Tests pytest**: `.laia-core/tests/test_tui_app.py` con 7 smoke tests
+  usando `App.run_test()`. Cubren composición de FormScreen, value
+  collection en todos los Field types, `depends_on` ocultando campos,
+  back/quit sentinels vía `dismiss()`, y ExecuteScreen procesando los
+  9 `ProgressEvent` types. **7/7 verde.**
+- **Menú reducido**: `MODE_SELECT_SCREEN` en `engine.py` baja de 5 a 2
+  opciones (install + clone). connectivity/diagnose/reset siguen
+  invocables vía `--mode` flag; pasarán a subcomandos `laia <subcmd>`
+  en Fase 4.
+- **help_text expandido** en `flows/clone.py::_OPTIONS_SCREEN` para los 3
+  campos problemáticos:
+  - `bwlimit`: explica trade-off WAN vs LAN y qué pasa con valor vacío.
+  - `keep_session`: deja claro que `No` (default) es lo recomendado y
+    describe el flujo de credenciales que sigue.
+  - `resume`: explícito "primera vez? `No`" up-front.
+- **Tests**: `tests/installer/run_all.sh` **31/31** verde; `test_tui_app.py`
+  **7/7** verde. Suites enteras pasan tras los cambios.
+- **Plan actualizado**: `workflow/plans/2026-05-25-installer-textual-remake.md`
+  añadido siguiendo la convención del repo (con estado por fase).
+- **Coordinación con codex**: durante Fase 3 mi commit cayó accidentalmente
+  en `wip/codex/integrity-tests` (codex había switcheado branch en paralelo).
+  Lo moví limpio a `feat/installer-wizard` con
+  `git branch -f feat/installer-wizard <sha> && git branch -f wip/codex/integrity-tests <pre-sha>`,
+  sin tocar el WT de codex. Memoria guardada para próximas sesiones.
+
+**Pendiente**: Fase 4 (flip default, borrar ~959 LOC de UI legacy,
+diagnose/reset como subcomandos `laia <sub>`, inlinear connectivity).
+Fase 5 (headless TOML + tests pytest-first).
+
+## 2026-05-25 (cont. 4) — Fase 2 del installer remake: contrato JSON DRY (claude-code)
+
+- **Contrato JSON bash→Python** estaba **mucho más adelantado** de lo que
+  el plan asumía. `common.sh::emit_json_event` ya emitía 4 event types
+  (`step_start`, `step_progress`, `step_done`, `step_error`) bajo
+  `LAIA_JSON_PROGRESS=1`, usado en install.sh + clone.sh + bin/laia-install
+  + bin/laia-clone. Python `_subprocess.py::_json_progress_event` ya
+  parseaba JSON estricto antes del regex legacy. El gap real era el
+  acoplamiento `log_step` ↔ `emit_json_event step_start`: 64 callers de
+  `log_step`, sólo ~16 emisores explícitos de JSON — drift estructural.
+- **Refactor**: `common.sh::log_step` ahora acepta `step_id` opcional como
+  2º arg y auto-emite `step_start` cuando `LAIA_JSON_PROGRESS=1`. Si no
+  se da id, deriva slug del label (`Phase H: rsync data` → `phase-h-rsync-data`).
+- **Nuevo helper**: `common.sh::log_step_done` cierra simétricamente la
+  fase con `step_done` JSON + `log_success` humano. Default step_id =
+  `$LAIA_CURRENT_STEP`.
+- **Colapsados 9 pares redundantes** `log_step` + `emit_json_event step_start`
+  adyacentes en `clone.sh` (cada uno se vuelve `log_step "label" "id"`,
+  −9 LOC, mismo comportamiento).
+- **Tests**: `tests/installer/test_json_progress.sh` extendido con 4
+  asserts nuevos (10 total): derived step_id slug, explicit step_id
+  honoring, log_step_done emite step_done con current step_id, silencio
+  sin `LAIA_JSON_PROGRESS`. **Suite completa 31/31 verde**.
+
+**Decisión**: no se tocaron los `emit_json_event` explícitos en
+`bin/laia-install:192-193` y `bin/laia-clone:313-314` porque emiten un
+step_id semántico DIFERENTE del log_step que les sigue (banner outer vs.
+phase inner). Reordenar arriesgaba romper el contrato.
+
 ## 2026-05-25 (cont. 3) — Plan remake installer + Fase 1 (matar bug TTY) (claude-code)
 
 - **Plan aprobado**: `~/.claude/plans/atomic-giggling-shore.md` — remake del
