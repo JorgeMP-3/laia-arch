@@ -102,32 +102,32 @@ MODE_SELECT_SCREEN = WizardScreen(
             name="mode",
             type="choice",
             label="Modo",
+            # Connectivity / diagnose / reset are no longer top-level menu
+            # entries — they're invoked as standalone subcommands
+            # (`laia diagnose`, `laia reset`, `laia connectivity`) and the
+            # connectivity step gets folded into install/clone as an
+            # optional sub-screen. The wizard's main menu is now the two
+            # decisions a new operator actually faces: fresh install or
+            # migrate from another machine. The flows are still loaded
+            # via --mode (so `laia-wizard --mode diagnose` keeps working
+            # during the transition); we just don't surface them here.
             choices=(
                 Choice(
                     value="install",
                     label="Instalar LAIA desde cero",
-                    description="Factory-default: LXD + laia-agora + skills base. Ubuntu limpio.",
+                    description=(
+                        "Factory-default: LXD + laia-agora + skills base. "
+                        "Para un host Ubuntu limpio."
+                    ),
                     recommended=True,
                 ),
                 Choice(
                     value="clone",
                     label="Clonar desde otra máquina",
-                    description="Pull de datos + reconstrucción de containers en este destino.",
-                ),
-                Choice(
-                    value="connectivity",
-                    label="Configurar conectividad (SSH / Tailscale)",
-                    description="Generar SSH key, copiar al destino, opcional Tailscale. Útil pre-clone.",
-                ),
-                Choice(
-                    value="diagnose",
-                    label="Diagnosticar instalación existente",
-                    description="Verifica health, containers, agora.db, paths. No modifica nada.",
-                ),
-                Choice(
-                    value="reset",
-                    label="Reset / wipe (PELIGROSO)",
-                    description="Borra /opt/laia, /srv/laia, ~/.laia. Doble confirmación.",
+                    description=(
+                        "Migra una instalación de LAIA existente a este host. "
+                        "Rsync de datos + reconstrucción local de containers."
+                    ),
                 ),
             ),
             default="install",

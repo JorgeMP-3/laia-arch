@@ -157,15 +157,24 @@ _SSH_PASSWORD_SCREEN = WizardScreen(
 _OPTIONS_SCREEN = WizardScreen(
     id="options",
     title="Opciones de transferencia",
+    description=(
+        "Pequeños ajustes del clone. Los defaults funcionan en la mayoría de "
+        "los casos — sólo cambia algo si la situación lo pide explícitamente."
+    ),
     fields=(
         Field(
             name="bwlimit",
             type="text",
-            label="Límite de ancho de banda rsync (opcional)",
-            placeholder="50M (vacío = sin límite)",
+            label="Límite de ancho de banda rsync",
+            placeholder="50M",
             default="50M",
             validator="rsync_bwlimit",
-            help_text="50M ≈ 50 MB/s. Útil sobre WAN.",
+            help_text=(
+                "Cap del throughput de rsync. Default `50M` (≈ 50 MB/s) — "
+                "razonable en WAN y evita que la red del origen se sature. "
+                "Déjalo vacío para no limitar (recomendado sólo en LAN). "
+                "Sufijos válidos: K, M, G."
+            ),
         ),
         Field(
             name="keep_session",
@@ -173,16 +182,25 @@ _OPTIONS_SCREEN = WizardScreen(
             label="¿Mantener sesión de admin del viejo?",
             default=False,
             help_text=(
-                "Por defecto se descarta admin-session.json y se reseta el "
-                "password admin del importado (recomendado)."
+                "Por defecto (`No`, recomendado): se descarta el "
+                "`admin-session.json` y se resetea el password admin del "
+                "importado — la primera vez tendrás que volver a entrar con "
+                "credenciales nuevas, que verás impresas al final del clone. "
+                "Marca `Sí` sólo si necesitas que la sesión admin del origen "
+                "siga siendo válida tras la migración (caso raro)."
             ),
         ),
         Field(
             name="resume",
             type="yesno",
-            label="¿Modo --resume (saltar fases ya completadas)?",
+            label="¿Reintentar un clone que se quedó a medias?",
             default=False,
-            help_text="Sólo útil si una ejecución previa dejó datos parcialmente migrados.",
+            help_text=(
+                "Si esta es la primera vez que clonas a este host, deja `No`. "
+                "Marca `Sí` sólo si un intento anterior se interrumpió "
+                "(red, Ctrl-C, etc) y quieres saltar las fases que ya tienen "
+                "datos válidos (p.ej. `agora.db` con tablas pobladas)."
+            ),
         ),
     ),
     actions=(ACTION_BACK, ACTION_NEXT),
