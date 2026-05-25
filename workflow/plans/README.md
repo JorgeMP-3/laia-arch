@@ -36,7 +36,12 @@ Lo que puede salir mal y cómo mitigarlo.
 - [`2026-05-25-installer-textual-remake.md`](2026-05-25-installer-textual-remake.md)
   — Remake del wizard de instalación/clonado con Textual. **En curso**:
   Fases 1-4 completadas (bug TTY cerrado, contrato JSON, Textual default,
-  legacy rich borrado, unificado bajo `bin/laia`); Fase 5 pendiente
-  (headless TOML + pirámide de tests). Owner: claude-code.
+  legacy rich borrado, unificado bajo `bin/laia`); 5 CRITICAL + 4 HIGH
+  hardening fixes commiteados; Fase 5 pendiente (headless TOML + pirámide
+  de tests). Owner: claude-code.
+- [`2026-05-25-installer-vm-smoke.md`](2026-05-25-installer-vm-smoke.md)
+  — Guía para validar install + clone en VM real antes de Fase 5.
+  Comandos concretos para Multipass, qué verificar, dónde mirar si algo
+  falla. Owner: jorge (operador), claude-code (autor).
 - [`integrity-tests.md`](integrity-tests.md) — Runner de integridad por capas.
   Owner: codex.

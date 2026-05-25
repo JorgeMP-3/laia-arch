@@ -18,7 +18,8 @@
 set -u
 
 LAIA_ROOT="${LAIA_ROOT:-/home/laia-hermes/LAIA}"
-WIZARD="$LAIA_ROOT/bin/laia-wizard"
+WIZARD="$LAIA_ROOT/bin/laia"
+WIZARD_SUB="wizard"  # bin/laia-wizard was collapsed into `bin/laia wizard` in Fase 4
 PASS=0; FAIL=0
 
 ok()   { PASS=$((PASS+1)); printf '\n  ✓ %s\n' "$1"; }
@@ -26,13 +27,13 @@ nope() { FAIL=$((FAIL+1)); printf '\n  ✗ %s\n' "$1"; }
 step() { printf '\n══ %s ══════════════════════════════════════════════\n' "$1"; }
 
 [[ "$EUID" -eq 0 ]] || { echo "Need root for the smoke tests. Re-run with sudo."; exit 2; }
-[[ -x "$WIZARD" ]] || { echo "bin/laia-wizard not at $WIZARD"; exit 2; }
+[[ -x "$WIZARD" ]] || { echo "bin/laia not at $WIZARD"; exit 2; }
 
 # ──────────────────────────────────────────────────────────────────────────
 step "1/8 — wizard --help / --version are clean"
 
-"$WIZARD" --version | grep -q "contract " && ok "--version prints contract" || nope "--version output unexpected"
-"$WIZARD" --help    | grep -q '\-\-config' && ok "--help mentions --config" || nope "--help missing --config"
+"$WIZARD" "$WIZARD_SUB" --version | grep -q "contract " && ok "--version prints contract" || nope "--version output unexpected"
+"$WIZARD" "$WIZARD_SUB" --help    | grep -q '\-\-config' && ok "--help mentions --config" || nope "--help missing --config"
 
 # ──────────────────────────────────────────────────────────────────────────
 step "2/8 — Headless install (--config + --yes)"
@@ -48,7 +49,7 @@ values:
 EOF
 
 # Start wizard in background, watch /proc for the password.
-"$WIZARD" --config /tmp/laia-e2e/install.yaml --yes &
+"$WIZARD" "$WIZARD_SUB" --config /tmp/laia-e2e/install.yaml --yes &
 WIZARD_PID=$!
 sleep 2  # let argv settle
 
@@ -92,7 +93,7 @@ step "4/8 — Diagnose mode reports green"
 # ──────────────────────────────────────────────────────────────────────────
 step "5/8 — Ctrl-C mid-install leaves a resumable checkpoint"
 
-"$WIZARD" --config /tmp/laia-e2e/install.yaml --yes &
+"$WIZARD" "$WIZARD_SUB" --config /tmp/laia-e2e/install.yaml --yes &
 PID2=$!
 sleep 3
 kill -INT $PID2 2>/dev/null
