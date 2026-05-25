@@ -11,6 +11,7 @@ a tocar algo en este repositorio, **lee esto primero**.
 | `01-canonical-sources.md` | Dónde vive la verdad. Qué fuentes son canónicas. |
 | `02-how-to-work.md` | Reglas: branches, commits, cierre de turno, qué no hacer. |
 | `03-multi-ai-coordination.md` | Cómo coordinar cuando hay varias IAs simultáneas. |
+| `arch-data-layout.md` | Separación `/home/jorge/LAIA-ARCH` vs `/srv/laia/arch`. |
 | `changelog.md` | Bitácora de cambios materiales. Se actualiza al cerrar turno. |
 | `security.md` | Bitácora de hallazgos y acciones de seguridad. |
 | `problems.md` | Bitácora de problemas descubiertos. Se anota AL DESCUBRIRLOS. |

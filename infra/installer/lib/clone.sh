@@ -377,28 +377,46 @@ EOF
 }
 
 _clone_arch_legacy_dir_specs() {
+  _clone_arch_operational_dir_specs
+  _clone_arch_interactive_dir_specs
+}
+
+_clone_arch_operational_dir_specs() {
   cat <<'EOF'
-workspaces
-memories
 cron
 sessions
 atlas
 platforms
-plugins
 sandboxes
 orchestrator-runs
-pastes
 migration
 whatsapp
+logs
+EOF
+}
+
+_clone_arch_interactive_dir_specs() {
+  cat <<'EOF'
+workspaces
+memories
+skills
+plugins
 EOF
 }
 
 _clone_arch_legacy_file_specs() {
   cat <<'EOF'
 state.db
+response_store.db
 SOUL.md
 config.yaml
 EOF
+}
+
+_clone_arch_interactive_excludes() {
+  while IFS= read -r rel; do
+    [[ -n "$rel" ]] && printf '%s\n' "--exclude=$rel/"
+  done < <(_clone_arch_interactive_dir_specs)
 }
 
 # Tab-separated: path<TAB>exclude1<TAB>exclude2 ... (no trailing newline tabs)
@@ -601,6 +619,35 @@ clone_rsync_to_privileged_dest() {
   fi
 }
 
+clone_rsync_to_laia_home_dest() {
+  local src="$1" dst="$2" label="$3"
+  shift 3
+  local extra=("$@")
+
+  clone_rsync_base_opts
+  CLONE_RSYNC_OPTS+=("${extra[@]}")
+
+  if clone_is_local_source; then
+    [[ -e "${src%/}" ]] || { log_info "  Source missing for $label — skipping"; return 0; }
+    mkdir -p "$dst"
+    clone_rsync "$label" "${CLONE_RSYNC_OPTS[@]}" "$src" "$dst/" || die "$label rsync failed"
+  else
+    local stage="$LAIA_USER_HOME/.laia-clone-stage/$(basename "$dst")"
+    rm -rf "$stage" 2>/dev/null || true
+    mkdir -p "$stage"
+    clone_rsync "$label stage" "${CLONE_RSYNC_OPTS[@]}" "$src" "$stage/" || die "$label stage rsync failed"
+    if inst_is_override_mode; then
+      mkdir -p "$dst"
+      clone_rsync "$label promote" -a --info=progress2,stats1,name1 --human-readable --outbuf=L "$stage/" "$dst/" || die "$label promote failed"
+    else
+      sudo -u "$LAIA_USER" mkdir -p "$dst"
+      clone_rsync "$label promote" sudo rsync -a --info=progress2,stats1,name1 --human-readable --outbuf=L "$stage/" "$dst/" || die "$label promote failed"
+      sudo chown -R "$LAIA_USER:$LAIA_USER" "$dst"
+    fi
+    rm -rf "$stage" 2>/dev/null || true
+  fi
+}
+
 clone_phase_h_rsync_agora_data() {
   if clone_phase_should_skip "rsync-agora"; then
     log_info "Phase H agora data already complete (resume); skipping"
@@ -635,18 +682,29 @@ clone_phase_h_rsync_arch_data() {
   fi
   clone_phase_mark_start "rsync-arch"
   log_step "Phase H: LAIA-ARCH operational data" clone:rsync-arch
-  local dst
+  local dst live_dst
   dst="$(clone_dest_arch_dir)"
+  live_dst="$(clone_dest_laia_home)"
 
   if clone_is_local_source && [[ -d "$OPT_SOURCE_DIR/arch" ]]; then
-    clone_rsync_to_privileged_dest "$(clone_src_for arch)" "$dst" "arch data"
+    clone_rsync_to_privileged_dest "$(clone_src_for arch)" "$dst" "arch operational data" $(_clone_arch_interactive_excludes)
+    local rel
+    while IFS= read -r rel; do
+      [[ -z "$rel" ]] && continue
+      clone_rsync_to_laia_home_dest "$(clone_src_for arch)$rel/" "$live_dst/$rel" "arch live data $rel"
+    done < <(_clone_arch_interactive_dir_specs)
     clone_phase_h_rewrite_config_paths
     clone_phase_mark_done "rsync-arch"
     emit_json_event step_done clone:rsync-arch "ARCH data copied"
     return 0
   fi
   if ! clone_is_local_source && clone_source_path_exists "$LAIA_ARCH_DIR_DEFAULT"; then
-    clone_rsync_to_privileged_dest "$(clone_src_for arch)" "$dst" "arch data"
+    clone_rsync_to_privileged_dest "$(clone_src_for arch)" "$dst" "arch operational data" $(_clone_arch_interactive_excludes)
+    local rel
+    while IFS= read -r rel; do
+      [[ -z "$rel" ]] && continue
+      clone_rsync_to_laia_home_dest "$(clone_src_for arch)$rel/" "$live_dst/$rel" "arch live data $rel"
+    done < <(_clone_arch_interactive_dir_specs)
     clone_phase_h_rewrite_config_paths
     clone_phase_mark_done "rsync-arch"
     emit_json_event step_done clone:rsync-arch "ARCH data copied"
@@ -676,7 +734,18 @@ clone_phase_h_rsync_arch_data() {
     src="${src_base}${rel}/"
     dst_path="$dst/$rel"
     clone_rsync_to_privileged_dest "$src" "$dst_path" "arch data $rel"
-  done < <(_clone_arch_legacy_dir_specs)
+  done < <(_clone_arch_operational_dir_specs)
+
+  while IFS= read -r rel; do
+    [[ -z "$rel" ]] && continue
+    if clone_is_local_source && [[ ! -d "$OPT_SOURCE_DIR/home/.laia/$rel" ]]; then
+      log_info "  skip ~/.laia/$rel (missing)"
+      continue
+    fi
+    src="${src_base}${rel}/"
+    dst_path="$live_dst/$rel"
+    clone_rsync_to_laia_home_dest "$src" "$dst_path" "arch live data $rel"
+  done < <(_clone_arch_interactive_dir_specs)
 
   while IFS= read -r rel; do
     [[ -z "$rel" ]] && continue
@@ -719,30 +788,38 @@ clone_phase_h_rewrite_config_paths() {
   # every other ${paths.X} alias derives from these. laia-pathd picks up the
   # change on next reload.
   #   - laia_root   → /opt/laia        (installed product tree)
-  #   - laia_home   → ${LAIA_HOME:-/srv/laia/arch}  (operational data dir)
+  #   - laia_home   → ${LAIA_HOME:-$LAIA_USER_HOME/LAIA-ARCH} (live admin area)
   #   - agora_data  → /srv/laia/agora/agora.db      (real bind-mounted DB)
-  # Additionally, sweep any leftover /home/<user>/.laia/ literals to
-  # /srv/laia/arch/ (covers other path keys the user may have customized).
+  #   - workspaces/memories/skills/plugins → ${LAIA_HOME:-...}/<name>
+  # Additionally, sweep leftover /home/<user>/.laia/ literals to /srv/laia/arch/
+  # because unknown legacy paths are treated as sensitive/runtime by default.
   # Note on the regex: `^[[:space:]]*` is INTENTIONAL — the canonical
   # config.yaml nests the three keys under `paths:` (so they're indented
   # by 2 spaces). Restricting to top-level only would break the rewrite.
   # Commented lines (`#  laia_root: …`) don't match because `#` isn't
   # whitespace, so anchored to `[[:space:]]*` is safe in practice.
-  local sed_prog
-  sed_prog='
-    s#^([[:space:]]*laia_root:[[:space:]]*).*#\1/opt/laia#
-    s#^([[:space:]]*laia_home:[[:space:]]*).*#\1${LAIA_HOME:-/srv/laia/arch}#
-    s#^([[:space:]]*agora_data:[[:space:]]*).*#\1/srv/laia/agora/agora.db#
-    s#~/\.laia/#/srv/laia/arch/#g
-    s#/home/[^/[:space:]"]+/\.laia/#/srv/laia/arch/#g
-    s#/home/[^/[:space:]"]+/\.laia([[:space:]"]|$)#/srv/laia/arch\1#g
-    s#/home/[^/[:space:]"]+/LAIA/#/opt/laia/#g
-    s#/home/[^/[:space:]"]+/LAIA([[:space:]"]|$)#/opt/laia\1#g
-  '
+  local live_default live_expr live_repl
+  live_default="$(clone_dest_laia_home)"
+  live_expr="\${LAIA_HOME:-$live_default}"
+  live_repl="$(printf '%s' "$live_expr" | sed 's/[\/&]/\\&/g')"
+  local sed_args=(
+    -e 's#^([[:space:]]*laia_root:[[:space:]]*).*#\1/opt/laia#'
+    -e 's#^([[:space:]]*agora_data:[[:space:]]*).*#\1/srv/laia/agora/agora.db#'
+    -e 's#~/\.laia/#/srv/laia/arch/#g'
+    -e 's#/home/[^/[:space:]"]+/\.laia/#/srv/laia/arch/#g'
+    -e 's#/home/[^/[:space:]"]+/\.laia([[:space:]"]|$)#/srv/laia/arch\1#g'
+    -e 's#/home/[^/[:space:]"]+/LAIA/#/opt/laia/#g'
+    -e 's#/home/[^/[:space:]"]+/LAIA([[:space:]"]|$)#/opt/laia\1#g'
+    -e "s#^([[:space:]]*laia_home:[[:space:]]*).*#\\1$live_repl#"
+    -e "s#^([[:space:]]*workspaces:[[:space:]]*).*#\\1$live_repl/workspaces#"
+    -e "s#^([[:space:]]*memories:[[:space:]]*).*#\\1$live_repl/memories#"
+    -e "s#^([[:space:]]*skills:[[:space:]]*).*#\\1$live_repl/skills#"
+    -e "s#^([[:space:]]*plugins:[[:space:]]*).*#\\1$live_repl/plugins#"
+  )
   if inst_is_override_mode; then
-    sed -i -E "$sed_prog" "$cfg"
+    sed -i -E "${sed_args[@]}" "$cfg"
   else
-    sudo sed -i -E "$sed_prog" "$cfg"
+    sudo sed -i -E "${sed_args[@]}" "$cfg"
   fi
 
   # If laia-pathd is running on the destination, ask it to reload so the
@@ -751,7 +828,7 @@ clone_phase_h_rewrite_config_paths() {
     laia-path reload >/dev/null 2>&1 || true
   fi
 
-  log_success "Rewrote config.yaml paths (laia_root → /opt/laia, laia_home → /srv/laia/arch, agora_data → /srv/laia/agora/agora.db)"
+  log_success "Rewrote config.yaml paths (laia_root → /opt/laia, live ARCH dirs → $live_expr, runtime ARCH dirs → /srv/laia/arch)"
 }
 
 clone_phase_h_rsync_arch_creds() {

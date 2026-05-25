@@ -26,4 +26,16 @@ Bitácora de hallazgos y acciones de seguridad durante el trabajo diario en el r
 
 ---
 
-(Sin entradas todavía.)
+## 2026-05-25 — Split de datos LAIA-ARCH sensibles vs interactivos (codex)
+
+- **Tipo**: permisos
+- **Severidad**: P2 (medio)
+- **Sistema afectado**: `laia-clone`, layout de datos LAIA-ARCH.
+- **Acción tomada**: se separó la migración de datos legacy para que
+  `workspaces`, `memories`, `skills` y `plugins` vayan a `LAIA_HOME`, mientras
+  runtime sensible (`sessions`, `sandboxes`, `atlas`, `cron`, `logs`, DBs y
+  config) queda en `/srv/laia/arch`.
+- **Acción pendiente**: `auth.json` y `.env` siguen en el path legacy
+  `~/.laia/` por compatibilidad con scripts LXD. Moverlos a `/srv/laia/arch`
+  requiere una fase específica con cambios en rebuild/provision de AGORA y
+  tests de auth.

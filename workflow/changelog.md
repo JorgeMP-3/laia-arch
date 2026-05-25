@@ -15,6 +15,22 @@ Formato:
 
 ---
 
+## 2026-05-25 — Split LAIA-ARCH live data vs sensitive runtime (codex)
+
+- Ajustado `laia-clone` para separar datos legacy de LAIA-ARCH:
+  `workspaces`, `memories`, `skills` y `plugins` se migran a `LAIA_HOME`
+  (`/home/jorge/LAIA-ARCH` por defecto), mientras que `sessions`,
+  `sandboxes`, `atlas`, `cron`, `logs` y runtime sensible quedan en
+  `/srv/laia/arch`.
+- Actualizada la reescritura de `config.yaml`: `workspaces`, `memories`,
+  `skills` y `plugins` apuntan a `${LAIA_HOME:-...}`; paths legacy
+  desconocidos bajo `~/.laia` siguen cayendo en `/srv/laia/arch`.
+- Añadido `workflow/arch-data-layout.md` con el criterio operativo y la
+  compatibilidad temporal de `auth.json`/`.env`.
+- Tests actualizados: `test_clone_phase_h.sh` y
+  `test_path_rewrite_cross_user.sh`.
+- No se movieron datos reales en disco y no se tocó `LAIA_ECOSYSTEM.md`.
+
 ## 2026-05-25 — Plan dev/stable convertido a runbook para otra IA (codex)
 
 - Reescrito `workflow/plans/2026-05-25-dev-stable-versioning.md` como runbook
