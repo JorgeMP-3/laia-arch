@@ -88,6 +88,28 @@ ensure_lxd_egress() {
       iptables -C FORWARD -i "$out_if" -o "$net" -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT 2>/dev/null \
         || iptables -I FORWARD 1 -i "$out_if" -o "$net" -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT 2>/dev/null || true
     fi
+
+    # UFW: si está activo, su cadena udp/67 (DHCP) → ufw-skip-to-policy-input
+    # captura los DHCPDISCOVER de los containers ANTES de que las reglas
+    # de LXD los acepten. Resultado: containers sin IPv4. Fix documentado
+    # para UFW + LXD: `ufw allow in on <bridge>`.
+    # Diagnosticado en Thinkstation (2026-05-26) por claude-code:
+    # `nft list ruleset | grep 'udp dport 67'` mostraba 628 paquetes droped.
+    if command -v ufw >/dev/null 2>&1; then
+      if ufw status 2>/dev/null | head -1 | grep -qi 'Status: active'; then
+        if ufw status 2>/dev/null | grep -qE "Anywhere on $net|on $net[[:space:]]+ALLOW IN"; then
+          : # regla ya presente, nada que hacer
+        else
+          log "UFW activo — añadiendo 'allow in on $net' (DHCP/DNS de containers)"
+          if ufw allow in on "$net" >/dev/null 2>&1; then
+            ufw reload >/dev/null 2>&1 || true
+            ok "UFW: regla 'allow in on $net' añadida (fix DHCP de containers)"
+          else
+            warn "ufw allow in on $net falló — añádela a mano: sudo ufw allow in on $net && sudo ufw reload"
+          fi
+        fi
+      fi
+    fi
   }
 
   lxd_delete_partial_instances() {
@@ -158,6 +180,18 @@ ensure_lxd_egress() {
     else
       warn "remoto LXD '${image%:*}:' no responde (no fatal: imagen puede estar cacheada)"
       # No marcar como rc=1: la imagen puede estar local.
+    fi
+
+    # 5. UFW: si está activo, debe permitir tráfico entrante por $net o
+    # los containers no obtendrán DHCP. `lxd_apply_network_config` ya lo
+    # arregla automáticamente; esto es check informativo.
+    if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | head -1 | grep -qi 'Status: active'; then
+      if ufw status 2>/dev/null | grep -qE "Anywhere on $net|on $net[[:space:]]+ALLOW IN"; then
+        ok "UFW activo + regla 'allow in on $net' presente"
+      else
+        warn "UFW activo SIN regla 'allow in on $net' — DHCP de containers fallará (lxd_apply_network_config intentará arreglarlo arriba)"
+        # No marcar como rc=1: lxd_apply_network_config arregla esto.
+      fi
     fi
 
     return "$rc"

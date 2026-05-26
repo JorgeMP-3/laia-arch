@@ -77,6 +77,19 @@ Formato:
   - Bug menor: `dhclient -4 -v` sin timeout colgaba ~60-75s antes
     de rendirse. Ahora envuelto con `timeout 8` + flag `-1` (one-try).
     Ahorra ~60s por container cuando DHCP está roto.
+- **Quinto fix (commit pendiente) — causa raíz del DHCP roto en
+  Thinkstation**: Claude Code en el server diagnosticó con
+  `nft list ruleset` que UFW estaba droppeando 628 DHCP DISCOVERs en
+  udp/67 ANTES de las reglas de LXD (cadena `udp dport 67 → ufw-skip-
+  to-policy-input`). Es el conflicto clásico UFW + LXD documentado.
+  En la VM laia-hermes no aparece porque UFW está inactivo aquí.
+  Fix integrado en el installer (`rebuild-2-images.sh::lxd_apply_network_config`):
+  detecta `ufw status | head -1 | grep 'Status: active'`, comprueba si
+  ya existe regla para el bridge (`Anywhere on lxdbr0` o `on lxdbr0 ALLOW IN`),
+  y si no, ejecuta `ufw allow in on lxdbr0 && ufw reload`. Idempotente.
+  Más check informativo en `lxd_host_egress_check` que reporta el
+  estado de UFW. Ahora el installer maneja UFW automáticamente — no
+  hace falta el fallback de IP estática para servers con UFW activo.
 
 ## 2026-05-26 — Ecosystem E2E migration + T.14 polish (claude opus 4.7)
 
