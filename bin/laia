@@ -34,33 +34,47 @@ source "$LIB_DIR/version.sh"
 
 print_help() {
   cat <<'EOF'
-laia — host-side CLI for the LAIA ecosystem
+laia — unified CLI for the LAIA ecosystem
 
 USAGE
-    laia <subcommand> [args...]
+    laia                       Drop into interactive agent chat (default)
+    laia <subcommand> [args]   Run a specific subcommand
 
-SUBCOMMANDS
+INSTALLER / HOST-OPS SUBCOMMANDS (handled by this bash dispatcher)
     install     Install LAIA on a clean host
     clone       Clone state from another LAIA server (data + LXD containers)
     wizard      Interactive wizard (install or clone, menu-driven)
     diagnose    Health check the existing install (read-only)
     reset       Wipe LAIA from this host (DANGEROUS — double confirmation)
-    release     Promote a dev tree at ~/.laia to /opt/laia-vX.Y.Z and restart
+    release     Promote a dev tree to /opt/laia-vX.Y.Z and restart
     rollback    Switch /opt/laia symlink back to a previous version
     init        Bootstrap LAIA-AGORA (LXD images + AGORA backend + first user)
-    status      Show host-side LAIA status (services, version, paths)
+
+AGENT SUBCOMMANDS (forwarded to .laia-core Python CLI)
+    chat        Interactive chat with your agent (same as `laia` no-args)
+    setup       Interactive setup wizard for credentials/providers
+    login/logout/auth   Manage provider credentials
+    model       Select default model and provider
+    skills      Search, install, configure skills
+    plugins     Manage plugins
+    gateway     Messaging gateway (Telegram, WhatsApp, Slack, …)
+    cron        Cron job management
+    doctor      Check configuration and dependencies
+    status      Show agent component status
+    sessions    Session management
+    ...         (anything not matching an installer subcommand)
 
 OPTIONS
-    --help, -h        Show this help
+    --help, -h        Show this help (installer help)
     --version, -v     Show installed LAIA version
 
 EXAMPLES
+    laia                               # open agent chat
+    laia setup                         # configure providers/credentials
+    laia skills install <slug>         # install a skill
     sudo laia install --version v0.1.0
-    sudo laia release                  # detects version from git tag
     laia clone laia-hermes@server.example.com --with-tools
-    sudo laia rollback                 # revert to previous version
-    sudo laia wizard                   # menu-driven install or clone
-    laia diagnose                      # health check, no mutations
+    sudo laia wizard                   # menu-driven install/clone
 
 ENVIRONMENT
     LAIA_UI=textual|rich   Wizard UI. Default textual (since Fase 4).
@@ -77,16 +91,43 @@ print_version() {
   fi
 }
 
+# exec_agent_cli — hand off to the .laia-core Python CLI (interactive chat,
+# auth, skills, gateway, etc.). Used when the user invokes `laia` with no
+# args or with a non-installer subcommand (chat, setup, auth, login, model,
+# skills, …). The Python CLI is installed by `laia-install` into
+# /opt/laia/.laia-core/venv/bin/laia; on a dev tree it lives at
+# $LAIA_ROOT/.laia-core/venv/bin/laia.
+exec_agent_cli() {
+  local candidates=(
+    "/opt/laia/.laia-core/venv/bin/laia"
+    "$LAIA_ROOT/.laia-core/venv/bin/laia"
+  )
+  local agent_bin=""
+  local c
+  for c in "${candidates[@]}"; do
+    if [[ -x "$c" ]]; then agent_bin="$c"; break; fi
+  done
+  if [[ -z "$agent_bin" ]]; then
+    log_error "Agent CLI not found. Looked in:"
+    printf '  %s\n' "${candidates[@]}" >&2
+    log_error "Re-run 'sudo laia install' (or 'sudo laia release') to recreate the venv."
+    exit 4
+  fi
+  exec "$agent_bin" "$@"
+}
+
 main() {
   if [[ $# -eq 0 ]]; then
-    print_help
-    exit 0
+    # No args → drop into agent CLI (interactive chat by default).
+    # `laia --help` still shows installer help; `laia -h` too. Anything else
+    # without a recognized installer subcommand goes to the Python CLI.
+    exec_agent_cli
   fi
 
   case "$1" in
     -h|--help)    print_help; exit 0 ;;
     -v|--version) print_version; exit 0 ;;
-    install|clone|release|rollback|status)
+    install|clone|release|rollback)
       local sub="$1"; shift
       local target="$SCRIPT_DIR/laia-$sub"
       [[ -x "$target" ]] || die "Subcommand binary not found or not executable: $target"
@@ -142,10 +183,10 @@ main() {
       fi
       ;;
     *)
-      log_error "Unknown subcommand: $1"
-      printf '\n' >&2
-      print_help >&2
-      exit 2
+      # Not an installer subcommand → assume it's for the agent CLI
+      # (status, chat, setup, auth, login, model, skills, plugins, gateway,
+      # cron, doctor, sessions, …). Hand off verbatim.
+      exec_agent_cli "$@"
       ;;
   esac
 }

@@ -103,7 +103,22 @@ Formato:
   `clone_phase_h_rsync_arch_data` seguía usando `legacy_laia` como source
   base. Fix: detectar si la fuente tiene `~/LAIA-ARCH/` poblado y, si sí,
   usarlo como autoritativo (`arch_src_kind=laia_home`).
-- **Octavo fix (commit pendiente) — rsync único del árbol LAIA-ARCH**:
+- **Noveno fix (commit pendiente) — `laia` lanza chat agente**:
+  En el Thinkstation, Jorge esperaba que escribir `laia` (o `laia-arch`)
+  en la terminal le abriera el chat interactivo con su agente LLM,
+  pero el bash dispatcher (`bin/laia`) solo manejaba subcomandos del
+  installer (install/clone/release/rollback/status). Fix:
+  - `laia` (sin args) → exec del Python CLI agente
+    (`/opt/laia/.laia-core/venv/bin/laia` o fallback al dev tree).
+  - Subcomandos no reconocidos (chat, setup, auth, login, model,
+    skills, plugins, gateway, cron, doctor, sessions, …) → forward al
+    Python CLI.
+  - `laia status` ahora va al Python CLI (agent components); el bash
+    status del host queda accesible via `laia-status` directo.
+  - Installer subcommands (install, clone, release, rollback, init,
+    wizard, diagnose, reset) sin cambios.
+  - Help text reescrito para mostrar las dos categorías.
+- **Octavo fix (commit `0f7d712e`) — rsync único del árbol LAIA-ARCH**:
   Tras el séptimo fix, Jorge re-corrió y el destino aún tenía solo
   `cron response_store.db sessions state.db workspaces` — las loops
   per-spec fallaban silenciosamente después de las primeras 1-2
