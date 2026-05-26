@@ -740,6 +740,10 @@ clone_phase_h_rsync_arch_data() {
       log_info "  skip ~/.laia/$rel (missing)"
       continue
     fi
+    if ! clone_is_local_source && ! clone_source_path_exists "$REMOTE_HOME/.laia/$rel"; then
+      log_info "  skip ~/.laia/$rel (missing)"
+      continue
+    fi
     src="${src_base}${rel}/"
     dst_path="$dst/$rel"
     clone_rsync_to_privileged_dest "$src" "$dst_path" "arch data $rel"
@@ -751,6 +755,10 @@ clone_phase_h_rsync_arch_data() {
       log_info "  skip ~/.laia/$rel (missing)"
       continue
     fi
+    if ! clone_is_local_source && ! clone_source_path_exists "$REMOTE_HOME/.laia/$rel"; then
+      log_info "  skip ~/.laia/$rel (missing)"
+      continue
+    fi
     src="${src_base}${rel}/"
     dst_path="$live_dst/$rel"
     clone_rsync_to_laia_home_dest "$src" "$dst_path" "arch live data $rel"
@@ -759,6 +767,10 @@ clone_phase_h_rsync_arch_data() {
   while IFS= read -r rel; do
     [[ -z "$rel" ]] && continue
     if clone_is_local_source && [[ ! -f "$OPT_SOURCE_DIR/home/.laia/$rel" ]]; then
+      log_info "  skip ~/.laia/$rel (missing)"
+      continue
+    fi
+    if ! clone_is_local_source && ! clone_source_path_exists "$REMOTE_HOME/.laia/$rel"; then
       log_info "  skip ~/.laia/$rel (missing)"
       continue
     fi
