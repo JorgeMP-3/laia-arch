@@ -39,19 +39,32 @@ die()  { printf "  ${RED}✗${RST} %s\n" "$*" >&2; exit 1; }
 section() { printf "\n${BLD}== %s ==${RST}\n" "$*"; }
 
 ensure_lxd_egress() {
+  # Preflight informativo, NO bloqueante. Si los checks fallan, dejamos
+  # warnings claros y continuamos — el build de imagen real (apt-get,
+  # pip) producirá errores visibles si la red está rota de verdad.
+  #
+  # Env vars:
+  #   LAIA_LXD_NETWORK         (default: lxdbr0)
+  #   LAIA_LXD_SUBNET          (default: 10.99.0.0/24)
+  #   LAIA_LXD_ADDRESS         (default: 10.99.0.1/24)
+  #   LAIA_LXD_EGRESS_IMAGE    (default: ubuntu:24.04)
+  #   LAIA_LXD_DEEP_PROBE=1    Lanza un contenedor temporal para validar
+  #                            egress end-to-end (lento, descarga imagen
+  #                            si no está cacheada; default: skip).
+  #   LAIA_LXD_LAUNCH_TIMEOUT  (default: 180s) — sólo aplica si deep probe.
+  #   LAIA_LXD_SKIP_EGRESS=1   Salta la sección completa.
   local net="${LAIA_LXD_NETWORK:-lxdbr0}"
   local subnet="${LAIA_LXD_SUBNET:-10.99.0.0/24}"
   local address="${LAIA_LXD_ADDRESS:-10.99.0.1/24}"
   local image="${LAIA_LXD_EGRESS_IMAGE:-ubuntu:24.04}"
+  local probe_log="${LAIA_LXD_PROBE_LOG:-/tmp/laia-egress-probe.log}"
 
-  section "1.5/4 Verificar red LXD hacia internet"
+  section "1.5/4 Verificar red LXD hacia internet (preflight informativo)"
 
-  lxd_wait_ready() {
-    lxc version >/dev/null 2>&1 || true
-    if command -v lxd >/dev/null 2>&1; then
-      lxd waitready --timeout=60 >/dev/null 2>&1 || true
-    fi
-  }
+  if [[ "${LAIA_LXD_SKIP_EGRESS:-0}" == "1" ]]; then
+    warn "LAIA_LXD_SKIP_EGRESS=1 — saltando preflight de egress"
+    return 0
+  fi
 
   lxd_apply_network_config() {
     log "asegurando forwarding/NAT/DNS en $net"
@@ -88,9 +101,70 @@ ensure_lxd_egress() {
     done < <(lxc list --format csv -c n 2>/dev/null || true)
   }
 
-  lxd_probe_egress() {
-    local label="$1"
-    local probe="laia-egress-check-$$-$label"
+  # Check host-level — barato, en menos de 5 s, sin contenedores.
+  # Devuelve 0 si TODO pasa, ≠0 si algo falla. Siempre informa.
+  lxd_host_egress_check() {
+    local rc=0
+
+    # 1. lxdbr0 existe, está up y tiene IP.
+    if ip link show "$net" 2>/dev/null | grep -q 'state UP'; then
+      ok "$net está up"
+    else
+      warn "$net no está up o no existe"
+      rc=1
+    fi
+
+    if ip -4 addr show dev "$net" 2>/dev/null | grep -q ' inet '; then
+      ok "$net tiene IPv4 asignada"
+    else
+      warn "$net no tiene IPv4 asignada — DHCP/managed network puede estar roto"
+      rc=1
+    fi
+
+    # 2. Host alcanza archive.ubuntu.com (DNS + ruta + HTTPS).
+    if command -v curl >/dev/null 2>&1; then
+      if curl --max-time 8 -sSf -o /dev/null https://archive.ubuntu.com/ 2>/dev/null; then
+        ok "host alcanza https://archive.ubuntu.com"
+      else
+        warn "host NO alcanza https://archive.ubuntu.com (DNS/ruta/firewall)"
+        rc=1
+      fi
+    elif command -v getent >/dev/null 2>&1; then
+      if getent hosts archive.ubuntu.com >/dev/null 2>&1; then
+        ok "host resuelve archive.ubuntu.com (curl no disponible)"
+      else
+        warn "host NO resuelve archive.ubuntu.com"
+        rc=1
+      fi
+    fi
+
+    # 3. NAT MASQUERADE existe para la subnet LXD (NFT o IPTables).
+    local out_if
+    out_if="$(ip route show default 2>/dev/null | awk 'NR == 1 {print $5}')"
+    if [[ -n "$out_if" ]] && command -v iptables >/dev/null 2>&1; then
+      if iptables -t nat -C POSTROUTING -s "$subnet" -o "$out_if" -j MASQUERADE 2>/dev/null; then
+        ok "NAT MASQUERADE $subnet → $out_if presente"
+      else
+        warn "NAT MASQUERADE $subnet → $out_if NO presente (intenté añadirlo arriba)"
+        rc=1
+      fi
+    fi
+
+    # 4. LXD control plane responde para el remoto público.
+    if lxc image list "${image%:*}:" --format csv 2>/dev/null | head -n 1 >/dev/null; then
+      ok "remoto LXD '${image%:*}:' responde"
+    else
+      warn "remoto LXD '${image%:*}:' no responde (no fatal: imagen puede estar cacheada)"
+      # No marcar como rc=1: la imagen puede estar local.
+    fi
+
+    return "$rc"
+  }
+
+  # Container probe end-to-end (DEEP). Opt-in vía LAIA_LXD_DEEP_PROBE=1.
+  # Descarga 200-300 MB la primera vez. NO fatal: warn + return.
+  lxd_deep_probe() {
+    local probe="laia-egress-check-$$-deep"
     local launch_timeout="${LAIA_LXD_LAUNCH_TIMEOUT:-180s}"
     local launch_limit
     local ok_route=false ok_dns=false
@@ -103,8 +177,9 @@ ensure_lxd_egress() {
     [[ "$launch_limit" =~ ^[0-9]+$ ]] || launch_limit=180
 
     lxc delete --force "$probe" >/dev/null 2>&1 || true
-    log "lanzando prueba temporal $probe ($image, profile laia-employee, timeout ${launch_timeout})"
-    lxc launch "$image" "$probe" -p default -p laia-employee >/dev/null 2>&1 &
+    log "deep probe: lanzando $probe ($image, timeout ${launch_timeout}) — log: $probe_log"
+    : >"$probe_log"
+    lxc launch "$image" "$probe" -p default -p laia-employee >>"$probe_log" 2>&1 &
     local launch_pid=$!
     local waited=0
     while kill -0 "$launch_pid" >/dev/null 2>&1; do
@@ -120,12 +195,12 @@ ensure_lxd_egress() {
         return 20
       fi
       if (( waited % 15 == 0 )); then
-        warn "esperando lxc launch de $probe (${waited}s/${launch_limit}s)"
+        warn "esperando lxc launch de $probe (${waited}s/${launch_limit}s) — tail $probe_log"
       fi
     done
 
     if ! wait "$launch_pid"; then
-      warn "no pude lanzar contenedor temporal para validar egress LXD antes de ${launch_timeout}"
+      warn "no pude lanzar contenedor temporal en ${launch_timeout} — ver $probe_log"
       lxc delete --force "$probe" >/dev/null 2>&1 || true
       return 20
     fi
@@ -140,8 +215,8 @@ ensure_lxd_egress() {
     done
 
     if [[ "$ok_route" != true ]]; then
-      warn "el contenedor temporal no obtuvo IPv4/ruta por defecto"
-      lxc exec -T "$probe" -- sh -lc 'ip addr; ip route; cat /etc/resolv.conf 2>/dev/null || true' 2>/dev/null || true
+      warn "contenedor temporal no obtuvo IPv4/ruta por defecto"
+      lxc exec -T "$probe" -- sh -lc 'ip addr; ip route; cat /etc/resolv.conf 2>/dev/null || true' >>"$probe_log" 2>&1 || true
       lxc delete --force "$probe" >/dev/null 2>&1 || true
       return 10
     fi
@@ -156,8 +231,8 @@ ensure_lxd_egress() {
     done
 
     if [[ "$ok_dns" != true ]]; then
-      warn "el contenedor temporal no resuelve archive.ubuntu.com"
-      lxc exec -T "$probe" -- sh -lc 'cat /etc/resolv.conf; ip route' 2>/dev/null || true
+      warn "contenedor temporal no resuelve archive.ubuntu.com"
+      lxc exec -T "$probe" -- sh -lc 'cat /etc/resolv.conf; ip route' >>"$probe_log" 2>&1 || true
       lxc delete --force "$probe" >/dev/null 2>&1 || true
       return 11
     fi
@@ -166,101 +241,31 @@ ensure_lxd_egress() {
     return 0
   }
 
-  lxd_restart_daemon() {
-    log "reiniciando LXD para recuperar DHCP/bridge"
-    if systemctl list-unit-files snap.lxd.daemon.service >/dev/null 2>&1; then
-      systemctl restart snap.lxd.daemon.service >/dev/null 2>&1 || true
-    elif systemctl list-unit-files lxd.service >/dev/null 2>&1; then
-      systemctl restart lxd.service >/dev/null 2>&1 || true
-    else
-      warn "no encuentro unidad systemd de LXD; continúo sin reiniciar daemon"
-    fi
-    lxd_wait_ready
-  }
-
-  lxd_can_recreate_network() {
-    local name
-    while IFS= read -r name; do
-      [[ -z "$name" ]] && continue
-      case "$name" in
-        laia-egress-check-*|laia-agent-base|laia-agora-base) ;;
-        *)
-          warn "no recreo $net porque existe un contenedor real: $name"
-          return 1
-          ;;
-      esac
-    done < <(lxc list --format csv -c n 2>/dev/null || true)
-    return 0
-  }
-
-  lxd_profile_uses_net() {
-    local profile="$1"
-    lxc profile device show "$profile" 2>/dev/null \
-      | awk -v net="$net" '
-          /^[^[:space:]].*:$/ {dev=$1; sub(":", "", dev)}
-          /^[[:space:]]+network:[[:space:]]*/ && $2 == net && dev == "eth0" {found=1}
-          END {exit found ? 0 : 1}
-        '
-  }
-
-  lxd_recreate_network() {
-    local profiles=(default laia-employee laia-agora)
-    local restore=()
-    local profile
-
-    log "recreando $net porque LXD no entrega IPv4 por DHCP"
-    lxd_delete_partial_instances
-
-    for profile in "${profiles[@]}"; do
-      if lxc profile show "$profile" >/dev/null 2>&1 && lxd_profile_uses_net "$profile"; then
-        lxc profile device remove "$profile" eth0 >/dev/null 2>&1 || true
-        restore+=("$profile")
-      fi
-    done
-
-    lxc network delete "$net" >/dev/null 2>&1 || true
-    lxc network create "$net" ipv4.address="$address" ipv4.nat=true ipv6.address=none dns.mode=managed >/dev/null \
-      || die "no pude recrear $net"
-    ip link set "$net" up >/dev/null 2>&1 || true
-
-    for profile in "${restore[@]}"; do
-      lxc profile device add "$profile" eth0 nic network="$net" name=eth0 >/dev/null 2>&1 || true
-    done
-    lxd_apply_network_config
-    lxd_restart_daemon
-  }
-
-  lxd_print_diagnostics() {
-    warn "diagnóstico LXD:"
-    lxc network show "$net" 2>/dev/null || true
-    lxc profile show default 2>/dev/null || true
-    lxc profile show laia-employee 2>/dev/null || true
-    ip route 2>/dev/null || true
-    journalctl -u snap.lxd.daemon.service -n 80 --no-pager 2>/dev/null || journalctl -u lxd.service -n 80 --no-pager 2>/dev/null || true
-  }
-
-  lxd_wait_ready
+  # Flujo principal: aplicar config de red, luego host-level check.
+  # Sólo deep probe si LAIA_LXD_DEEP_PROBE=1 o si el host check falló y
+  # queremos confirmar end-to-end. NUNCA `die` — el build real catchea.
   lxd_delete_partial_instances
   lxd_apply_network_config
-  if lxd_probe_egress "initial"; then
-    return 0
+
+  if lxd_host_egress_check; then
+    ok "egress LXD (host-level) verificado"
+  else
+    warn "checks host-level reportaron problemas (ver arriba)"
+    warn "continúo igualmente — el build de imagen catchará errores reales con stdout visible"
   fi
 
-  lxd_restart_daemon
-  lxd_apply_network_config
-  if lxd_probe_egress "after-restart"; then
-    return 0
-  fi
-
-  if lxd_can_recreate_network; then
-    lxd_recreate_network
-    if lxd_probe_egress "after-recreate"; then
-      return 0
+  if [[ "${LAIA_LXD_DEEP_PROBE:-0}" == "1" ]]; then
+    if lxd_deep_probe; then
+      ok "deep probe OK — contenedor temporal tiene egress end-to-end"
+    else
+      warn "deep probe falló (rc=$?) — ver $probe_log"
+      warn "continúo igualmente; revisa el log si el build subsiguiente falla"
     fi
+  else
+    log "deep probe (contenedor temporal) desactivado — export LAIA_LXD_DEEP_PROBE=1 para activarlo"
   fi
 
-  lxd_print_diagnostics
-  die "LXD no consigue entregar IPv4/ruta/DNS a un contenedor temporal en $net; ver diagnóstico arriba."
+  return 0
 }
 
 command -v lxc >/dev/null || die "lxc no encontrado en PATH"

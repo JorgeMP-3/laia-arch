@@ -15,6 +15,34 @@ Formato:
 
 ---
 
+## 2026-05-26 — Fix installer/clonador: egress preflight no-fatal (claude opus 4.7)
+
+- **Síntoma**: en el Thinkstation `curl ... | sudo bash -- --mode clone`
+  caía en `1.5/4 Verificar red LXD hacia internet` con `Terminated
+  LAIA_ROOT="$LAIA_ROOT" bash "$script"` — el bash hijo recibía SIGTERM
+  externo mientras `lxc launch ubuntu:24.04` descargaba la imagen pública.
+- **Causa**: `ensure_lxd_egress` en `rebuild-2-images.sh` lanzaba un
+  contenedor temporal pesado (descarga 300 MB) y trataba cualquier fallo
+  como fatal (`die`). Introducido hoy en 4 commits (`23e4ba5e`, `ce121756`,
+  `111d4a02`, `c933ab59`).
+- **Fix** (`infra/lxd/scripts/rebuild-2-images.sh`):
+  - Reescrita `ensure_lxd_egress` — preflight informativo, NUNCA fatal.
+  - Primary path: host-level check (lxdbr0 up/IP, curl archive.ubuntu.com,
+    iptables NAT, lxc image list ubuntu:) en < 5 s. Sin contenedor.
+  - Deep probe (contenedor temporal) ahora opt-in via `LAIA_LXD_DEEP_PROBE=1`.
+  - Nuevo escape: `LAIA_LXD_SKIP_EGRESS=1` salta toda la sección.
+  - stderr de `lxc launch` ahora va a `/tmp/laia-egress-probe.log` (no
+    `/dev/null`).
+- **Hint extra** (`infra/installer/lib/bootstrap.sh`): si
+  `rebuild-2-images.sh` sale con 143/137, log un mensaje accionable
+  apuntando a `journalctl` (oom/oomd/snap.lxd.daemon) y a la mitigación
+  `LAIA_LXD_SKIP_EGRESS=1`.
+- Plan completo en `workflow/plans/2026-05-26-installer-clone-thinkstation-fix.md`.
+- Smoke local pasado (Plan C del plan): `ensure_lxd_egress` retorna 0
+  en ambos modos (defaults + skip), warnings claros para fallos parciales.
+- **Pendiente**: validación real del clone Thinkstation ← laia-hermes@100.73.36.92
+  (Jorge re-corre el comando del Contexto del plan).
+
 ## 2026-05-26 — Ecosystem E2E migration + T.14 polish (claude opus 4.7)
 
 - Ejecutado `workflow/plans/2026-05-25-ecosystem-e2e-verification.md` T.0-T.13

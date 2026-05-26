@@ -131,8 +131,26 @@ boot_build_images() {
   log_info "  Build streams stdout + tees to /tmp/build-{base,agora}.log"
   log_info "  Expected: ~6-12 min on amd64, 10-20 min on aarch64; heartbeat every 15s"
   log_info "  → if you suspect a hang, tail /tmp/build-*.log in another shell"
-  LAIA_ROOT="$LAIA_ROOT" bash "$script" \
-    || die "rebuild-2-images.sh failed → tail /tmp/build-base.log /tmp/build-agora.log"
+
+  local rc=0
+  LAIA_ROOT="$LAIA_ROOT" bash "$script" || rc=$?
+  if [[ "$rc" -eq 0 ]]; then
+    return 0
+  fi
+  case "$rc" in
+    143|137)
+      log_warn "rebuild-2-images.sh fue terminado externamente (exit=$rc → SIG$([ "$rc" -eq 143 ] && echo TERM || echo KILL))."
+      log_warn "Causa típica: systemd-oomd matando el cgroup por presión de memoria mientras LXD"
+      log_warn "descargaba ubuntu:24.04 (~300 MB), o reinicio inesperado de snap.lxd.daemon."
+      log_warn "Diagnóstico recomendado en el host destino:"
+      log_warn "  journalctl -k -n 200 | grep -iE 'oom|killed'"
+      log_warn "  journalctl -u systemd-oomd -n 100 --no-pager"
+      log_warn "  journalctl -u snap.lxd.daemon -n 100 --no-pager"
+      log_warn "Si confirmas OOM: añade swap o sube RAM, luego re-corre el clone."
+      log_warn "Mitigación temporal: export LAIA_LXD_SKIP_EGRESS=1 antes del clone."
+      ;;
+  esac
+  die "rebuild-2-images.sh failed (exit=$rc) → tail /tmp/build-base.log /tmp/build-agora.log /tmp/laia-egress-probe.log"
 }
 
 boot_provision_agora() {
