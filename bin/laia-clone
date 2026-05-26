@@ -455,6 +455,7 @@ main() {
   emit_json_event step_start clone:rebuild-containers "Rebuild LXD containers locally"
   clone_phase_h_enumerate_slugs
   clone_phase_h_rebuild_agora_container
+  clone_phase_h_refresh_admin_after_agora
   if [[ -n "$OPT_ONLY_AGENT" ]]; then
     clone_phase_h_rebuild_agent_container "$OPT_ONLY_AGENT"
   else

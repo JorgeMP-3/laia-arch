@@ -930,6 +930,32 @@ clone_phase_h_rebuild_agora_container() {
   emit_json_event step_done clone:rebuild-agora "laia-agora rebuilt"
 }
 
+clone_phase_h_refresh_admin_after_agora() {
+  if inst_is_override_mode || [[ -n "${LAIA_TEST_STUB_PATH:-}" ]]; then
+    return 0
+  fi
+
+  log_step "Phase H: refresh admin credentials after AGORA start" clone:admin-refresh
+  # Reset again after the bind-mounted DB is live. This avoids stale WAL/page
+  # state from the imported DB causing rebuild-4's API login to see the old
+  # password even though the host-side reset succeeded before container launch.
+  fact_reset_imported_admin_password
+
+  if lxc info laia-agora >/dev/null 2>&1; then
+    log_info "Restarting agora-backend.service so it sees refreshed admin credentials"
+    lxc exec -T laia-agora -- systemctl restart agora-backend.service || die "failed to restart agora-backend.service after admin refresh"
+    local url="${LAIA_AGORA_HEALTH_URL:-http://127.0.0.1:8088/api/health}"
+    for _ in {1..60}; do
+      curl -fsS "$url" >/dev/null 2>&1 && {
+        emit_json_event step_done clone:admin-refresh "Admin credentials refreshed"
+        return 0
+      }
+      sleep 0.5
+    done
+    die "AGORA health did not recover after admin credential refresh"
+  fi
+}
+
 clone_phase_h_rebuild_agent_container() {
   local slug="$1"
   log_step "Phase H: rebuild agent-$slug locally" "clone:rebuild-agent:$slug"
@@ -946,6 +972,8 @@ clone_phase_h_rebuild_agent_container() {
   # follow-up via `bash infra/dev/smoke-test.sh --slug $slug` once the
   # operator has the new credentials.
   LAIA_ROOT="$LAIA_ROOT" RUN_SMOKE=0 \
+    AGORA_ADMIN_USERNAME="${AGORA_ADMIN_USERNAME:-}" \
+    AGORA_ADMIN_PASSWORD="${AGORA_ADMIN_PASSWORD:-}" \
     bash "$LAIA_ROOT/infra/lxd/scripts/rebuild-4-first-user.sh" \
       --slug "$slug" --existing-user-only
   emit_json_event step_done "clone:rebuild-agent:$slug" "agent-$slug rebuilt"
