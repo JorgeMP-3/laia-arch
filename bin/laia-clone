@@ -277,6 +277,31 @@ validate_options() {
   fi
 }
 
+# Copia los wrappers bin/ del repo (rama actual) sobre los binarios
+# instalados en /opt/laia-vX.Y.Z/bin/. Idempotente; barato (5 archivos
+# pequeños). Útil cuando la instalación ya existe pero el dev tree tiene
+# fixes en el dispatcher que queremos surtir efecto sin re-correr release.
+_clone_refresh_bin_wrappers() {
+  local installed_bin
+  local prefix
+  prefix="$(inst_install_prefix)"
+  installed_bin="$(readlink -f "$prefix" 2>/dev/null)/bin"
+  if [[ -z "$installed_bin" || ! -d "$installed_bin" ]]; then
+    return 0  # no hay nada que refrescar
+  fi
+  log_info "  refrescando wrappers bin/ → $installed_bin"
+  local f
+  for f in laia laia-install laia-clone laia-release laia-rollback; do
+    if [[ -f "$LAIA_ROOT/bin/$f" ]]; then
+      if inst_is_override_mode; then
+        install -m 0755 "$LAIA_ROOT/bin/$f" "$installed_bin/$f"
+      else
+        sudo install -m 0755 "$LAIA_ROOT/bin/$f" "$installed_bin/$f"
+      fi
+    fi
+  done
+}
+
 clone_install_first_if_needed() {
   local prefix root
   prefix="$(inst_install_prefix)"
@@ -338,6 +363,10 @@ clone_install_first_if_needed() {
 
   if [[ "$need_host" == false && "$need_images" == false ]]; then
     log_info "Install-first: /opt/laia and LXD images already present — skipping"
+    # Aún así refrescamos los wrappers bin/ — son baratos y permiten que
+    # bugfixes en el dispatcher (ej: `laia` → chat agente) lleguen sin
+    # tener que re-correr `laia-release`. Idempotente.
+    _clone_refresh_bin_wrappers
     return 0
   fi
 
@@ -356,6 +385,7 @@ clone_install_first_if_needed() {
       --yes || die "install-first laia-install --minimal failed"
   else
     log_info "  /opt/laia already installed — skipping host install"
+    _clone_refresh_bin_wrappers
   fi
 
   if [[ "$need_images" == true ]]; then

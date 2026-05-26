@@ -103,7 +103,17 @@ Formato:
   `clone_phase_h_rsync_arch_data` seguía usando `legacy_laia` como source
   base. Fix: detectar si la fuente tiene `~/LAIA-ARCH/` poblado y, si sí,
   usarlo como autoritativo (`arch_src_kind=laia_home`).
-- **Noveno fix (commit pendiente) — `laia` lanza chat agente**:
+- **Décimo fix (commit pendiente) — clone refresca wrappers bin/**:
+  Tras el noveno fix, la nueva versión de `bin/laia` solo surtía efecto
+  si Jorge re-corría `laia-release` (que requiere `--src` y promueve a
+  nueva versión completa, demasiado overhead para un cambio de 1 binario).
+  Fix en `laia-clone::_clone_refresh_bin_wrappers`: cuando el install-
+  first detecta que /opt/laia ya existe (rama de skip), aún copia los
+  5 wrappers (`laia`, `laia-install`, `laia-clone`, `laia-release`,
+  `laia-rollback`) del repo al `/opt/laia-vX.Y.Z/bin/`. `install -m 0755`,
+  idempotente, ~1s. Ahora basta con re-correr el clone (o cualquier
+  install-first) para que los bugfixes de los wrappers surtan efecto.
+- **Noveno fix (commit `93adc703`) — `laia` lanza chat agente**:
   En el Thinkstation, Jorge esperaba que escribir `laia` (o `laia-arch`)
   en la terminal le abriera el chat interactivo con su agente LLM,
   pero el bash dispatcher (`bin/laia`) solo manejaba subcomandos del
