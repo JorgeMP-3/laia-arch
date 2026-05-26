@@ -96,22 +96,26 @@ Formato:
   existían → rebuild-2 se saltó → UFW fix nunca se aplicó → DHCP
   seguía droppeado. Movido el fix a `init-defaults.sh` (que SIEMPRE
   corre desde `boot_init_defaults`).
-- **Séptimo fix (commit pendiente) — cloner usa layout pre-T.14.1**:
+- **Séptimo fix (commit `82fe5ecd`) — cloner usa layout pre-T.14.1**:
   Jorge: "el clone solo me trajo cron + state.db + workspaces, falta
-  todo lo demás (sessions, atlas, orchestrator-runs, config.yaml,
-  ...)". Causa: la migración E2E T.14.1 del 26-mayo movió toda la data
-  ARCH del operador de `~/.laia/` a `~/LAIA-ARCH/`, pero
-  `clone_phase_h_rsync_arch_data` (`infra/installer/lib/clone.sh:736`)
-  seguía usando `legacy_laia` (→ `~/.laia/`) como source base. Solo se
-  rsynchronizaba lo que sobrevivía en `.laia/`: cron (vacío), un mini
-  workspaces, y `~/.laia/state.db` (155 KB, no el real de 195 MB en
-  LAIA-ARCH). Fix: detectar si la fuente tiene `~/LAIA-ARCH/` poblado
-  y, si sí, usarlo como autoritativo (`arch_src_kind=laia_home`).
-  Fallback a `~/.laia/` solo para sources pre-migración sin LAIA-ARCH.
-  También expanded la check de "source has no ARCH data — skipping"
-  para considerar ambos paths. Los mensajes "skip ~/.laia/X" ahora
-  usan el path real chequeado. Idempotente — el siguiente clone
-  rsynchronizará los dirs faltantes sin tocar lo que ya está.
+  todo lo demás". Causa: la migración E2E T.14.1 del 26-mayo movió toda
+  la data ARCH del operador de `~/.laia/` a `~/LAIA-ARCH/`, pero
+  `clone_phase_h_rsync_arch_data` seguía usando `legacy_laia` como source
+  base. Fix: detectar si la fuente tiene `~/LAIA-ARCH/` poblado y, si sí,
+  usarlo como autoritativo (`arch_src_kind=laia_home`).
+- **Octavo fix (commit pendiente) — rsync único del árbol LAIA-ARCH**:
+  Tras el séptimo fix, Jorge re-corrió y el destino aún tenía solo
+  `cron response_store.db sessions state.db workspaces` — las loops
+  per-spec fallaban silenciosamente después de las primeras 1-2
+  iteraciones (causa raíz no identificada; sospecha de interacción
+  entre `clone_rsync_to_privileged_dest`/stage promotion y rsync
+  exit codes de transferencia parcial). En lugar de seguir parcheando
+  las loops, simplificamos: cuando `arch_src_kind=laia_home`, hacemos
+  UN SOLO `clone_rsync_to_privileged_dest` del árbol LAIA-ARCH/ entero
+  con excludes de runtime cruft (.laia-clone-stage/, *.lock, *.sock,
+  .update_check). rsync es incremental → idempotente. Las loops
+  per-spec quedan como fallback para layout legacy (~/.laia/). Añadido
+  log final que lista el contenido del dest para verificación visual.
 
 ## 2026-05-26 — Ecosystem E2E migration + T.14 polish (claude opus 4.7)
 

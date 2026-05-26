@@ -759,66 +759,96 @@ clone_phase_h_rsync_arch_data() {
   src_base="$(clone_src_for "$arch_src_kind")"
   log_info "  ARCH source layout: $arch_src_kind → $arch_src_check_root"
 
-  while IFS= read -r rel; do
-    [[ -z "$rel" ]] && continue
-    if clone_is_local_source && [[ ! -d "$arch_src_check_root/$rel" ]]; then
-      log_info "  skip $arch_src_check_root/$rel (missing)"
-      continue
-    fi
-    if ! clone_is_local_source && ! clone_source_path_exists "$arch_src_check_root/$rel"; then
-      log_info "  skip $arch_src_check_root/$rel (missing)"
-      continue
-    fi
-    src="${src_base}${rel}/"
-    dst_path="$dst/$rel"
-    clone_rsync_to_privileged_dest "$src" "$dst_path" "arch data $rel"
-  done < <(_clone_arch_operational_dir_specs)
+  # Cuando el source ya está en layout post-T.14.1 (LAIA-ARCH/), la forma
+  # más simple y robusta es UN SOLO rsync del directorio completo. Las per-
+  # spec loops anteriores tenían bugs sutiles (algunas iteraciones fallaban
+  # silenciosamente, dejando data sin copiar — atlas, orchestrator-runs,
+  # migration, whatsapp, logs, platforms, sandboxes, memories, plugins,
+  # skills, SOUL.md, config.yaml). El catch-all garantiza que TODO LAIA-ARCH/
+  # del source aparezca en el dest. Idempotente (rsync es incremental).
+  #
+  # Excluimos los staging dirs del propio cloner (~/.laia-clone-stage/) y
+  # archivos de runtime que no tiene sentido transportar (sockets, locks,
+  # cache transient). Mantenemos symlinks como están (-l, ya en -a).
+  if [[ "$arch_src_kind" == "laia_home" ]]; then
+    log_info "  layout post-T.14.1 detectado — rsync único del árbol completo LAIA-ARCH/"
+    clone_rsync_to_privileged_dest "$src_base" "$dst" "arch tree (catch-all)" \
+      --exclude=".laia-clone-stage/" \
+      --exclude="*.lock" \
+      --exclude="*.sock" \
+      --exclude=".update_check"
+  else
+    # Layout pre-T.14.1: la data ARCH vive dispersa en ~/.laia/. Iteramos
+    # spec por spec, copiando sólo los dirs/files conocidos.
+    log_info "  layout pre-T.14.1 (legacy ~/.laia/) — iterando por specs"
+    while IFS= read -r rel; do
+      [[ -z "$rel" ]] && continue
+      if clone_is_local_source && [[ ! -d "$arch_src_check_root/$rel" ]]; then
+        log_info "  skip $arch_src_check_root/$rel (missing)"
+        continue
+      fi
+      if ! clone_is_local_source && ! clone_source_path_exists "$arch_src_check_root/$rel"; then
+        log_info "  skip $arch_src_check_root/$rel (missing)"
+        continue
+      fi
+      src="${src_base}${rel}/"
+      dst_path="$dst/$rel"
+      clone_rsync_to_privileged_dest "$src" "$dst_path" "arch data $rel"
+    done < <(_clone_arch_operational_dir_specs)
 
-  while IFS= read -r rel; do
-    [[ -z "$rel" ]] && continue
-    if clone_is_local_source && [[ ! -d "$arch_src_check_root/$rel" ]]; then
-      log_info "  skip $arch_src_check_root/$rel (missing)"
-      continue
-    fi
-    if ! clone_is_local_source && ! clone_source_path_exists "$arch_src_check_root/$rel"; then
-      log_info "  skip $arch_src_check_root/$rel (missing)"
-      continue
-    fi
-    src="${src_base}${rel}/"
-    dst_path="$live_dst/$rel"
-    clone_rsync_to_laia_home_dest "$src" "$dst_path" "arch live data $rel"
-  done < <(_clone_arch_interactive_dir_specs)
+    while IFS= read -r rel; do
+      [[ -z "$rel" ]] && continue
+      if clone_is_local_source && [[ ! -d "$arch_src_check_root/$rel" ]]; then
+        log_info "  skip $arch_src_check_root/$rel (missing)"
+        continue
+      fi
+      if ! clone_is_local_source && ! clone_source_path_exists "$arch_src_check_root/$rel"; then
+        log_info "  skip $arch_src_check_root/$rel (missing)"
+        continue
+      fi
+      src="${src_base}${rel}/"
+      dst_path="$live_dst/$rel"
+      clone_rsync_to_laia_home_dest "$src" "$dst_path" "arch live data $rel"
+    done < <(_clone_arch_interactive_dir_specs)
 
-  while IFS= read -r rel; do
-    [[ -z "$rel" ]] && continue
-    if clone_is_local_source && [[ ! -f "$arch_src_check_root/$rel" ]]; then
-      log_info "  skip $arch_src_check_root/$rel (missing)"
-      continue
-    fi
-    if ! clone_is_local_source && ! clone_source_path_exists "$arch_src_check_root/$rel"; then
-      log_info "  skip $arch_src_check_root/$rel (missing)"
-      continue
-    fi
-    clone_rsync_base_opts
-    CLONE_RSYNC_OPTS+=(--numeric-ids)
-    if clone_is_local_source; then
-      mkdir -p "$dst"
-      clone_rsync "arch file $rel" "${CLONE_RSYNC_OPTS[@]}" "$arch_src_check_root/$rel" "$dst/$rel" || true
-    else
-      local stage="$LAIA_USER_HOME/.laia-clone-stage/arch-files"
-      mkdir -p "$stage"
-      clone_rsync "arch file $rel stage" "${CLONE_RSYNC_OPTS[@]}" "${src_base}${rel}" "$stage/$rel" || true
-      if [[ -f "$stage/$rel" ]]; then
-        if inst_is_override_mode; then
-          mkdir -p "$dst"
-          clone_rsync "arch file $rel promote" -a --info=progress2,stats1,name1 --human-readable --outbuf=L "$stage/$rel" "$dst/$rel"
-        else
-          sudo mkdir -p "$dst"
-          clone_rsync "arch file $rel promote" sudo rsync -a --info=progress2,stats1,name1 --human-readable --outbuf=L "$stage/$rel" "$dst/$rel"
+    while IFS= read -r rel; do
+      [[ -z "$rel" ]] && continue
+      if clone_is_local_source && [[ ! -f "$arch_src_check_root/$rel" ]]; then
+        log_info "  skip $arch_src_check_root/$rel (missing)"
+        continue
+      fi
+      if ! clone_is_local_source && ! clone_source_path_exists "$arch_src_check_root/$rel"; then
+        log_info "  skip $arch_src_check_root/$rel (missing)"
+        continue
+      fi
+      clone_rsync_base_opts
+      CLONE_RSYNC_OPTS+=(--numeric-ids)
+      if clone_is_local_source; then
+        mkdir -p "$dst"
+        clone_rsync "arch file $rel" "${CLONE_RSYNC_OPTS[@]}" "$arch_src_check_root/$rel" "$dst/$rel" || true
+      else
+        local stage="$LAIA_USER_HOME/.laia-clone-stage/arch-files"
+        mkdir -p "$stage"
+        clone_rsync "arch file $rel stage" "${CLONE_RSYNC_OPTS[@]}" "${src_base}${rel}" "$stage/$rel" || true
+        if [[ -f "$stage/$rel" ]]; then
+          if inst_is_override_mode; then
+            mkdir -p "$dst"
+            clone_rsync "arch file $rel promote" -a --info=progress2,stats1,name1 --human-readable --outbuf=L "$stage/$rel" "$dst/$rel"
+          else
+            sudo mkdir -p "$dst"
+            clone_rsync "arch file $rel promote" sudo rsync -a --info=progress2,stats1,name1 --human-readable --outbuf=L "$stage/$rel" "$dst/$rel"
+          fi
         fi
       fi
-    fi
-  done < <(_clone_arch_legacy_file_specs)
+    done < <(_clone_arch_legacy_file_specs)
+  fi
+
+  # Diagnóstico final: enumerar lo que QUEDÓ en $dst y comparar contra lo
+  # que esperábamos. Si falta algo crítico, log_warn (no fatal — el operador
+  # decide si re-correr).
+  if [[ -d "$dst" ]]; then
+    log_info "  dest contents: $(ls "$dst" 2>/dev/null | tr '\n' ' ')"
+  fi
 
   clone_phase_h_rewrite_config_paths
   clone_phase_mark_done "rsync-arch"
