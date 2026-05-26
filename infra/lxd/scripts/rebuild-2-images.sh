@@ -91,12 +91,14 @@ ensure_lxd_egress() {
   lxd_probe_egress() {
     local label="$1"
     local probe="laia-egress-check-$$-$label"
+    local launch_timeout="${LAIA_LXD_LAUNCH_TIMEOUT:-180s}"
     local ok_route=false ok_dns=false
 
     lxc delete --force "$probe" >/dev/null 2>&1 || true
-    log "lanzando prueba temporal $probe ($image, profile laia-employee)"
-    if ! lxc launch "$image" "$probe" -p default -p laia-employee >/dev/null; then
-      warn "no pude lanzar contenedor temporal para validar egress LXD"
+    log "lanzando prueba temporal $probe ($image, profile laia-employee, timeout ${launch_timeout})"
+    if ! timeout "$launch_timeout" lxc launch "$image" "$probe" -p default -p laia-employee >/dev/null; then
+      warn "no pude lanzar contenedor temporal para validar egress LXD antes de ${launch_timeout}"
+      lxc delete --force "$probe" >/dev/null 2>&1 || true
       return 20
     fi
 
