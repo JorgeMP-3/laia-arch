@@ -164,3 +164,75 @@ añade una línea `- **Resuelto**: 2026-MM-DD en commit <hash>`.
 - **Workaround**: dejar todo en default y rezar.
 - **Owner**: sin asignar.
 - **Estado**: open.
+
+## backend-jwt-secret-regenerates-on-restart (open)
+
+- **Descubierto**: 2026-05-26 por claude opus 4.7 durante T.14.4.
+- **Síntoma**: cada restart del agora-backend invalida todos los tokens
+  emitidos previamente. F.5.4 falló con `401 invalid signature` después de
+  un restart del backend que normalmente debería ser transparente.
+- **Causa raíz**: `services/agora-backend/app/config.py:64` —
+  `self.jwt_secret = os.environ.get("AGORA_JWT_SECRET", secrets.token_hex(32))`.
+  Si `AGORA_JWT_SECRET` no está en env, genera un random nuevo cada boot.
+  El systemd unit template (`agora-backend.service.tmpl`) no setea esa
+  var, ni el `.env` de `/srv/laia/agora/`.
+- **Reproducción**: login → obtener token → restart backend → token
+  rechazado.
+- **Workaround**: re-login en cada restart.
+- **Fix sugerido**: generar `AGORA_JWT_SECRET` una vez durante install y
+  persistirlo en `/srv/laia/agora/.env` (o systemd unit drop-in). Verify
+  no se commitea.
+- **Owner**: sin asignar.
+- **Estado**: open.
+
+## create-agent-slug-_-dash-mismatch (resolved)
+
+- **Descubierto**: 2026-05-26 por claude opus 4.7 durante T.14.3.
+- **Síntoma**: `create-agent.sh verify_bob` falla con
+  `Invalid instance name "agent-verify_bob": Name can only contain
+  alphanumeric and hyphen characters` (LXD restriction).
+- **Causa raíz**: `infra/lxd/scripts/create-agent.sh:43` validaba slugs con
+  `_` permitido pero LXD lo prohíbe en container names.
+- **Resuelto**: 2026-05-26 — `CONTAINER="${AGENT_CONTAINER_PREFIX:-agent-}${SLUG//_/-}"`
+  mapea `_ → -` solo en el container name. El slug (DB, host paths) se
+  preserva.
+- **Pendiente**: `/api/agents/register` valida slug con `^[a-z0-9][a-z0-9-]{1,30}$`
+  (no acepta `_`). `/api/users` SÍ acepta `_`. Hay drift de validación.
+  Hacer que `/api/users` rechace `_` también, o que `/api/agents/register`
+  lo permita.
+- **Owner**: sin asignar.
+- **Estado**: parcial — fix en create-agent.sh; drift en API queda open.
+
+## create-agent-uid-offset-100000-vs-1000000 (resolved)
+
+- **Descubierto**: 2026-05-26 por claude opus 4.7 durante T.14.4.
+- **Síntoma**: bind mount `/srv/laia/users/<slug>/home → /home/user`
+  dentro del agent container muestra `nobody:nogroup`, root inside no
+  puede escribir. write_file desde el agente devuelve "permiso denegado".
+- **Causa raíz**: `infra/lxd/scripts/create-agent.sh:41` tenía
+  `LXD_UID_OFFSET=100000` por default, pero la idmap real de LXD usa
+  `1000000` (per `/etc/subuid`). Files owned by 100000 en host caen fuera
+  del rango mapeado y aparecen como nobody.
+- **Resuelto**: 2026-05-26 — default cambiado a 1000000.
+- **Workaround para containers ya creados con UID 100000**:
+  `sudo chown -R 1000000:1000000 /srv/laia/users/<slug>/`.
+- **Estado**: resolved.
+
+## pm2-agora-backend-errored-shadowing-container (open)
+
+- **Descubierto**: 2026-05-26 por claude opus 4.7 durante T.14.4.
+- **Síntoma**: `pm2 list` muestra `agora-backend` en estado `errored` con
+  5322+ restarts. Pero `http://127.0.0.1:8088/api/health` responde porque
+  la version REAL del backend corre dentro del container `laia-agora`
+  (LXD proxia `host:8088 → laia-agora:8000`).
+- **Causa raíz**: dual setup — el PM2 spec del host intenta arrancar
+  uvicorn local pero el container ya lo sirve via LXD proxy. PM2 falla
+  porque el puerto está ocupado y entra en restart loop.
+- **Workaround**: ignorar PM2 (no afecta funcionalidad real).
+- **Fix sugerido**: decidir un único deployment path:
+  - Opción A: eliminar PM2 agora-backend, dejar el container `laia-agora`
+    como la única fuente del backend.
+  - Opción B: parar el container `laia-agora`, mover el backend a host
+    via PM2 limpiamente (requiere ajustes de permisos en `/srv/laia/agora/`).
+- **Owner**: sin asignar.
+- **Estado**: open.

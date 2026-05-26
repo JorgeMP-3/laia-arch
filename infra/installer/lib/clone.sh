@@ -37,7 +37,14 @@ readonly LAIA_LIB_CLONE_LOADED=1
 
 readonly LAIA_USERS_DIR_DEFAULT="/srv/laia/users"
 readonly LAIA_AGORA_DIR_DEFAULT="/srv/laia/agora"
-readonly LAIA_ARCH_DIR_DEFAULT="/srv/laia/arch"
+# Post-T.14.1 (2026-05-26): /srv/laia/arch/ is deprecated. ALL ARCH data
+# (interactive + operational) lives under LAIA_HOME (~/LAIA-ARCH/ by default).
+# The previous root-only zone broke laia-pathd/laia-cli which run as the
+# admin user and can't traverse root:root 700 dirs. See
+# workflow/arch-data-layout.md for the canonical layout.
+# Default is set lazily to LAIA_HOME via clone_dest_arch_dir() so the override
+# pattern still works for legacy clones from sources that have /srv/laia/arch.
+readonly LAIA_ARCH_DIR_DEFAULT=""
 readonly LAIA_AGORA_HEALTH_URL="http://127.0.0.1:8088/api/health"
 
 # Populated by clone_detect_paths.
@@ -58,7 +65,9 @@ clone_dest_agora_dir() {
   printf '%s\n' "${LAIA_AGORA_DIR_OVERRIDE:-$LAIA_AGORA_DIR_DEFAULT}"
 }
 clone_dest_arch_dir() {
-  printf '%s\n' "${LAIA_ARCH_DIR_OVERRIDE:-$LAIA_ARCH_DIR_DEFAULT}"
+  # Post-T.14.1: ARCH data lives under LAIA_HOME. Honour an explicit override
+  # (legacy clones may still target /srv/laia/arch) but default to LAIA_HOME.
+  printf '%s\n' "${LAIA_ARCH_DIR_OVERRIDE:-$(clone_dest_laia_home)}"
 }
 clone_dest_arch_creds_dir() {
   printf '%s\n' "${LAIA_ARCH_CREDS_DIR_OVERRIDE:-$LAIA_USER_HOME/.laia}"
@@ -90,7 +99,7 @@ clone_src_for() {
       agora)     printf '%s:%s/\n' "$OPT_SOURCE" "$LAIA_AGORA_DIR_DEFAULT" ;;
       users)     printf '%s:%s/\n' "$OPT_SOURCE" "$LAIA_USERS_DIR_DEFAULT" ;;
       home)      printf '%s:%s/\n' "$OPT_SOURCE" "$REMOTE_HOME" ;;
-      arch)      printf '%s:%s/\n' "$OPT_SOURCE" "$LAIA_ARCH_DIR_DEFAULT" ;;
+      arch)      printf '%s:%s/\n' "$OPT_SOURCE" "${LAIA_ARCH_DIR_OVERRIDE:-/srv/laia/arch}" ;;
       legacy_laia) printf '%s:%s/.laia/\n' "$OPT_SOURCE" "$REMOTE_HOME" ;;
     esac
   fi
@@ -698,7 +707,7 @@ clone_phase_h_rsync_arch_data() {
     emit_json_event step_done clone:rsync-arch "ARCH data copied"
     return 0
   fi
-  if ! clone_is_local_source && clone_source_path_exists "$LAIA_ARCH_DIR_DEFAULT"; then
+  if ! clone_is_local_source && clone_source_path_exists "${LAIA_ARCH_DIR_OVERRIDE:-/srv/laia/arch}"; then
     clone_rsync_to_privileged_dest "$(clone_src_for arch)" "$dst" "arch operational data" $(_clone_arch_interactive_excludes)
     local rel
     while IFS= read -r rel; do
@@ -791,8 +800,8 @@ clone_phase_h_rewrite_config_paths() {
   #   - laia_home   → ${LAIA_HOME:-$LAIA_USER_HOME/LAIA-ARCH} (live admin area)
   #   - agora_data  → /srv/laia/agora/agora.db      (real bind-mounted DB)
   #   - workspaces/memories/skills/plugins → ${LAIA_HOME:-...}/<name>
-  # Additionally, sweep leftover /home/<user>/.laia/ literals to /srv/laia/arch/
-  # because unknown legacy paths are treated as sensitive/runtime by default.
+  # Post-T.14.1: legacy ~/.laia/ literals are swept to ${LAIA_HOME}/ (NOT
+  # /srv/laia/arch/, which is deprecated — see workflow/arch-data-layout.md).
   # Note on the regex: `^[[:space:]]*` is INTENTIONAL — the canonical
   # config.yaml nests the three keys under `paths:` (so they're indented
   # by 2 spaces). Restricting to top-level only would break the rewrite.
@@ -805,9 +814,9 @@ clone_phase_h_rewrite_config_paths() {
   local sed_args=(
     -e 's#^([[:space:]]*laia_root:[[:space:]]*).*#\1/opt/laia#'
     -e 's#^([[:space:]]*agora_data:[[:space:]]*).*#\1/srv/laia/agora/agora.db#'
-    -e 's#~/\.laia/#/srv/laia/arch/#g'
-    -e 's#/home/[^/[:space:]"]+/\.laia/#/srv/laia/arch/#g'
-    -e 's#/home/[^/[:space:]"]+/\.laia([[:space:]"]|$)#/srv/laia/arch\1#g'
+    -e "s#~/\\.laia/#$live_repl/#g"
+    -e "s#/home/[^/[:space:]\"]+/\\.laia/#$live_repl/#g"
+    -e "s#/home/[^/[:space:]\"]+/\\.laia([[:space:]\"]|\$)#$live_repl\\1#g"
     -e 's#/home/[^/[:space:]"]+/LAIA/#/opt/laia/#g'
     -e 's#/home/[^/[:space:]"]+/LAIA([[:space:]"]|$)#/opt/laia\1#g'
     -e "s#^([[:space:]]*laia_home:[[:space:]]*).*#\\1$live_repl#"
@@ -828,7 +837,7 @@ clone_phase_h_rewrite_config_paths() {
     laia-path reload >/dev/null 2>&1 || true
   fi
 
-  log_success "Rewrote config.yaml paths (laia_root → /opt/laia, live ARCH dirs → $live_expr, runtime ARCH dirs → /srv/laia/arch)"
+  log_success "Rewrote config.yaml paths (laia_root → /opt/laia, ARCH data → $live_expr, agora DB → /srv/laia/agora/agora.db)"
 }
 
 clone_phase_h_rsync_arch_creds() {

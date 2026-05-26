@@ -47,5 +47,13 @@ Lo que puede salir mal y cómo mitigarlo.
   — Runbook aprobado para separar desarrollo y producción: `main` para dev,
   `stable` para prod, tags semver sobre `stable`, promote manual y rollback.
   Owner: próxima IA implementadora, con Jorge aprobando cambios materiales.
+- [`2026-05-25-ecosystem-e2e-verification.md`](2026-05-25-ecosystem-e2e-verification.md)
+  — Migración IN-PLACE de ~/.laia/ al layout canónico post-`d02afcb0`
+  (NO reinstala — preserva los 482 MB de data acumulada: workspaces,
+  sessions, atlas, plugins, memorias) + verificación E2E con las 22
+  secciones funcionales del ecosistema documentadas en
+  `docs/db-export/nodes/`. 1 IA secuencial, esta misma VM, snapshot
+  previo obligatorio. ~71 checks F.X.Y. Tiempo: 1-2 h. **Aprobado,
+  listo para ejecutar.** Owner: próxima IA implementadora.
 - [`integrity-tests.md`](integrity-tests.md) — Runner de integridad por capas.
   Owner: codex.

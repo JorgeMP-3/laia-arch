@@ -33,6 +33,9 @@ test: ## Run all tests
 smoke: ## Run deployed AGORA smoke test
 	@bash $(INFRA_DIR)/dev/smoke-test.sh
 
+test-e2e: ## Run ecosystem layout E2E checks (post-T.14)
+	@bash tests/e2e/test_ecosystem_layout.sh
+
 # ── Deploy ───────────────────────────────────────────────────────────────
 
 deploy-agora: ## Build and deploy AGORA (frontend + backend)

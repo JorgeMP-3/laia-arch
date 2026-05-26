@@ -15,6 +15,56 @@ Formato:
 
 ---
 
+## 2026-05-26 — Ecosystem E2E migration + T.14 polish (claude opus 4.7)
+
+- Ejecutado `workflow/plans/2026-05-25-ecosystem-e2e-verification.md` T.0-T.13
+  (482 MB migrados de `~/.laia/` a layout canónico; backend on PM2/LXD,
+  pathd, ui-server vivos). Reporte completo en `/tmp/laia-migrate-report.md`.
+- **T.14.1 (cancela `/srv/laia/arch/`)**: el código (laia_cli, pathd) corre
+  como `laia-hermes` y no puede traversar `/srv/laia/arch/` (root:root 700).
+  Decisión con Jorge: toda la data de ARCH (interactiva + operacional) vive
+  bajo `LAIA_HOME` (= `~/LAIA-ARCH/`). `/srv/laia/arch/` queda deprecado.
+  Doc `workflow/arch-data-layout.md` reescrito para reflejarlo.
+- **T.14.2 (limpieza `~/.laia/`)**: Jorge cerró su `laia` CLI activo en pts/3
+  que había recreado stubs. Stubs vacíos eliminados; los dirs con contenido
+  (sessions, workspaces, sandboxes, logs) fusionados con LAIA_HOME. `~/.laia/`
+  ahora solo legacy compat (`auth.json`, `.env`, `bin/`, `cache/`, etc.).
+- **T.14.3 (LXD)**: daemon LXD estaba colgado en `lxc init` (5+ min sin I/O).
+  Restart de `snap.lxd.daemon` lo destrabó. `agent-verify-bob` aprovisionado y
+  registrado en AGORA.
+- **Bug fixes encontrados en el camino**:
+  - `infra/lxd/scripts/create-agent.sh`: container name no soporta `_` (LXD
+    rechaza). Mapeo automático `_ → -` en el nombre. Slug DB se mantiene.
+  - `infra/lxd/scripts/create-agent.sh`: `LXD_UID_OFFSET` default era `100000`,
+    pero LXD usa `1000000` (per `/etc/subuid`). Corregido. Esto rompía bind
+    mounts de `/srv/laia/users/<slug>/` — `nobody:nogroup` desde container.
+  - `infra/installer/lib/clone.sh`: 5 patches que eliminan refs a `/srv/laia/arch`
+    como destino canónico. Las refs como SOURCE legacy se preservan (clones
+    desde hosts pre-T.14.1).
+- **T.14.4 + T.14.5 (F.5 chat + F.10 executor)**: chat E2E completo
+  funciona (verify-bob → openai-codex → write_file → forwarder → executor
+  container → bind mount → host file con contenido correcto). Persistencia
+  post-recreate (F.5.5) y aislamiento entre containers (F.5.6) verificados.
+  Tras destrabar auth.json bind mount con `rebuild-3b-fix-authjson.sh`.
+- **T.14.6 (F.14 webhooks)**: endpoint correcto es `/api/webhooks/{slug}`
+  con header `X-Laia-Signature: <hex>` (no `sha256=<hex>`). Creación de
+  webhooks via LLM tool `webhook_subscribe` (plugin `agent-scheduler`), no
+  REST API. F.14.2 (good HMAC = 200) y F.14.3 (bad HMAC = 401) verificados.
+- **T.14.9 (test E2E permanente)**: nuevo `tests/e2e/test_ecosystem_layout.sh`
+  + target `make test-e2e`. Pasa con LAIA_HOME=~/LAIA-ARCH: 25 OK / 1 WARN
+  / 0 FAIL / 1 SKIPPED.
+- **Pendiente / abierto**:
+  - JWT secret se regenera en cada arranque del backend (config.py:64 sin
+    AGORA_JWT_SECRET en env). Bug: invalida tokens a cada restart. Anotado
+    en problems.md.
+  - PM2 `agora-backend` queda en `errored` 5322 restarts — la copia host
+    intenta arrancar pero el container `laia-agora` ya sirve :8088. PM2 debe
+    eliminarse o el container debe pararse para no haber doble servicio.
+  - Snapshot LXD/Multipass post-T.14: `multipass snapshot <vm-name> --name
+    post-t14-clean-2026-05-26` (host Mac, no la VM).
+  - Tag git `v2026.05-ecosystem-clean` pendiente de commit + decisión de
+    Jorge sobre push.
+
 ## 2026-05-25 — LAIA_ECOSYSTEM canonicaliza layout LAIA-ARCH (codex)
 
 - Actualizado `LAIA_ECOSYSTEM.md` §8 para que el documento canónico refleje
