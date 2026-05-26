@@ -92,11 +92,39 @@ ensure_lxd_egress() {
     local label="$1"
     local probe="laia-egress-check-$$-$label"
     local launch_timeout="${LAIA_LXD_LAUNCH_TIMEOUT:-180s}"
+    local launch_limit
     local ok_route=false ok_dns=false
+
+    case "$launch_timeout" in
+      *m) launch_limit="$(( ${launch_timeout%m} * 60 ))" ;;
+      *s) launch_limit="${launch_timeout%s}" ;;
+      *) launch_limit="$launch_timeout" ;;
+    esac
+    [[ "$launch_limit" =~ ^[0-9]+$ ]] || launch_limit=180
 
     lxc delete --force "$probe" >/dev/null 2>&1 || true
     log "lanzando prueba temporal $probe ($image, profile laia-employee, timeout ${launch_timeout})"
-    if ! timeout "$launch_timeout" lxc launch "$image" "$probe" -p default -p laia-employee >/dev/null; then
+    lxc launch "$image" "$probe" -p default -p laia-employee >/dev/null 2>&1 &
+    local launch_pid=$!
+    local waited=0
+    while kill -0 "$launch_pid" >/dev/null 2>&1; do
+      sleep 5
+      waited=$((waited + 5))
+      if (( waited >= launch_limit )); then
+        warn "lxc launch sigue bloqueado tras ${waited}s; matando cliente LXD y limpiando $probe"
+        kill "$launch_pid" >/dev/null 2>&1 || true
+        sleep 2
+        kill -KILL "$launch_pid" >/dev/null 2>&1 || true
+        wait "$launch_pid" >/dev/null 2>&1 || true
+        lxc delete --force "$probe" >/dev/null 2>&1 || true
+        return 20
+      fi
+      if (( waited % 15 == 0 )); then
+        warn "esperando lxc launch de $probe (${waited}s/${launch_limit}s)"
+      fi
+    done
+
+    if ! wait "$launch_pid"; then
       warn "no pude lanzar contenedor temporal para validar egress LXD antes de ${launch_timeout}"
       lxc delete --force "$probe" >/dev/null 2>&1 || true
       return 20
