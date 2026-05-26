@@ -236,3 +236,21 @@ añade una línea `- **Resuelto**: 2026-MM-DD en commit <hash>`.
     via PM2 limpiamente (requiere ajustes de permisos en `/srv/laia/agora/`).
 - **Owner**: sin asignar.
 - **Estado**: open.
+
+## laia-ui-server-stale-LAIA_HOME (open)
+
+- **Descubierto**: 2026-05-26 por claude opus 4.7 durante T.14.12.
+- **Síntoma**: tras la migración a `~/LAIA-ARCH`, `~/.laia/` se repuebla
+  con stubs (SOUL.md, state.db, sessions/, workspaces/, logs/) porque
+  `laia-ui-server` (PID inicial 1426, arranque 07:58) y `laia-docs-sync`
+  tienen `LAIA_HOME=/home/laia-hermes/.laia` en su env de runtime.
+- **Causa raíz**: el shell que los lanzó (pre-migración) tenía LAIA_HOME
+  legacy. No hay systemd unit que respete el env del bashrc actualizado;
+  el bind se hizo en boot del shell que arrancó esos procesos.
+- **Workaround inmediato**:
+  `kill <pid>; LAIA_HOME=~/LAIA-ARCH nohup ./laia-ui-server ... &`
+  o crear systemd --user unit con `Environment=LAIA_HOME=...`.
+- **Fix sugerido**: convertir `laia-ui-server` y `laia-docs-sync` en
+  systemd user units (template equivalente al de `laia-pathd.service`)
+  que lean LAIA_HOME del environment o de un .env.paths.
+- **Estado**: open.
