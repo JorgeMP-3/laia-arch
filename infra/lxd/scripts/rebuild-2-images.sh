@@ -38,6 +38,74 @@ warn() { printf "  ${YEL}⚠${RST} %s\n" "$*"; }
 die()  { printf "  ${RED}✗${RST} %s\n" "$*" >&2; exit 1; }
 section() { printf "\n${BLD}== %s ==${RST}\n" "$*"; }
 
+ensure_lxd_egress() {
+  local net="${LAIA_LXD_NETWORK:-lxdbr0}"
+  local subnet="${LAIA_LXD_SUBNET:-10.99.0.0/24}"
+  local image="${LAIA_LXD_EGRESS_IMAGE:-ubuntu:24.04}"
+  local probe="laia-egress-check-$$"
+  local out_if
+
+  section "1.5/4 Verificar red LXD hacia internet"
+
+  log "asegurando forwarding/NAT/DNS en $net"
+  sysctl -w net.ipv4.ip_forward=1 >/dev/null 2>&1 || true
+  if [[ -w /etc/sysctl.d ]]; then
+    printf '%s\n' 'net.ipv4.ip_forward=1' >/etc/sysctl.d/99-laia-lxd-forward.conf 2>/dev/null || true
+  fi
+  lxc network set "$net" ipv4.nat true >/dev/null 2>&1 || true
+  lxc network set "$net" dns.mode managed >/dev/null 2>&1 || true
+  ip link set "$net" up >/dev/null 2>&1 || true
+
+  out_if="$(ip route show default 2>/dev/null | awk 'NR == 1 {print $5}')"
+  if [[ -n "$out_if" ]] && command -v iptables >/dev/null 2>&1; then
+    iptables -t nat -C POSTROUTING -s "$subnet" -o "$out_if" -j MASQUERADE 2>/dev/null \
+      || iptables -t nat -A POSTROUTING -s "$subnet" -o "$out_if" -j MASQUERADE 2>/dev/null || true
+    iptables -C FORWARD -i "$net" -o "$out_if" -j ACCEPT 2>/dev/null \
+      || iptables -I FORWARD 1 -i "$net" -o "$out_if" -j ACCEPT 2>/dev/null || true
+    iptables -C FORWARD -i "$out_if" -o "$net" -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT 2>/dev/null \
+      || iptables -I FORWARD 1 -i "$out_if" -o "$net" -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT 2>/dev/null || true
+  fi
+
+  lxc delete --force "$probe" >/dev/null 2>&1 || true
+  log "lanzando prueba temporal $probe ($image, profile laia-employee)"
+  lxc launch "$image" "$probe" -p default -p laia-employee >/dev/null \
+    || die "no pude lanzar contenedor temporal para validar egress LXD"
+  trap 'lxc delete --force "$probe" >/dev/null 2>&1 || true' RETURN
+
+  local ok_route=false ok_dns=false
+  for _ in {1..30}; do
+    if lxc exec -T "$probe" -- sh -lc 'ip route | grep -q "^default "' >/dev/null 2>&1; then
+      ok_route=true
+      break
+    fi
+    lxc exec -T "$probe" -- systemctl restart systemd-networkd >/dev/null 2>&1 || true
+    sleep 1
+  done
+
+  if [[ "$ok_route" != true ]]; then
+    lxc exec -T "$probe" -- sh -lc 'ip addr; ip route' 2>/dev/null || true
+    die "LXD container has no default route on $net. Check 'lxc network show $net', host firewall, and DHCP on lxdbr0."
+  fi
+  ok "contenedor temporal tiene ruta por defecto"
+
+  for _ in {1..20}; do
+    if lxc exec -T "$probe" -- getent hosts archive.ubuntu.com >/dev/null 2>&1; then
+      ok_dns=true
+      break
+    fi
+    sleep 1
+  done
+
+  if [[ "$ok_dns" != true ]]; then
+    lxc exec -T "$probe" -- sh -lc 'cat /etc/resolv.conf; ip route' 2>/dev/null || true
+    die "LXD container cannot resolve archive.ubuntu.com. Check DNS on $net; tried dns.mode=managed."
+  fi
+  ok "contenedor temporal resuelve archive.ubuntu.com"
+
+  lxc delete --force "$probe" >/dev/null 2>&1 || true
+  trap - RETURN
+}
+
 command -v lxc >/dev/null || die "lxc no encontrado en PATH"
 [[ -d "$REPO" ]] || die "LAIA_ROOT not found: $REPO"
 
@@ -73,6 +141,8 @@ if ! lxc profile show laia-agora >/dev/null 2>&1; then
 else
   ok "profile laia-agora ya existe"
 fi
+
+ensure_lxd_egress
 
 # ────────────────────────────────────────────────────────────────────────────
 section "2/4 Borrar imágenes previas"
