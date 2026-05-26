@@ -49,17 +49,34 @@ Formato:
   `8.8.8.8` + `9.9.9.9`. Más relax en check `state UP` de lxdbr0
   (bridges suelen reportar UNKNOWN; chequeo el flag `<...,UP,...>` en
   lugar de `state UP`).
-- **Tercer fix (commit pendiente)**: en el siguiente run de Jorge el
+- **Tercer fix (commit `b595be98`)**: en el siguiente run de Jorge el
   container `laia-agent-base` quedó RUNNING **sin IPv4** (DHCP del
   bridge no le asignó IP), por lo que el fallback de DNS estático no
   podía resolver (sin ruta, 1.1.1.1 inalcanzable). Nuevo helper
   compartido `infra/lxd/image-build/lib-build.sh::ensure_container_network`
   con escalada DHCP → dhclient/networkctl → **IP estática derivada del
   bridge** (`lxc network get lxdbr0 ipv4.address` → octeto `.249`, gw
-  bridge.1), luego DNS con fallback. `die` con diagnóstico (`lxc
-  network show`, `ip addr`, `resolv.conf`) sólo si TODO falla. Flag de
-  escape: `LAIA_LXD_FORCE_STATIC_NET=1`. Smoke local OK contra
-  `laia-agora`: happy path detecta IPv4+DNS sin side effects.
+  bridge.1), luego DNS con fallback.
+- **Cuarto fix (commit pendiente)**: ambas imágenes se construyeron OK
+  con el helper, pero el container final `laia-agora` (lanzado por
+  `rebuild-3-provision-agora.sh` step 5/7) volvió a quedar sin IPv4
+  porque el helper sólo estaba en los build-scripts. Step 7/7 hacía
+  `die "no pude obtener IP del container"` y abortaba el clone tras
+  todos los rsyncs OK. Fix:
+  - `rebuild-3-provision-agora.sh` ahora sourcea `lib-build.sh` y
+    llama `ensure_container_network` tras `lxc launch`.
+  - Step 7/7 `Esperar /api/health` ahora prueba en paralelo el
+    endpoint via bridge (`<container_ip>:8000`) Y el proxy del host
+    (`127.0.0.1:8088`); cualquiera que responda es suficiente. Si
+    `lxc list` no devuelve IPv4, fallback a `ip -4 -o addr show eth0`
+    desde dentro. Diagnóstico extendido si TODO falla (journalctl +
+    ip+ss inside container).
+  - `lib-build.sh`: añadido alias `info → log` para que se pueda
+    sourcear desde scripts que usan `log` (rebuild-3) y desde los
+    que usan `info` (build-{base,agora}-image.sh).
+  - Bug menor: `dhclient -4 -v` sin timeout colgaba ~60-75s antes
+    de rendirse. Ahora envuelto con `timeout 8` + flag `-1` (one-try).
+    Ahorra ~60s por container cuando DHCP está roto.
 
 ## 2026-05-26 — Ecosystem E2E migration + T.14 polish (claude opus 4.7)
 

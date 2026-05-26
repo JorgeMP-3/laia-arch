@@ -1,7 +1,14 @@
-# lib-build.sh — helpers compartidos por build-{base,agora}-image.sh.
+# lib-build.sh — helpers compartidos por build-{base,agora}-image.sh y
+# por rebuild-3-provision-agora.sh.
 #
-# Source-only (no shebang, no main). Espera que el script consumidor
-# defina info/ok/warn/die.
+# Source-only (no shebang, no main). El script consumidor debe definir
+# ok/warn/die y (uno de) info|log. Si sólo define `log`, aliasamos info → log.
+
+declare -f info >/dev/null 2>&1 || info() {
+  if declare -f log >/dev/null 2>&1; then log "$@"
+  else printf "→ %s\n" "$*"
+  fi
+}
 
 # ensure_container_network <container> [<bridge>]
 #
@@ -54,14 +61,16 @@ ensure_container_network() {
       sleep 1
     done
 
-    # 2. Si no llegó, intentar dhclient/networkctl manual
+    # 2. Si no llegó, intentar dhclient/networkctl manual (con timeout
+    # corto: dhclient sin servidor se cuelga hasta su timeout de ~60s,
+    # que no nos sirve — si el DHCP no respondió en 30s no lo va a hacer).
     if [[ "$ipv4_ok" != true ]]; then
-      warn "no IPv4 tras 30s — intentando dhclient/networkctl manual"
+      warn "no IPv4 tras 30s — intentando dhclient/networkctl manual (timeout 8s)"
       lxc exec -T "$container" -- bash -lc '
         set +e
         systemctl restart systemd-networkd 2>/dev/null
-        networkctl renew eth0 2>/dev/null
-        dhclient -4 -v eth0 2>/dev/null
+        timeout 5 networkctl renew eth0 2>/dev/null
+        timeout 8 dhclient -1 -4 -v eth0 2>/dev/null
       ' </dev/null >/dev/null 2>&1 || true
       for i in $(seq 1 5); do
         if _ec_has_ipv4; then

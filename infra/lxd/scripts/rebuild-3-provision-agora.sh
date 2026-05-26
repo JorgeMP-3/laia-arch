@@ -131,6 +131,12 @@ lxc launch "$IMAGE" "$CONTAINER" -p default -p "$PROFILE" >/dev/null
 sleep 3
 ok "$CONTAINER lanzado"
 
+# Garantizar IPv4 + ruta + DNS para el container final (mismo helper que
+# build-{base,agora}-image.sh — escala DHCP → dhclient → IP estática).
+# shellcheck disable=SC1091
+source "$REPO/infra/lxd/image-build/lib-build.sh"
+ensure_container_network "$CONTAINER"
+
 log "bind mount: $HOST_DATA_DIR → /opt/agora/data"
 lxc config device add "$CONTAINER" agora-data disk \
     source="$HOST_DATA_DIR" path=/opt/agora/data >/dev/null
@@ -163,34 +169,69 @@ lxc exec "$CONTAINER" -- systemctl enable --now agora-backend.service \
 # ────────────────────────────────────────────────────────────────────────────
 section "7/7 Esperar /api/health"
 # ────────────────────────────────────────────────────────────────────────────
-CONTAINER_IP=$(lxc list "$CONTAINER" --format json | jq -r '.[0].state.network.eth0.addresses[]? | select(.family=="inet") | .address' | head -1)
-[[ -z "$CONTAINER_IP" ]] && die "no pude obtener IP del container"
+# Resolver IP del container; ensure_container_network garantiza que existe
+# (DHCP o estática). Si el JSON de lxc list no la expone aún, peek directo
+# desde dentro vía `ip -4`.
+CONTAINER_IP=$(lxc list "$CONTAINER" --format json 2>/dev/null \
+  | jq -r '.[0].state.network.eth0.addresses[]? | select(.family=="inet") | .address' 2>/dev/null \
+  | head -1)
+if [[ -z "$CONTAINER_IP" ]]; then
+  CONTAINER_IP=$(lxc exec -T "$CONTAINER" -- sh -lc \
+    "ip -4 -o addr show eth0 2>/dev/null | awk '{print \$4}' | head -1 | cut -d/ -f1" 2>/dev/null || true)
+fi
 
-# Probamos contra la IP del bridge LXD (más fiable que via proxy host:8088).
-HEALTH_URL="http://${CONTAINER_IP}:${CONTAINER_PORT}/api/health"
-log "esperando $HEALTH_URL ..."
+# Estrategia: probamos /api/health en MÚLTIPLES endpoints en paralelo
+# durante 60s. Cualquiera que responda nos basta para considerar al
+# backend up:
+#   - http://<CONTAINER_IP>:8000  (vía bridge LXD si tenemos IP)
+#   - http://127.0.0.1:8088      (proxy device del host)
+CANDIDATES=()
+[[ -n "$CONTAINER_IP" ]] && CANDIDATES+=("http://${CONTAINER_IP}:${CONTAINER_PORT}/api/health")
+CANDIDATES+=("http://127.0.0.1:${HOST_PORT}/api/health")
+
+if [[ -n "$CONTAINER_IP" ]]; then
+  log "esperando health en ${CANDIDATES[*]}"
+else
+  warn "no pude resolver IP del container; probaré sólo via proxy host:${HOST_PORT}"
+fi
+
 SUCCESS=0
+HEALTH_URL=""
 for i in {1..60}; do
-  if curl -fsS "$HEALTH_URL" >/dev/null 2>&1; then
-    SUCCESS=1
-    break
-  fi
+  for url in "${CANDIDATES[@]}"; do
+    if curl -fsS --max-time 2 "$url" >/dev/null 2>&1; then
+      SUCCESS=1
+      HEALTH_URL="$url"
+      break 2
+    fi
+  done
   sleep 1
 done
+
 if [[ "$SUCCESS" -ne 1 ]]; then
   echo ""
   echo "--- journalctl agora-backend (últimas 40 líneas) ---"
   lxc exec "$CONTAINER" -- journalctl -u agora-backend.service --no-pager -n 40 || true
-  die "/api/health no respondió en 60s. Revisa el log."
+  echo "--- network state inside container ---"
+  lxc exec "$CONTAINER" -- sh -lc 'ip -4 addr; ip route; ss -tlnp 2>/dev/null | head -20' || true
+  die "/api/health no respondió en 60s en ninguno de: ${CANDIDATES[*]}"
 fi
 ok "/api/health responde en $HEALTH_URL"
 
-# También probamos el proxy host:8088
-if curl -fsS "http://127.0.0.1:${HOST_PORT}/api/health" >/dev/null 2>&1; then
-  ok "proxy host:$HOST_PORT también responde"
-else
-  warn "proxy host:$HOST_PORT no responde (el container sí). Revisa lxc network."
-fi
+# Verificación cruzada: si el primero fue el bridge IP, probamos también
+# el proxy host (y viceversa) para detectar problemas de routing temprano.
+for url in "${CANDIDATES[@]}"; do
+  [[ "$url" == "$HEALTH_URL" ]] && continue
+  if curl -fsS --max-time 2 "$url" >/dev/null 2>&1; then
+    ok "$url también responde"
+  else
+    warn "$url no responde (el otro endpoint sí, así que el backend está up)"
+  fi
+done
+
+# Si no teníamos CONTAINER_IP antes pero el container está en estado
+# RUNNING con el proxy funcionando, ponemos placeholder para state file.
+[[ -z "$CONTAINER_IP" ]] && CONTAINER_IP="(no-eth0-ip;proxy-only)"
 
 cat > "$STATE_FILE" <<EOF
 {
