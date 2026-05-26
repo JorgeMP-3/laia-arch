@@ -106,11 +106,13 @@ ensure_lxd_egress() {
   lxd_host_egress_check() {
     local rc=0
 
-    # 1. lxdbr0 existe, está up y tiene IP.
-    if ip link show "$net" 2>/dev/null | grep -q 'state UP'; then
-      ok "$net está up"
+    # 1. lxdbr0 existe y tiene IP. (Bridges Linux suelen reportar
+    # state UNKNOWN aunque sean funcionales — el flag IFF_UP en los
+    # flags `<...,UP,...>` de `ip link show` es la señal real.)
+    if ip link show "$net" 2>/dev/null | grep -qE '(<|,)UP(,|>)'; then
+      ok "$net existe y está UP"
     else
-      warn "$net no está up o no existe"
+      warn "$net no existe o no está UP"
       rc=1
     fi
 

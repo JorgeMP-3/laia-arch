@@ -40,8 +40,16 @@ Formato:
 - Plan completo en `workflow/plans/2026-05-26-installer-clone-thinkstation-fix.md`.
 - Smoke local pasado (Plan C del plan): `ensure_lxd_egress` retorna 0
   en ambos modos (defaults + skip), warnings claros para fallos parciales.
-- **Pendiente**: validación real del clone Thinkstation ← laia-hermes@100.73.36.92
-  (Jorge re-corre el comando del Contexto del plan).
+- **Validación parcial en Thinkstation**: el preflight ya NO bloquea
+  (commit `5385ca3b`). Pero apareció el problema real: DNS roto dentro
+  del container (host alcanza archive.ubuntu.com, container no resuelve).
+- **Segundo fix** (commit pendiente): `build-base-image.sh` y
+  `build-agora-image.sh` ahora esperan hasta 20 s a que el DNS del
+  container funcione; si no, dropean `/etc/resolv.conf` estático con
+  `1.1.1.1` + `8.8.8.8` + `9.9.9.9` y `die` claro si tampoco resuelve
+  con eso (señal inequívoca de NAT/egress roto). Más relax en check
+  `state UP` de lxdbr0 (bridges suelen reportar UNKNOWN; chequeo el
+  flag `<...,UP,...>` en lugar de `state UP`).
 
 ## 2026-05-26 — Ecosystem E2E migration + T.14 polish (claude opus 4.7)
 
