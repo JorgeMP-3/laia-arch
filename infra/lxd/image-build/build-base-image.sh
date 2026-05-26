@@ -90,42 +90,11 @@ info "launching base container $BASE_CONTAINER from $BASE_IMAGE"
 lxc launch "$BASE_IMAGE" "$BASE_CONTAINER" -p default -p "$PROFILE"
 sleep 8
 
-# ── wait for container DNS (with static fallback) ───────────────────────────
-# On some hosts (Ubuntu 24.04+ with NetworkManager or broken dnsmasq on
-# lxdbr0), the container's resolved/DHCP-provided DNS fails to reach
-# upstream, causing "Temporary failure resolving 'archive.ubuntu.com'".
-# We wait up to 20 s for DNS to work; if it doesn't, we drop a static
-# /etc/resolv.conf inside the container so the build can proceed.
-info "waiting for container DNS"
-dns_ok=false
-for i in $(seq 1 20); do
-  if lxc exec -T "$BASE_CONTAINER" -- getent hosts archive.ubuntu.com >/dev/null 2>&1; then
-    dns_ok=true
-    break
-  fi
-  sleep 1
-done
-if [[ "$dns_ok" != true ]]; then
-  warn "container DNS no responde tras 20s — fijando /etc/resolv.conf estático (1.1.1.1, 8.8.8.8)"
-  lxc exec -T "$BASE_CONTAINER" -- bash -lc '
-    set -uo pipefail
-    systemctl stop systemd-resolved 2>/dev/null || true
-    systemctl disable systemd-resolved 2>/dev/null || true
-    rm -f /etc/resolv.conf
-    cat > /etc/resolv.conf <<EOF
-nameserver 1.1.1.1
-nameserver 8.8.8.8
-nameserver 9.9.9.9
-EOF
-    # Re-test
-    getent hosts archive.ubuntu.com >/dev/null 2>&1 || {
-      echo "DNS still failing with static resolvers — check host egress" >&2
-      exit 1
-    }
-  ' </dev/null || die "container has no working DNS even with static fallback — check host egress and lxdbr0 NAT"
-else
-  ok "container DNS OK"
-fi
+# Garantizar IPv4 + ruta + DNS (con escalada DHCP → dhclient → static).
+# Helper compartido con build-agora-image.sh.
+# shellcheck disable=SC1091
+source "$(dirname "${BASH_SOURCE[0]}")/lib-build.sh"
+ensure_container_network "$BASE_CONTAINER"
 
 # ── install OS deps ─────────────────────────────────────────────────────────
 

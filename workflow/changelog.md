@@ -43,13 +43,23 @@ Formato:
 - **Validación parcial en Thinkstation**: el preflight ya NO bloquea
   (commit `5385ca3b`). Pero apareció el problema real: DNS roto dentro
   del container (host alcanza archive.ubuntu.com, container no resuelve).
-- **Segundo fix** (commit pendiente): `build-base-image.sh` y
-  `build-agora-image.sh` ahora esperan hasta 20 s a que el DNS del
-  container funcione; si no, dropean `/etc/resolv.conf` estático con
-  `1.1.1.1` + `8.8.8.8` + `9.9.9.9` y `die` claro si tampoco resuelve
-  con eso (señal inequívoca de NAT/egress roto). Más relax en check
-  `state UP` de lxdbr0 (bridges suelen reportar UNKNOWN; chequeo el
-  flag `<...,UP,...>` en lugar de `state UP`).
+- **Segundo fix** (commit `be94c18b`): `build-base-image.sh` y
+  `build-agora-image.sh` esperan hasta 20 s a que el DNS del container
+  funcione; si no, dropean `/etc/resolv.conf` estático con `1.1.1.1` +
+  `8.8.8.8` + `9.9.9.9`. Más relax en check `state UP` de lxdbr0
+  (bridges suelen reportar UNKNOWN; chequeo el flag `<...,UP,...>` en
+  lugar de `state UP`).
+- **Tercer fix (commit pendiente)**: en el siguiente run de Jorge el
+  container `laia-agent-base` quedó RUNNING **sin IPv4** (DHCP del
+  bridge no le asignó IP), por lo que el fallback de DNS estático no
+  podía resolver (sin ruta, 1.1.1.1 inalcanzable). Nuevo helper
+  compartido `infra/lxd/image-build/lib-build.sh::ensure_container_network`
+  con escalada DHCP → dhclient/networkctl → **IP estática derivada del
+  bridge** (`lxc network get lxdbr0 ipv4.address` → octeto `.249`, gw
+  bridge.1), luego DNS con fallback. `die` con diagnóstico (`lxc
+  network show`, `ip addr`, `resolv.conf`) sólo si TODO falla. Flag de
+  escape: `LAIA_LXD_FORCE_STATIC_NET=1`. Smoke local OK contra
+  `laia-agora`: happy path detecta IPv4+DNS sin side effects.
 
 ## 2026-05-26 — Ecosystem E2E migration + T.14 polish (claude opus 4.7)
 
