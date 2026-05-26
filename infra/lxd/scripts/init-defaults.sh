@@ -32,5 +32,34 @@ else
   echo "Created network: $NETWORK_NAME ($NETWORK_IPV4)"
 fi
 
+# UFW + LXD: si UFW está activo con política INPUT DROP, captura los
+# DHCP DISCOVERs (udp/67) de los containers ANTES de que las reglas
+# LXD los acepten. Causa raíz documentada del DHCP roto en hosts con
+# UFW activo (típico Ubuntu LTS). Fix idempotente.
+#
+# Esto se hace AQUÍ (init-defaults siempre corre) en lugar de en
+# rebuild-2-images.sh::ensure_lxd_egress porque rebuild-2 se salta si
+# las imágenes ya están presentes — y entonces el fix nunca se aplica.
+if command -v ufw >/dev/null 2>&1; then
+  if [[ $EUID -ne 0 ]]; then
+    SUDO_CMD="sudo"
+  else
+    SUDO_CMD=""
+  fi
+  if $SUDO_CMD ufw status 2>/dev/null | head -1 | grep -qi 'Status: active'; then
+    if $SUDO_CMD ufw status 2>/dev/null | grep -qE "Anywhere on $NETWORK_NAME|on $NETWORK_NAME[[:space:]]+ALLOW IN"; then
+      echo "UFW: regla 'allow in on $NETWORK_NAME' ya presente"
+    else
+      echo "UFW activo — añadiendo 'allow in on $NETWORK_NAME' (fix DHCP containers)"
+      if $SUDO_CMD ufw allow in on "$NETWORK_NAME" >/dev/null 2>&1; then
+        $SUDO_CMD ufw reload >/dev/null 2>&1 || true
+        echo "UFW: regla 'allow in on $NETWORK_NAME' añadida"
+      else
+        echo "WARN: 'ufw allow in on $NETWORK_NAME' falló — añádela a mano: sudo ufw allow in on $NETWORK_NAME && sudo ufw reload" >&2
+      fi
+    fi
+  fi
+fi
+
 echo "LXD defaults ready."
 

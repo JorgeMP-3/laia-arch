@@ -88,8 +88,16 @@ Formato:
   ya existe regla para el bridge (`Anywhere on lxdbr0` o `on lxdbr0 ALLOW IN`),
   y si no, ejecuta `ufw allow in on lxdbr0 && ufw reload`. Idempotente.
   Más check informativo en `lxd_host_egress_check` que reporta el
-  estado de UFW. Ahora el installer maneja UFW automáticamente — no
-  hace falta el fallback de IP estática para servers con UFW activo.
+  estado de UFW.
+- **Sexto fix (commit pendiente) — UFW fix en init-defaults.sh**: el
+  fix anterior vivía en `rebuild-2-images.sh::lxd_apply_network_config`,
+  pero `boot_build_images` salta rebuild-2 si las imágenes ya están
+  presentes. En el re-run de Jorge tras el quinto fix las imágenes
+  existían → rebuild-2 se saltó → UFW fix nunca se aplicó → DHCP
+  seguía droppeado. Movido el fix a `init-defaults.sh` (que SIEMPRE
+  corre desde `boot_init_defaults`), con detección de sudo y log
+  consistente con el estilo del script. Ahora la regla se garantiza
+  en cualquier modo (install, clone, re-run).
 
 ## 2026-05-26 — Ecosystem E2E migration + T.14 polish (claude opus 4.7)
 
