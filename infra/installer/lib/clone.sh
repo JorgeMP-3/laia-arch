@@ -824,6 +824,9 @@ clone_phase_h_rewrite_config_paths() {
     -e "s#^([[:space:]]*memories:[[:space:]]*).*#\\1$live_repl/memories#"
     -e "s#^([[:space:]]*skills:[[:space:]]*).*#\\1$live_repl/skills#"
     -e "s#^([[:space:]]*plugins:[[:space:]]*).*#\\1$live_repl/plugins#"
+    -e "s#^([[:space:]]*state_db:[[:space:]]*).*#\\1$live_repl/state.db#"
+    -e "s#^([[:space:]]*response_store:[[:space:]]*).*#\\1$live_repl/response_store.db#"
+    -e "s#^([[:space:]]*response_store_db:[[:space:]]*).*#\\1$live_repl/response_store.db#"
   )
   if inst_is_override_mode; then
     sed -i -E "${sed_args[@]}" "$cfg"

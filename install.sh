@@ -499,12 +499,15 @@ hand_off() {
   export HOME="$LAIA_USER_HOME"
   export LAIA_ROOT="$LAIA_DIR"
 
-  # If stdin isn't a TTY (curl|bash), reopen /dev/tty so the wizard can
-  # read user input. Python's __main__._reattach_tty does the same on
-  # its side; belt-and-braces.
-  if [[ ! -t 0 ]] && [[ -r /dev/tty ]]; then
+  # Only the interactive wizard should inherit /dev/tty. Headless install/clone
+  # runs must not pass a controlling terminal down to LXD image builds: that
+  # path previously let `lxc exec`/apt inherit terminal state and appear frozen
+  # at "installing OS packages" on Ubuntu 26.04 arm64.
+  if [[ "$OPT_MODE" == "wizard" && "$OPT_YES" != true && ! -t 0 && -r /dev/tty ]]; then
     log "Reopening /dev/tty for interactive input."
     exec "${cmd[@]}" </dev/tty
+  elif [[ "$OPT_YES" == true || "$OPT_MODE" != "wizard" ]]; then
+    exec "${cmd[@]}" </dev/null
   fi
   exec "${cmd[@]}"
 }

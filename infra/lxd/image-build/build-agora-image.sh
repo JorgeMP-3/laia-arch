@@ -117,7 +117,7 @@ lxc exec -T "$BASE_CONTAINER" -- bash -lc '
   if ! id agora >/dev/null 2>&1; then
     useradd --system --no-create-home --shell /usr/sbin/nologin --home /opt/agora agora
   fi
-'
+' </dev/null
 
 # ── upload + extract source ─────────────────────────────────────────────────
 
@@ -131,7 +131,7 @@ lxc exec -T "$BASE_CONTAINER" -- bash -lc '
   tar -xzf /tmp/laia-agora-src.tar.gz -C /opt/agora/app
   rm /tmp/laia-agora-src.tar.gz
   ls /opt/agora/app
-'
+' </dev/null
 
 # ── seed config.yaml so workspace-context activates with the collective ws ──
 
@@ -149,7 +149,7 @@ plugins:
 memory:
   provider: workspace-context
 EOF
-'
+' </dev/null
 
 # ── build venv ──────────────────────────────────────────────────────────────
 
@@ -180,7 +180,7 @@ lxc exec -T "$BASE_CONTAINER" -- bash -lc '
   elif [[ -f /opt/agora/app/.laia-core/requirements.txt ]]; then
     /opt/agora/venv/bin/pip install -r /opt/agora/app/.laia-core/requirements.txt
   fi
-'
+' </dev/null
 
 # ── install systemd unit ────────────────────────────────────────────────────
 
@@ -193,7 +193,7 @@ lxc exec -T "$BASE_CONTAINER" -- bash -lc '
   chown -R agora:agora /opt/agora/data
   chown -R root:agora /opt/agora/app /opt/agora/venv
   chmod -R g+rX /opt/agora/app /opt/agora/venv
-'
+' </dev/null
 
 info "installing hardened systemd unit for agora-backend"
 lxc exec -T "$BASE_CONTAINER" -- bash -lc '
@@ -264,7 +264,7 @@ WantedBy=multi-user.target
 EOF
   systemctl daemon-reload
   systemctl enable agora-backend.service
-'
+' </dev/null
 
 # ── snapshot + publish ──────────────────────────────────────────────────────
 

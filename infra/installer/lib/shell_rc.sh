@@ -67,7 +67,9 @@ shell_rc_apply() {
     else
       # Append fresh block, separated by a blank line if file does not end on one.
       cp "$rc" "$tmp"
-      [[ -s "$tmp" && "$(tail -c1 "$tmp" 2>/dev/null)" != $'\n' ]] && printf '\n' >>"$tmp"
+      if [[ -s "$tmp" && "$(tail -c1 "$tmp" 2>/dev/null)" != $'\n' ]]; then
+        printf '\n' >>"$tmp"
+      fi
       printf '\n%s\n' "$new_block" >>"$tmp"
       mv "$tmp" "$rc"
       log_info "Added LAIA block to $rc"

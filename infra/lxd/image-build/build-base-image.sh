@@ -110,7 +110,7 @@ lxc exec -T "$BASE_CONTAINER" -- bash -lc '
   mkdir -p /home/user
   apt-get clean
   rm -rf /var/lib/apt/lists/*
-'
+' </dev/null
 
 # ── push executor source + install ──────────────────────────────────────────
 
@@ -124,7 +124,7 @@ lxc exec -T "$BASE_CONTAINER" -- bash -lc '
   rm /tmp/laia-executor-src.tar.gz
   cp -a /tmp/services/laia-executor/. /opt/laia-executor/
   rm -rf /tmp/services
-'
+' </dev/null
 
 info "building python venv at /opt/laia-executor/venv"
 lxc exec -T "$BASE_CONTAINER" -- bash -lc '
@@ -132,7 +132,7 @@ lxc exec -T "$BASE_CONTAINER" -- bash -lc '
   python3 -m venv /opt/laia-executor/venv
   /opt/laia-executor/venv/bin/pip install --upgrade pip setuptools wheel
   /opt/laia-executor/venv/bin/pip install -e /opt/laia-executor
-'
+' </dev/null
 ok "venv built"
 
 # ── install systemd unit ────────────────────────────────────────────────────
@@ -146,7 +146,7 @@ lxc exec -T "$BASE_CONTAINER" -- bash -lc '
   systemctl enable laia-executor.service
   # Do NOT start now — the per-container token at /etc/laia/executor-token
   # is written by create-agent.sh at provisioning time.
-'
+' </dev/null
 
 # ── smoke test (import only — service starts in create-agent.sh) ────────────
 
@@ -161,7 +161,7 @@ assert default_registry.has(\"read_file\")
 assert default_registry.has(\"bash\")
 print(\"laia-executor import OK; tools=\", len(default_registry.list_tools()))
 "
-'
+' </dev/null
 ok "import smoke test passed"
 
 # ── publish image ───────────────────────────────────────────────────────────
