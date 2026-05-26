@@ -719,8 +719,8 @@ clone_phase_h_rsync_arch_data() {
     emit_json_event step_done clone:rsync-arch "ARCH data copied"
     return 0
   fi
-  if clone_is_local_source && [[ ! -d "$OPT_SOURCE_DIR/home/.laia" ]]; then
-    log_info "  Source has no ARCH operational data — skipping"
+  if clone_is_local_source && [[ ! -d "$OPT_SOURCE_DIR/home/.laia" ]] && [[ ! -d "$OPT_SOURCE_DIR/LAIA-ARCH" ]]; then
+    log_info "  Source has no ARCH operational data (ni ~/.laia ni LAIA-ARCH) — skipping"
     clone_phase_mark_done "rsync-arch"
     emit_json_event step_done clone:rsync-arch "No ARCH operational data at source"
     return 0
@@ -732,16 +732,41 @@ clone_phase_h_rsync_arch_data() {
     sudo mkdir -p "$dst"
   fi
 
+  # Post-T.14.1 (migración E2E del 2026-05-26): toda la data ARCH del
+  # operador (interactiva + operacional) vive bajo ~/LAIA-ARCH/, no en
+  # ~/.laia/. Detectamos cuál layout tiene la fuente y rsynchronizamos
+  # desde el correcto. Si el source tiene LAIA-ARCH/ poblado, lo usamos
+  # como autoritativo. Fallback a ~/.laia/ sólo para sources realmente
+  # pre-migración (sin LAIA-ARCH/).
   local rel src_base src dst_path
-  src_base="$(clone_src_for legacy_laia)"
+  local arch_src_kind="legacy_laia"
+  local arch_src_check_root
+  if clone_is_local_source; then
+    if [[ -d "$OPT_SOURCE_DIR/LAIA-ARCH" ]]; then
+      arch_src_kind="laia_home"
+      arch_src_check_root="$OPT_SOURCE_DIR/LAIA-ARCH"
+    else
+      arch_src_check_root="$OPT_SOURCE_DIR/home/.laia"
+    fi
+  else
+    if [[ -n "${REMOTE_LAIA_HOME:-}" ]] && clone_source_path_exists "$REMOTE_LAIA_HOME"; then
+      arch_src_kind="laia_home"
+      arch_src_check_root="$REMOTE_LAIA_HOME"
+    else
+      arch_src_check_root="$REMOTE_HOME/.laia"
+    fi
+  fi
+  src_base="$(clone_src_for "$arch_src_kind")"
+  log_info "  ARCH source layout: $arch_src_kind → $arch_src_check_root"
+
   while IFS= read -r rel; do
     [[ -z "$rel" ]] && continue
-    if clone_is_local_source && [[ ! -d "$OPT_SOURCE_DIR/home/.laia/$rel" ]]; then
-      log_info "  skip ~/.laia/$rel (missing)"
+    if clone_is_local_source && [[ ! -d "$arch_src_check_root/$rel" ]]; then
+      log_info "  skip $arch_src_check_root/$rel (missing)"
       continue
     fi
-    if ! clone_is_local_source && ! clone_source_path_exists "$REMOTE_HOME/.laia/$rel"; then
-      log_info "  skip ~/.laia/$rel (missing)"
+    if ! clone_is_local_source && ! clone_source_path_exists "$arch_src_check_root/$rel"; then
+      log_info "  skip $arch_src_check_root/$rel (missing)"
       continue
     fi
     src="${src_base}${rel}/"
@@ -751,12 +776,12 @@ clone_phase_h_rsync_arch_data() {
 
   while IFS= read -r rel; do
     [[ -z "$rel" ]] && continue
-    if clone_is_local_source && [[ ! -d "$OPT_SOURCE_DIR/home/.laia/$rel" ]]; then
-      log_info "  skip ~/.laia/$rel (missing)"
+    if clone_is_local_source && [[ ! -d "$arch_src_check_root/$rel" ]]; then
+      log_info "  skip $arch_src_check_root/$rel (missing)"
       continue
     fi
-    if ! clone_is_local_source && ! clone_source_path_exists "$REMOTE_HOME/.laia/$rel"; then
-      log_info "  skip ~/.laia/$rel (missing)"
+    if ! clone_is_local_source && ! clone_source_path_exists "$arch_src_check_root/$rel"; then
+      log_info "  skip $arch_src_check_root/$rel (missing)"
       continue
     fi
     src="${src_base}${rel}/"
@@ -766,19 +791,19 @@ clone_phase_h_rsync_arch_data() {
 
   while IFS= read -r rel; do
     [[ -z "$rel" ]] && continue
-    if clone_is_local_source && [[ ! -f "$OPT_SOURCE_DIR/home/.laia/$rel" ]]; then
-      log_info "  skip ~/.laia/$rel (missing)"
+    if clone_is_local_source && [[ ! -f "$arch_src_check_root/$rel" ]]; then
+      log_info "  skip $arch_src_check_root/$rel (missing)"
       continue
     fi
-    if ! clone_is_local_source && ! clone_source_path_exists "$REMOTE_HOME/.laia/$rel"; then
-      log_info "  skip ~/.laia/$rel (missing)"
+    if ! clone_is_local_source && ! clone_source_path_exists "$arch_src_check_root/$rel"; then
+      log_info "  skip $arch_src_check_root/$rel (missing)"
       continue
     fi
     clone_rsync_base_opts
     CLONE_RSYNC_OPTS+=(--numeric-ids)
     if clone_is_local_source; then
       mkdir -p "$dst"
-      clone_rsync "arch file $rel" "${CLONE_RSYNC_OPTS[@]}" "$OPT_SOURCE_DIR/home/.laia/$rel" "$dst/$rel" || true
+      clone_rsync "arch file $rel" "${CLONE_RSYNC_OPTS[@]}" "$arch_src_check_root/$rel" "$dst/$rel" || true
     else
       local stage="$LAIA_USER_HOME/.laia-clone-stage/arch-files"
       mkdir -p "$stage"
