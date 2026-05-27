@@ -8,6 +8,7 @@ a tocar algo en este repositorio, **lee esto primero**.
 | Archivo | Lo que contiene |
 |---|---|
 | `00-start-here.md` | Este archivo. Punto de entrada. |
+| `ai-mindset.md` | Cómo pensar al trabajar (right-size, mentalidad senior, el porqué de los gates). |
 | `01-canonical-sources.md` | Dónde vive la verdad. Qué fuentes son canónicas. |
 | `02-how-to-work.md` | Reglas: branches, commits, cierre de turno, qué no hacer. |
 | `03-multi-ai-coordination.md` | Cómo coordinar cuando hay varias IAs simultáneas. |
@@ -21,9 +22,16 @@ a tocar algo en este repositorio, **lee esto primero**.
 ## Orden de lectura
 
 1. `~/LAIA/LAIA_ECOSYSTEM.md` — qué es LAIA. **Es el documento canónico.**
-2. `01-canonical-sources.md` — dónde encontrar qué.
-3. `02-how-to-work.md` — reglas duras.
-4. `03-multi-ai-coordination.md` — sólo si vas a trabajar en paralelo con otra IA.
+2. `~/LAIA/AGENTS.md` — reglas operativas y guardarraíles (común a las 3 IAs).
+   El porqué y la mentalidad (right-size, no ritual): `ai-mindset.md`.
+3. `01-canonical-sources.md` — dónde encontrar qué.
+4. `02-how-to-work.md` — reglas duras.
+5. `03-multi-ai-coordination.md` — sólo si vas a trabajar en paralelo con otra IA.
+
+El **protocolo de ingeniería** (FASE 1-4: grill, PRD, TDD, diagnóstico) se ejecuta vía
+**skills de workflow** compartidas en `~/LAIA/.claude/skills/` (Codex vía `.codex/skills/`).
+Catálogo y config en `AGENTS.md` §Agent skills; procedencia en `.claude/skills/UPSTREAM.md`.
+No confundir con las skills de **producto** del Marketplace (`skills/` en la raíz).
 
 ## Reglas duras antes de cualquier acción
 
