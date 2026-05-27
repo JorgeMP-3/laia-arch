@@ -14,7 +14,7 @@ import pytest
 @pytest.fixture(scope="module")
 def plugin_mod():
     init_py = Path(
-        "/home/laia-hermes/LAIA/.laia-core/plugins/agent-delegation/__init__.py"
+        "/home/laia-arch/LAIA/.laia-core/plugins/agent-delegation/__init__.py"
     )
     spec = importlib.util.spec_from_file_location("_delegation_test", init_py)
     mod = importlib.util.module_from_spec(spec)

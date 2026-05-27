@@ -43,7 +43,7 @@ if $CHECK_ONLY; then
   done
 else
   sudo mkdir -p "$DST_DATA" "$DST_STATE" "$DST_FRONTEND"
-  sudo chown -R laia-hermes:laia-hermes "$DST_DATA" "$DST_STATE" "$(dirname "$DST_FRONTEND")"
+  sudo chown -R "${LAIA_DEPLOY_USER:-laia-arch}:${LAIA_DEPLOY_USER:-laia-arch}" "$DST_DATA" "$DST_STATE" "$(dirname "$DST_FRONTEND")"
   echo "  Directorios creados en /srv/laia/"
 fi
 

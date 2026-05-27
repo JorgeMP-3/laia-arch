@@ -35,7 +35,7 @@ devices:
     listen: tcp:0.0.0.0:8088
     type: proxy
   agora-auth:
-    source: /home/laia-hermes/.laia/auth.json
+    source: /home/laia-arch/.laia/auth.json
     type: disk
   agora-data:
     source: /srv/laia/agora

@@ -62,7 +62,10 @@ class Settings:
         ]
 
         # ── Auth ──────────────────────────────────────────────────────────────
-        self.jwt_secret = os.environ.get("AGORA_JWT_SECRET", secrets.token_hex(32))
+        # AGORA_JWT_SECRET must be stable across restarts — a random fallback
+        # would invalidate all active sessions on every restart.
+        # Priority: env var → persistent secret file → generate+persist.
+        self.jwt_secret = os.environ.get("AGORA_JWT_SECRET") or self._load_or_create_jwt_secret()
         self.access_token_minutes = int(os.environ.get("AGORA_ACCESS_MINUTES", "30"))
         self.refresh_token_days = int(os.environ.get("AGORA_REFRESH_DAYS", "7"))
 
@@ -76,6 +79,20 @@ class Settings:
         self.laiactl_path = Path(
             os.environ.get("LAIACTL_PATH", str(self.laia_root / "infra" / "laiactl"))
         )
+
+    def _load_or_create_jwt_secret(self) -> str:
+        secret_file = self.prod_data_dir / "jwt-secret"
+        try:
+            if secret_file.exists():
+                return secret_file.read_text().strip()
+            secret = secrets.token_hex(32)
+            secret_file.parent.mkdir(parents=True, exist_ok=True)
+            secret_file.write_text(secret)
+            secret_file.chmod(0o600)
+            return secret
+        except OSError:
+            # Data dir not writable (tests, CI) — fall back to a session secret.
+            return secrets.token_hex(32)
 
     def ensure_dirs(self) -> None:
         self.data_dir.mkdir(parents=True, exist_ok=True)

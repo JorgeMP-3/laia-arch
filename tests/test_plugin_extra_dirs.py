@@ -4,9 +4,10 @@
 Used by Fase D of the marketplace-v0.1 plan. Run with the agora-backend
 venv so PyYAML is available and PYTHONPATH points at .laia-core:
 
-    PYTHONPATH=/home/laia-hermes/LAIA/.laia-core \\
-    /home/laia-hermes/LAIA/services/agora-backend/.venv/bin/python \\
-        /home/laia-hermes/LAIA/tests/test_plugin_extra_dirs.py
+    LAIA_ROOT="${LAIA_ROOT:-$HOME/LAIA}"
+    PYTHONPATH="${LAIA_ROOT}/.laia-core" \
+    "${LAIA_ROOT}/services/agora-backend/.venv/bin/python" \
+        "${LAIA_ROOT}/tests/test_plugin_extra_dirs.py"
 """
 
 from __future__ import annotations

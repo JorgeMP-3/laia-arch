@@ -5,7 +5,7 @@
 
 set -euo pipefail
 
-CLI=/home/laia-hermes/LAIA/infra/dev/laia-marketplace.py
+CLI="${LAIA_ROOT:-/home/laia-arch/LAIA}/infra/dev/laia-marketplace.py"
 TMP=$(mktemp -d)
 trap "rm -rf $TMP" EXIT
 

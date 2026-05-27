@@ -1,7 +1,7 @@
 """Tests for the executor's private_workspace_* tool handlers.
 
 The handlers wrap the ``workspace_store`` library (shipped under
-``/home/laia-hermes/LAIA/workspace_store``). Tests skip cleanly if the
+``workspace_store``). Tests skip cleanly if the
 library is not importable so the executor remains testable in stripped
 environments.
 """
