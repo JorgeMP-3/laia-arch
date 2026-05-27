@@ -114,7 +114,7 @@ fi
 
 # ── F.6 Voice/Vision/Web libs in backend venv ───────────────────────────────
 section "F.6 Backend libs"
-VENV=/home/laia-hermes/LAIA/services/agora-backend/.venv/bin/python
+VENV="${LAIA_ROOT:-/home/laia-arch/LAIA}/services/agora-backend/.venv/bin/python"
 if [[ -x "$VENV" ]]; then
   $VENV -c "import edge_tts" 2>/dev/null   && ok "F.6.1 edge_tts importable"   || fail "F.6.1 edge_tts missing"
   $VENV -c "import firecrawl" 2>/dev/null  && ok "F.6.2 firecrawl importable"  || fail "F.6.2 firecrawl missing"

@@ -4,7 +4,7 @@
 
 set -euo pipefail
 
-SCRIPT=/home/laia-hermes/LAIA/infra/dev/seed-base-skills.sh
+SCRIPT="${LAIA_ROOT:-/home/laia-arch/LAIA}/infra/dev/seed-base-skills.sh"
 API="${AGORA_API:-http://127.0.0.1:8088}"
 
 # Sanity: backend reachable? If not, skip — the test is for a live backend.

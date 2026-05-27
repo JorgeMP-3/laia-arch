@@ -17,7 +17,7 @@
 # ─────────────────────────────────────────────────────────────────────────────
 set -u
 
-LAIA_ROOT="${LAIA_ROOT:-/home/laia-hermes/LAIA}"
+LAIA_ROOT="${LAIA_ROOT:-/home/laia-arch/LAIA}"
 WIZARD="$LAIA_ROOT/bin/laia"
 WIZARD_SUB="wizard"  # bin/laia-wizard was collapsed into `bin/laia wizard` in Fase 4
 PASS=0; FAIL=0
@@ -101,7 +101,7 @@ wait $PID2 2>/dev/null
 RC2=$?
 [[ $RC2 -eq 130 ]] && ok "wizard returns 130 on SIGINT" || nope "wizard rc=$RC2 on SIGINT"
 
-CHKPT="/home/laia-hermes/LAIA-ARCH/wizard-state.json"
+CHKPT="${LAIA_ARCH_HOME:-$HOME/LAIA-ARCH}/wizard-state.json"
 [[ -f "$CHKPT" ]] && ok "checkpoint exists at $CHKPT" || nope "no checkpoint after SIGINT"
 
 # ──────────────────────────────────────────────────────────────────────────

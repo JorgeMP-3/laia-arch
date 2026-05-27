@@ -312,7 +312,7 @@ def create_brief(args: argparse.Namespace) -> None:
         store.link_nodes(index["id"], node["id"], "references")
     store.record_agent_event(
         "orchestration_request_created",
-        agent_id="hermes",
+        agent_id="laia",
         task_id=slug,
         summary=objective[:240],
         node_ref=node["id"],
@@ -450,7 +450,7 @@ def approve_plan(args: argparse.Namespace) -> None:
         raise SystemExit(f"ERROR: plan no encontrado: {args.plan}")
     store.record_agent_event(
         "plan_approved",
-        agent_id="hermes",
+        agent_id="laia",
         task_id=plan["slug"],
         summary=args.summary or f"Plan aprobado: {plan['slug']}",
         details=args.notes or "",

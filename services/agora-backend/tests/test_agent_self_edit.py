@@ -19,7 +19,7 @@ import pytest
 @pytest.fixture(scope="module")
 def plugin_mod():
     init_py = Path(
-        "/home/laia-hermes/LAIA/.laia-core/plugins/agent-self-edit/__init__.py"
+        "/home/laia-arch/LAIA/.laia-core/plugins/agent-self-edit/__init__.py"
     )
     if not init_py.exists():
         # Fallback for repo layouts that put the package elsewhere.
