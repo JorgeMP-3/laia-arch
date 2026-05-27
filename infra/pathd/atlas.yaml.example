@@ -1,0 +1,165 @@
+# Atlas v2 — Registro Universal de Referencias LAIA  (PLANTILLA)
+#
+# Copia este fichero a ~/.laia/atlas.yaml y ajústalo a tu host:
+#
+#     mkdir -p ~/.laia && cp infra/pathd/atlas.yaml.example ~/.laia/atlas.yaml
+#
+# Es la fuente de verdad de todas las conexiones del ecosistema.
+# Edita AQUÍ cuando algo cambie de sitio — el resto del código lo sigue.
+#
+# Tipos soportados: path | service | container | socket | env_file
+# Interpolación: ${ref.<nombre>} para referenciar otra entrada.
+# Override de emergencia: export ATLAS_<NOMBRE>=valor (gana sobre el YAML).
+#
+# CLI: atlas get <nombre> | atlas doctor | atlas list | atlas watch
+
+version: 2
+
+refs:
+
+  # ── Directorios base ──────────────────────────────────────────────────────
+
+  laia_root:
+    type: path
+    value: ~/LAIA
+    description: "Raíz del código fuente LAIA (desarrollo)"
+
+  laia_home:
+    type: path
+    value: ~/.laia
+    description: "Directorio de credenciales de LAIA-ARCH (auth.json, .env)"
+
+  laia_arch_home:
+    type: path
+    value: ~/LAIA-ARCH
+    description: "Workspace interactivo de Jorge — workspaces, skills, memorias"
+
+  srv_laia:
+    type: path
+    value: /srv/laia
+    description: "Datos operacionales (agora.db, usuarios, estado persistente)"
+
+  opt_laia:
+    type: path
+    value: /opt/laia
+    description: "Código de producto instalado (laia-install, versionado)"
+
+  # ── Subdirectorios del código fuente ─────────────────────────────────────
+
+  laia_core:
+    type: path
+    value: ${ref.laia_root}/.laia-core
+    description: "Motor del agente — herramientas, gateway, CLI base"
+
+  agora_backend:
+    type: path
+    value: ${ref.laia_root}/services/agora-backend
+    description: "Backend LAIA-AGORA (FastAPI, API REST)"
+
+  laia_executor:
+    type: path
+    value: ${ref.laia_root}/services/laia-executor
+    description: "Executor del PA-AGORA (microservicio FastAPI :9091)"
+
+  workspace_store:
+    type: path
+    value: ${ref.laia_root}/workspace_store
+    description: "Librería compartida SQLite+FTS5 para workspaces"
+
+  infra_dir:
+    type: path
+    value: ${ref.laia_root}/infra
+    description: "Infraestructura — LXD, nginx, systemd, pathd"
+
+  skills_dir:
+    type: path
+    value: ${ref.laia_root}/skills
+    description: "Skills bundled con el producto"
+
+  bin_dir:
+    type: path
+    value: ${ref.laia_root}/bin
+    description: "Entry points CLI — laia, laia-install, laia-clone…"
+
+  # ── Subdirectorios operacionales (/srv/laia) ──────────────────────────────
+
+  srv_agora:
+    type: path
+    value: ${ref.srv_laia}/agora
+    description: "Datos del backend AGORA — agora.db, .env, logs"
+
+  srv_users:
+    type: path
+    value: ${ref.srv_laia}/users
+    description: "Home de cada usuario (bind-mounted a sus containers)"
+
+  # ── Workspace interactivo de LAIA-ARCH ────────────────────────────────────
+
+  arch_workspaces:
+    type: path
+    value: ${ref.laia_arch_home}/workspaces
+    description: "Workspaces personales de Jorge"
+
+  arch_skills:
+    type: path
+    value: ${ref.laia_arch_home}/skills
+    description: "Skills personales de LAIA-ARCH"
+
+  arch_memories:
+    type: path
+    value: ${ref.laia_arch_home}/memories
+    description: "Memorias persistentes de LAIA-ARCH"
+
+  # ── Servicios de red ──────────────────────────────────────────────────────
+
+  agora_api:
+    type: service
+    host: 127.0.0.1
+    port: 8088
+    protocol: http
+    health_path: /health
+    description: "API REST de LAIA-AGORA (auth JWT)"
+
+  executor_api:
+    type: service
+    host: agent-jorge
+    port: 9091
+    protocol: http
+    health_path: /health
+    optional: true
+    description: "Executor del PA-AGORA de Jorge (dentro de LXD)"
+
+  # ── Contenedores LXD ─────────────────────────────────────────────────────
+
+  agora_container:
+    type: container
+    value: laia-agora
+    description: "Contenedor del cerebro centralizado (LAIA-AGORA)"
+
+  jorge_container:
+    type: container
+    value: agent-jorge
+    optional: true
+    repair_hint: "lxc start agent-jorge"
+    description: "Contenedor del PA-AGORA de Jorge"
+
+  # ── Sockets Unix ─────────────────────────────────────────────────────────
+
+  pathd_socket:
+    type: socket
+    value: ${ref.laia_home}/pathd.sock
+    optional: true
+    repair_hint: "systemctl --user start laia-pathd"
+    description: "Socket JSON-RPC del daemon laia-pathd"
+
+  # ── Ficheros de env (secrets) ─────────────────────────────────────────────
+
+  agora_env:
+    type: env_file
+    path: /srv/laia/agora/.env
+    optional: true
+    keys:
+      - AGORA_JWT_SECRET
+      - AGORA_DB_PATH
+    repair_hint: "sudo install -d -m755 /srv/laia/agora && sudo touch /srv/laia/agora/.env && sudo chmod 600 /srv/laia/agora/.env"
+    description: "Secrets del backend AGORA (JWT, DB path — dentro del contenedor)"

@@ -21,7 +21,27 @@ def _ensure_path_registry_importable() -> None:
 
 
 def _get_path(alias: str, default: Path) -> Path:
+    """Resolve a logical alias to a Path with a resilient fallback chain.
+
+    1. Atlas registry (atlas.get_path → ATLAS_<ALIAS> env override, then atlas.yaml).
+    2. Legacy laia_paths registry (config.yaml / pathd daemon).
+    3. The caller-supplied default.
+
+    Any failure of the Atlas/legacy layers degrades silently to the next step —
+    a broken registry must never stop a healthy script from running.
+    """
     _ensure_path_registry_importable()
+
+    # 1. Atlas — only accept a value it actually resolves (no default passthrough,
+    #    so a miss falls through to the legacy layer rather than masking it).
+    try:
+        import atlas
+
+        return Path(atlas.get(alias))
+    except Exception:
+        pass
+
+    # 2. Legacy path registry.
     try:
         from laia_paths import get_path
 

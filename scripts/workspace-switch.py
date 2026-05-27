@@ -247,7 +247,8 @@ def list_workspaces(config: dict[str, Any]) -> None:
 
 
 def restart_gateway() -> bool:
-    label = f"gui/{os.getuid()}/ai.hermes.gateway"
+    svc = os.environ.get("LAIA_GATEWAY_LABEL", "ai.hermes.gateway")
+    label = f"gui/{os.getuid()}/{svc}"
     try:
         result = subprocess.run(
             ["launchctl", "kickstart", "-k", label],
