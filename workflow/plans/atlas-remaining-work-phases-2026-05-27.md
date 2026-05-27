@@ -17,9 +17,21 @@ El audit cuenta **ocurrencias**, no **bugs accionables**. Tras verificar en disc
 El nº de bugs reales es muy inferior a 108. Lo accionable se agrupa abajo por fases ordenadas
 por **riesgo↑ / dependencia**. Cada fase es independiente; elige el orden.
 
+## Progreso (actualizado 2026-05-27)
+
+- ✅ **Fase 0 cerrada** (commit `e4e2847`): pathd try/except, gateway parametrizable. 0.2 reclasificado
+  a Fase 6 (eran strings de documentación, no código). 0.4 resuelto: venv dev creado (`laia` arranca).
+- ✅ **Bug nuevo encontrado y arreglado en disco:** `~/LAIA-ARCH/config.yaml` tenía 3 keys corruptas
+  (`plugins:`/`workspaces:`/`skills:`) → su **causa raíz** es ahora **FASE 0.5** (abajo).
+- ✅ **Versionado + auto-sanación + adopción de Atlas** commiteado (`e4e2847`); fixes de migración (`314a69f`).
+- ✅ **Fase 0.5 cerrada:** rewrite de `laia-clone` extraído a `infra/installer/lib/rewrite_config_paths.py`
+  (estructural, solo toca claves bajo `paths:`); `clone.sh` lo invoca; test de regresión
+  `tests/test_clone_config_rewrite.py` (8 casos). Ya no corrompe configs en migración.
+- ⏳ Pendiente: FASES 1-4 (adopción), FASE 5 (estructura /opt), FASE 6 (cosmético).
+
 ---
 
-## FASE 0 — Críticos funcionales autónomos (no necesitan Atlas)
+## FASE 0 — Críticos funcionales autónomos (no necesitan Atlas) — ✅ HECHA
 
 Bugs que rompen arranque/funcionalidad y se arreglan solos, sin tocar el modelo de refs.
 
@@ -31,7 +43,45 @@ Bugs que rompen arranque/funcionalidad y se arreglan solos, sin tocar el modelo 
 | 0.4 | `.laia-core/venv` ausente → `bin/laia` no arranca el agente CLI | `bin/laia` espera `.laia-core/venv/bin/{laia,python}` | **Diagnóstico primero**: ¿es esperado en dev? ¿se crea en install? Decidir crear venv o ajustar `bin/laia` |
 
 **Riesgo:** bajo (cambios locales, con tests). **Dependencia:** ninguna.
-**Nota 0.4:** requiere decisión tuya — puede ser intencional en dev (el agente corre en contenedor).
+**Nota 0.4:** RESUELTO — el venv lo crea el instalador (`install.sh:303`), excluido del sync a
+propósito; `bin/laia` ya falla con mensaje claro si falta. Se creó venv dev local.
+
+---
+
+## FASE 0.5 — Bug raíz de `laia-clone`: corrupción de config en migración (CRÍTICO) — ✅ HECHA
+
+**Causa raíz (confirmada).** `clone_phase_h_rewrite_config_paths` en
+`infra/installer/lib/clone.sh:858-902` reescribe el `config.yaml` del destino con `sed` línea a
+línea. Las reglas 890-896 hacen:
+
+```
+-e "s#^([[:space:]]*workspaces:[[:space:]]*).*#\1${LAIA_HOME:-...}/workspaces#"
+-e "s#^([[:space:]]*skills:[[:space:]]*).*#\1${LAIA_HOME:-...}/skills#"
+-e "s#^([[:space:]]*plugins:[[:space:]]*).*#\1${LAIA_HOME:-...}/plugins#"
+```
+
+Están pensadas para los **valores de path** bajo la sección `paths:` (p.ej. `  workspaces:
+${paths.laia_home}/workspaces`). Pero esos mismos nombres existen como **keys estructurales**
+en otras partes del YAML (`plugins:` top-level = mapping de plugins; `workspaces:` = lista de
+nombres bajo `workspace-context`; `skills:` top-level = mapping). El `sed` apenda el path a esas
+claves → produce `plugins:${LAIA_HOME:-...}/plugins`, **YAML inválido** que huérfana el bloque
+indentado siguiente. Es exactamente lo que corrompió `~/LAIA-ARCH/config.yaml` (líneas 284/292/318)
+y dejó al agente cargando **sin configuración**. Afecta a **toda futura migración**.
+
+**Fix recomendado.** Sustituir el rewrite line-based por uno **estructural** que solo toque las
+claves DENTRO del mapping `paths:` (el destino ya exige `python3`):
+- Cargar el YAML, fijar únicamente `paths.{laia_root, laia_home, agora_data, workspaces, memories,
+  skills, plugins, state_db, response_store}` y volcar. Inmune a colisiones de nombre de clave.
+- Alternativa más ligera (si se quiere seguir con sed): acotar el rango al bloque `paths:` con un
+  state-machine (`awk '/^paths:/{p=1} /^[^[:space:]]/{if(!/^paths:/)p=0} p{...}'`) en vez de anclar
+  a `^[[:space:]]*` global.
+
+**Verificación.** Test de regresión en `tests/` con un `config.yaml` que tenga `plugins:`/`skills:`/
+`workspaces:` tanto como path (bajo `paths:`) como estructural; tras el rewrite, `python3 -c "import
+yaml; yaml.safe_load(...)"` debe pasar y los bloques estructurales quedar intactos.
+
+**Riesgo:** medio (toca el instalador). **Dependencia:** ninguna. **Prioridad:** alta — es la causa
+raíz de configs rotos en cada clone. La corrupción actual ya se reparó en disco; falta el código.
 
 ---
 
@@ -104,13 +154,22 @@ Atlas solo declara *dónde* está (`env_file` ref `agora_env`, ya existe) y veri
 
 ## FASE 5 — Deuda estructural de infraestructura
 
-| # | Problema | Decisión requerida |
-|---|---|---|
-| 5.1 | `/opt/laia/{current,versions,data}` (layout §8.1) no existe — volcado plano del repo | ¿Adoptar layout versionado o ajustar la spec a la realidad dev? |
-| 5.2 | Runtime de ARCH en `~/.laia` y `LAIA-ARCH/` en vez de `/srv/laia/arch/` (§8.2/8.4) | ¿Migrar runtime o actualizar la spec? |
+Modelo correcto (confirmado con Jorge): `~/LAIA` = **desarrollo**; `/opt/laia` = **producto
+instalado/producción** (versión verificada y estable, root-owned **por integridad** — no por
+secretos); secretos en `~/.laia` (0600) y datos en `/srv/laia`. El concepto es sólido; el estado
+en este host **no** lo cumple.
 
-**Riesgo:** alto (mueve datos vivos). **Dependencia:** decisión de arquitectura tuya.
-Probablemente la spec (`LAIA_ECOSYSTEM.md`) deba reconciliarse con dev, no al revés.
+| # | Problema (verificado en disco) | Decisión requerida |
+|---|---|---|
+| 5.1 | `/opt/laia` es `laia-v0.0.0-clone` (volcado **plano** del repo), no el layout versionado `current → versions/vX/` + `data/` de §8.1 | ¿Adoptar layout versionado real o ajustar §8.1 a la realidad? |
+| 5.2 | `/opt/laia` **sin venv** → la "producción" no arranca; el paso de promoción/verificación (`laia-release` + smoke) no se completó | ¿`sudo laia release` para construir prod, o documentar que /opt es opcional en dev? |
+| 5.3 | `which laia` → `/opt` (sin venv) en vez del árbol dev funcional | Repuntar `/usr/local/bin/laia` al dev, o arreglar el install de /opt |
+| 5.4 | Runtime de ARCH en `~/.laia` y `LAIA-ARCH/` en vez de `/srv/laia/arch/` (§8.2/8.4) | ¿Migrar runtime o actualizar la spec? |
+| 5.5 | Docs desactualizadas: §6 dice "Atlas Path Registry — 32 aliases" (Atlas v1); ya es v2 (23+ refs tipadas) | Reconciliar `LAIA_ECOSYSTEM.md` §6 — **requiere consenso explícito de Jorge** (regla CLAUDE.md) |
+
+**Riesgo:** alto (mueve datos vivos / toca producción). **Dependencia:** decisión de arquitectura tuya.
+Probablemente la spec (`LAIA_ECOSYSTEM.md`) deba reconciliarse con la realidad dev, no al revés —
+pero **no se edita sin tu consenso explícito** (CLAUDE.md).
 
 ---
 
@@ -129,12 +188,13 @@ a propósito para probar el rewrite cross-user; ejemplo en `install.sh:14`.
 
 ## Recomendación de orden
 
-1. **Fase 0** (críticos autónomos, rápido, alto valor, bajo riesgo) — empezar aquí.
-2. **Fase 4** en paralelo (env central, desbloquea diagnósticos).
-3. **Fase 1 → 2** (adopción servicios + puertos, mismo patrón, valida el modelo Atlas en uso real).
-4. **Fase 5** (decisión de arquitectura — conviene resolverla antes de Fase 3).
-5. **Fase 3** (contenedores, alto riesgo, requiere entorno de prueba).
-6. **Fase 6** (cosmético, cuando convenga).
+1. ~~**Fase 0**~~ ✅ hecha.
+2. **Fase 0.5** (bug raíz de `laia-clone`) — siguiente; evita que la próxima migración vuelva a corromper configs.
+3. **Fase 4** en paralelo (env central, desbloquea diagnósticos).
+4. **Fase 1 → 2** (adopción servicios + puertos, mismo patrón, valida el modelo Atlas en uso real).
+5. **Fase 5** (decisión de arquitectura — conviene resolverla antes de Fase 3).
+6. **Fase 3** (contenedores, alto riesgo, requiere entorno de prueba).
+7. **Fase 6** (cosmético, cuando convenga).
 
 Cada fase: rama/commit propio, tests verdes, y `atlas consumers` antes/después para medir adopción.
 ```

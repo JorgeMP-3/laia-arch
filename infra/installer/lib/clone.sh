@@ -784,42 +784,29 @@ clone_phase_h_rewrite_config_paths() {
   cfg="$(clone_dest_arch_dir)/config.yaml"
   [[ -f "$cfg" ]] || return 0
 
-  # Atlas-aware rewrite: only the three canonical anchors need to be set;
+  # Atlas-aware rewrite: only the canonical anchors under `paths:` are set;
   # every other ${paths.X} alias derives from these. laia-pathd picks up the
   # change on next reload.
   #   - laia_root   → /opt/laia        (installed product tree)
   #   - laia_home   → ${LAIA_HOME:-$LAIA_USER_HOME/LAIA-ARCH} (live admin area)
   #   - agora_data  → /srv/laia/agora/agora.db      (real bind-mounted DB)
   #   - workspaces/memories/skills/plugins → ${LAIA_HOME:-...}/<name>
-  # Additionally, sweep leftover /home/<user>/.laia/ literals to /srv/laia/arch/
-  # because unknown legacy paths are treated as sensitive/runtime by default.
-  # Note on the regex: `^[[:space:]]*` is INTENTIONAL — the canonical
-  # config.yaml nests the three keys under `paths:` (so they're indented
-  # by 2 spaces). Restricting to top-level only would break the rewrite.
-  # Commented lines (`#  laia_root: …`) don't match because `#` isn't
-  # whitespace, so anchored to `[[:space:]]*` is safe in practice.
-  local live_default live_expr live_repl
+  # Post-T.14.1: legacy ~/.laia/ literals are swept to ${LAIA_HOME}/ (NOT
+  # /srv/laia/arch/, which is deprecated — see workflow/arch-data-layout.md).
+  #
+  # The rewrite is delegated to rewrite_config_paths.py: the previous line-based
+  # `sed` anchored key rules to `^[[:space:]]*<key>:` and so also clobbered
+  # *structural* keys sharing a name with a path anchor (plugins:/workspaces:/
+  # skills:), producing invalid YAML. The helper scopes key rewrites to the
+  # `paths:` mapping only.
+  local live_default live_expr helper
   live_default="$(clone_dest_laia_home)"
   live_expr="\${LAIA_HOME:-$live_default}"
-  live_repl="$(printf '%s' "$live_expr" | sed 's/[\/&]/\\&/g')"
-  local sed_args=(
-    -e 's#^([[:space:]]*laia_root:[[:space:]]*).*#\1/opt/laia#'
-    -e 's#^([[:space:]]*agora_data:[[:space:]]*).*#\1/srv/laia/agora/agora.db#'
-    -e 's#~/\.laia/#/srv/laia/arch/#g'
-    -e 's#/home/[^/[:space:]"]+/\.laia/#/srv/laia/arch/#g'
-    -e 's#/home/[^/[:space:]"]+/\.laia([[:space:]"]|$)#/srv/laia/arch\1#g'
-    -e 's#/home/[^/[:space:]"]+/LAIA/#/opt/laia/#g'
-    -e 's#/home/[^/[:space:]"]+/LAIA([[:space:]"]|$)#/opt/laia\1#g'
-    -e "s#^([[:space:]]*laia_home:[[:space:]]*).*#\\1$live_repl#"
-    -e "s#^([[:space:]]*workspaces:[[:space:]]*).*#\\1$live_repl/workspaces#"
-    -e "s#^([[:space:]]*memories:[[:space:]]*).*#\\1$live_repl/memories#"
-    -e "s#^([[:space:]]*skills:[[:space:]]*).*#\\1$live_repl/skills#"
-    -e "s#^([[:space:]]*plugins:[[:space:]]*).*#\\1$live_repl/plugins#"
-  )
+  helper="${BASH_SOURCE[0]%/*}/rewrite_config_paths.py"
   if inst_is_override_mode; then
-    sed -i -E "${sed_args[@]}" "$cfg"
+    python3 "$helper" "$cfg" "$live_expr"
   else
-    sudo sed -i -E "${sed_args[@]}" "$cfg"
+    sudo python3 "$helper" "$cfg" "$live_expr"
   fi
 
   # If laia-pathd is running on the destination, ask it to reload so the
