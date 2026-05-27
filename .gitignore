@@ -59,6 +59,9 @@ archived-skills/
 
 # Core (submodule or separate repo)
 .laia-core/
+# Excepción: la librería Atlas y su capa de compat son fuente del repo principal.
+# (negar el directorio no re-incluye ficheros, así que se trackean con `git add -f`;
+#  esta nota documenta que NO son artefactos generados.)
 
 # UI (separate repo)
 laia-ui/

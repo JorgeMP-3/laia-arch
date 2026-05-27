@@ -24,7 +24,13 @@ _CORE = Path(__file__).resolve().parents[2] / ".laia-core"
 if str(_CORE) not in _sys.path:
     _sys.path.insert(0, str(_CORE))
 
-from laia_paths import load_config, resolve  # noqa: E402
+try:
+    from laia_paths import load_config, resolve  # noqa: E402
+except ImportError as exc:  # pragma: no cover
+    raise RuntimeError(
+        f"laia-pathd: cannot import laia_paths from {_CORE}. "
+        f"Ensure .laia-core/ exists and is readable. Original error: {exc}"
+    ) from exc
 
 from . import notifier
 from .ipc import IpcServer

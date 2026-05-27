@@ -14,7 +14,13 @@ _CORE = Path(__file__).resolve().parents[2] / ".laia-core"
 if str(_CORE) not in sys.path:
     sys.path.insert(0, str(_CORE))
 
-from laia_paths import load_config, regenerate_env_file, resolve, render_env_file  # noqa: E402
+try:
+    from laia_paths import load_config, regenerate_env_file, resolve, render_env_file  # noqa: E402
+except ImportError as exc:  # pragma: no cover
+    raise RuntimeError(
+        f"laia-path: cannot import laia_paths from {_CORE}. "
+        f"Ensure .laia-core/ exists and is readable. Original error: {exc}"
+    ) from exc
 
 from .ipc import IpcClient
 from .restarts import (
