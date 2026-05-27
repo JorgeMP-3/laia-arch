@@ -31,6 +31,23 @@ shell_rc_targets() {
   done
 }
 
+# shell_rc_restore_meta <rc> [mode] — restore ownership/mode after a write
+#
+# We rewrite rc files via mktemp + mv. mv replaces the target with the tmp file,
+# inheriting its metadata — root:root 0600 when the installer runs under sudo.
+# These files live in the admin user's HOME; left root-owned, the next login
+# shell cannot source them (the user loses their whole .bashrc, not just
+# LAIA_HOME). Restore the admin user as owner and the original mode. Mirrors the
+# HOME-file ownership pattern in factory.sh.
+shell_rc_restore_meta() {
+  local rc="$1" mode="${2:-644}"
+  local owner="${LAIA_USER:-$(id -un)}"
+  if [[ "$(id -u)" -eq 0 && "$owner" != "root" ]]; then
+    chown "$owner:$(id -gn "$owner" 2>/dev/null || echo "$owner")" "$rc" 2>/dev/null || true
+  fi
+  chmod "$mode" "$rc" 2>/dev/null || true
+}
+
 # shell_rc_render_block <data_dir> — prints the block to insert
 shell_rc_render_block() {
   local data_dir="$1"
@@ -52,6 +69,11 @@ shell_rc_apply() {
   while IFS= read -r rc; do
     [[ -z "$rc" ]] && continue
     mkdir -p "$(dirname "$rc")" 2>/dev/null || true
+
+    # Capture the original mode before mv clobbers it; default 644 for a new rc.
+    local rc_mode=644
+    [[ -e "$rc" ]] && rc_mode="$(stat -c '%a' "$rc" 2>/dev/null || echo 644)"
+
     [[ -f "$rc" ]] || : >"$rc"
     tmp="$(mktemp "${rc}.laia-tmp.XXXXXX")" || die "mktemp failed"
 
@@ -74,6 +96,8 @@ shell_rc_apply() {
       mv "$tmp" "$rc"
       log_info "Added LAIA block to $rc"
     fi
+
+    shell_rc_restore_meta "$rc" "$rc_mode"
   done <<<"$(shell_rc_targets)"
 }
 
@@ -83,6 +107,8 @@ shell_rc_remove() {
   while IFS= read -r rc; do
     [[ -z "$rc" ]] && continue
     grep -qF "$LAIA_RC_MARKER_BEGIN" "$rc" 2>/dev/null || continue
+    local rc_mode=644
+    [[ -e "$rc" ]] && rc_mode="$(stat -c '%a' "$rc" 2>/dev/null || echo 644)"
     tmp="$(mktemp "${rc}.laia-tmp.XXXXXX")" || die "mktemp failed"
     awk -v begin="$LAIA_RC_MARKER_BEGIN" -v end="$LAIA_RC_MARKER_END" '
       $0 == begin { in_block = 1; next }
@@ -90,6 +116,7 @@ shell_rc_remove() {
       !in_block   { print }
     ' "$rc" >"$tmp"
     mv "$tmp" "$rc"
+    shell_rc_restore_meta "$rc" "$rc_mode"
     log_info "Removed LAIA block from $rc"
   done <<<"$(shell_rc_targets)"
 }
