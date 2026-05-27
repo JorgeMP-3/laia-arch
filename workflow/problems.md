@@ -30,6 +30,51 @@ añade una línea `- **Resuelto**: 2026-MM-DD en commit <hash>`.
 
 ---
 
+## laia-core-cron-package-gitignored-lost-in-migration (in-progress)
+
+- **Descubierto**: 2026-05-27 por claude opus 4.7.
+- **Síntoma**: `laia chat`/one-shot crashea con `ModuleNotFoundError: No module named
+  'cron'` (`cli.py:662`, `laia_cli/cron.py:194`). El dispatcher bash y `laia --help`
+  funcionan; solo cae el CLI Python del agente.
+- **Causa raíz**: `.laia-core/cron/` (`__init__.py`, `jobs.py`, `scheduler.py`) está
+  gitignored (`.gitignore:31 cron/` + `:61 .laia-core/`), nunca se commiteó, y la
+  migración `laia-hermes`→`laia-arch` (rsync/git respetando `.gitignore`) lo perdió.
+  Mismo mecanismo borró 10 entradas más de `.laia-core/` (SOUL.md, skills/, scripts/,
+  bin/, ai-agents.json, packaging/, tinker-atropos/, flake.lock, uv.lock).
+- **Reproducción**: `cd /tmp && laia -z "hola"` con el árbol pre-recuperación.
+- **Workaround**: recuperado de la VM original vía `rsync --ignore-existing`; en `/opt`
+  un `.pth` (`zz_laia_core_root.pth`) añade `.laia-core` al `sys.path`. Validado: el
+  agente ya pasa el import de `cron`.
+- **Owner**: Jorge / claude.
+- **Estado**: in-progress — falta `git add -f` para durabilidad y que `laia release`
+  incluya `cron/` nativamente (no vía `.pth`).
+
+## installer-shell-rc-bashrc-root-owned (resolved en código, sin commit)
+
+- **Descubierto**: 2026-05-27 por claude opus 4.7 (reporte de otra sesión).
+- **Síntoma**: tras `install` con sudo, `~/.bashrc` queda `root:root 0600`; el usuario
+  no puede leerlo y la siguiente shell perdería el `.bashrc`. `✗ Failed at shell_rc.sh:46`.
+- **Causa raíz**: `shell_rc_apply`/`_remove` usan `mktemp`+`mv`; `mv` hereda metadata del
+  tmp (root:root 0600 bajo sudo) y no restauraba propiedad/modo.
+- **Reproducción**: correr el instalador vía `sudo -E` y mirar `ls -l ~/.bashrc`.
+- **Workaround**: `sudo chown laia-arch:laia-arch ~/.bashrc && sudo chmod 644 ~/.bashrc`.
+- **Owner**: claude.
+- **Estado**: resolved en código (`shell_rc.sh` helper `shell_rc_restore_meta` + Test 7,
+  suite 19/19) — **pendiente de commit**.
+
+## installer-clone-leaves-root-owned-home-artifacts (open)
+
+- **Descubierto**: 2026-05-27 por claude opus 4.7.
+- **Síntoma**: el cloner deja en el HOME del usuario `~/.laia-clone-stage/` y
+  `~/LAIA-ARCH/.clone-state/*.done` como `root:root` (rsync bajo sudo). El staging es
+  basura; los markers `--resume` rotos impedirían re-ejecutar el clone como usuario.
+- **Causa raíz**: `clone.sh` (`clone_phase_mark_done`, dirs `.laia-clone-stage`) crea
+  estos paths bajo sudo y no hace `chown`/cleanup al cerrar. Mismo patrón que el bug de
+  `.bashrc`.
+- **Workaround**: `sudo rm -rf ~/.laia-clone-stage ~/LAIA-ARCH/.clone-state`.
+- **Owner**: sin asignar.
+- **Estado**: open.
+
 ## backend-suite-laia-chat-test-leak (open)
 
 - **Descubierto**: 2026-05-25 por codex durante `tests/run_integrity.py --tier unit`
