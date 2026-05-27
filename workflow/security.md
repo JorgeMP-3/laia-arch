@@ -26,6 +26,29 @@ Bitácora de hallazgos y acciones de seguridad durante el trabajo diario en el r
 
 ---
 
+## 2026-05-27 — `.bashrc` root-owned por el instalador + creds en /root por `sudo laia` (claude opus 4.7)
+
+- **Tipo**: permisos
+- **Severidad**: P2 (medio) — rompe acceso del usuario a su propio `.bashrc`; no expone secretos.
+- **Sistema afectado**: `~/.bashrc`, `~/.cache/laia-installer.log` (HOME del admin);
+  `infra/installer/lib/shell_rc.sh`.
+- **Acción tomada**: reparado en disco (`sudo chown laia-arch:laia-arch`); fix en código
+  (`shell_rc_restore_meta` devuelve propiedad/modo tras `mv`) + test de regresión.
+- **Acción pendiente**: commitear el fix; arreglar el mismo patrón en `clone.sh`
+  (artefactos root-owned `~/.laia-clone-stage/`, `~/LAIA-ARCH/.clone-state/`).
+
+## 2026-05-27 — Credenciales del agente escritas en /root por `laia setup` con sudo (claude opus 4.7)
+
+- **Tipo**: permisos / secret-location
+- **Severidad**: P3 (bajo) — credenciales aisladas en `/root/.laia/`, no expuestas a
+  otros usuarios; pero quedan huérfanas y fuera del `~/.laia` del admin.
+- **Sistema afectado**: `/root/.laia/config.yaml`, `/root/.laia/auth.json` (login
+  device-code de OpenAI Codex).
+- **Acción tomada**: identificado que `laia`/`laia setup` NO debe correr con sudo (es
+  single-user-admin); el agente debe ejecutarse como `laia-arch` usando `~/.laia/`.
+- **Acción pendiente**: rehacer `laia auth`/`laia model` SIN sudo como `laia-arch`;
+  borrar `/root/.laia/` huérfano.
+
 ## 2026-05-26 — Cancela split root-only de /srv/laia/arch (claude opus 4.7)
 
 - **Tipo**: permisos

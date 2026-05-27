@@ -15,6 +15,89 @@ Formato:
 
 ---
 
+## 2026-05-27 — Recuperación de paquete `cron/` perdido en migración + fix bug `.bashrc` del instalador (claude opus 4.7)
+
+Dos hilos en la misma sesión, ambos derivados de la migración `laia-hermes`→`laia-arch`.
+
+### A) Agente CLI no arrancaba: `ModuleNotFoundError: No module named 'cron'`
+
+- **Síntoma**: `laia` (dispatcher bash) y `laia --help` funcionaban, pero `laia chat`
+  / one-shot crasheaban en `cli.py:662 from cron import get_job`. También
+  `laia_cli/cron.py:194 from cron.jobs import get_job`.
+- **Causa raíz**: el paquete fuente `.laia-core/cron/` (`__init__.py`, `jobs.py`,
+  `scheduler.py`) está **gitignored** (`.gitignore:31 cron/` y `:61 .laia-core/`).
+  Nunca se commiteó, así que la migración (que respeta `.gitignore`) lo dejó atrás.
+  Faltaba en `/opt` **y** en el árbol dev. No estaba en host, git, backups ni en los
+  contenedores LXD (`laia-agora` = backend; agentes = `laia-executor` only).
+- **Hallazgo mayor**: comparando la VM original contra el dev tree faltaban **11
+  entradas** gitignored: `cron/`, `SOUL.md`, `skills/`, `scripts/`, `bin/`,
+  `ai-agents.json`, `packaging/`, `tinker-atropos/`, `flake.lock`, `uv.lock`,
+  `temp_vision_images/` (esta última, basura de runtime). Solo `cron` es blocker de
+  import; `SOUL.md` se lee en runtime (auto-inyección de persona).
+- **Recuperación** (Jorge ejecutó los `sudo`/VM):
+  - `rsync --ignore-existing` VM→dev tree: trae lo ausente sin pisar los ficheros ya
+    corregidos (que en la VM tienen rutas `laia-hermes`).
+  - Validado: toda la interfaz de `cron` importa (`get_job, create_job, load_jobs,
+    save_jobs, get_due_jobs, list_jobs, update_job, pause_job, parse_schedule,
+    compute_next_run`, `cron.scheduler`).
+  - `rsync --ignore-existing` dev→`/opt/laia-v0.11.0/.laia-core/` para rellenar el
+    mismo hueco en producción.
+  - El editable finder de `/opt` no mapeaba `cron` (se instaló cuando el dir no
+    existía; `pyproject` SÍ lo declara en `packages.find.include`). Reinstalar el
+    editable falló (`BackendUnavailable: setuptools.build_meta` — venv sin setuptools,
+    sin red). **Workaround aplicado**: `.pth` (`zz_laia_core_root.pth`) que añade
+    `/opt/laia-v0.11.0/.laia-core` al `sys.path` del venv → resuelve `cron` y cualquier
+    otro módulo no mapeado, offline y sin rebuild.
+  - Verificado desde CWD neutro: `cron`/`cli` resuelven a `/opt`; el agente corre la
+    cadena completa (ya no rompe en `cron`).
+- **Abierto**:
+  - **Durabilidad git**: falta `git add -f .laia-core/cron .laia-core/SOUL.md` (el
+    convenio aquí ya es force-add dentro de `.laia-core/`). Sin esto, la próxima
+    migración/release lo vuelve a perder.
+  - El `.pth` es parche de runtime; un futuro `laia release` debería incluir `cron/`
+    de forma nativa (depende de cómo sincronice release respecto a `.gitignore`).
+  - **Credenciales**: el agente llega a resolver proveedor y pide `laia auth` (Codex).
+    El proveedor quedó en `openai-codex` pero el login se hizo con `sudo` → fue a
+    `/root/.laia/auth.json`, no a `~/.laia`. Pendiente: `laia model` → Anthropic (hay
+    `ANTHROPIC_API_KEY` en `~/.laia/.env`) o `laia auth` SIN sudo.
+
+### B) Bug del instalador: `.bashrc` queda root-owned tras `install` con sudo
+
+- **Síntoma**: `/home/laia-arch/.bashrc` quedó `root:root 0600` → el usuario no podía
+  leerlo/editarlo y la siguiente shell perdería el `.bashrc` entero. `✗ Failed at
+  shell_rc.sh:46`. (Reparado en disco con `sudo chown`.)
+- **Causa raíz**: `shell_rc_apply`/`shell_rc_remove` escriben el rc vía `mktemp` + `mv`;
+  `mv` reemplaza el fichero heredando metadata del tmp (root:root 0600 bajo sudo) y
+  nunca devolvía propiedad/modo. Mismo patrón que ya se mitigó en `common.sh` para el log.
+- **Fix** (`infra/installer/lib/shell_rc.sh`): helper `shell_rc_restore_meta` (chown a
+  `$LAIA_USER` solo si root + chmod al modo original capturado con `stat` antes del `mv`),
+  invocado tras cada `mv`. Mismo patrón de propiedad de HOME que `factory.sh`.
+- **Test** (`tests/installer/test_shell_rc.sh`): Test 7 de regresión (un rc en 644 no
+  debe quedar en 600 tras `apply`). Suite **19/19** (antes 18).
+- **Abierto**: sin commitear. El cloner (`clone.sh`) deja basura root-owned en el HOME
+  (`~/.laia-clone-stage/`, `~/LAIA-ARCH/.clone-state/`) — mismo patrón, no arreglado.
+
+### C) Reescritura de `LAIA_ECOSYSTEM.md` (visión pura) + nuevo `workflow/arch-layout.md`
+
+- **Motivo**: el documento canónico estaba desactualizado y mezclado con basura muy
+  técnica (puertos, idmaps, contrato clone, conteos de tests/tools) que ensuciaba la
+  idea. Consenso explícito de Jorge para editarlo (regla CLAUDE.md).
+- **Acción** (decisión de Jorge vía AskUserQuestion):
+  - `LAIA_ECOSYSTEM.md` → **documento de visión puro** (568 → 344 líneas): visión,
+    entidades, flujos conceptuales, reglas duras ①–⑭, workspaces, roadmap. §8 (layout
+    en disco) reducido a propósito conceptual + enlace.
+  - Nuevo **`workflow/arch-layout.md`** (264 líneas): se mueve ahí todo el detalle
+    técnico — layout `/opt`/`/srv`/`~/.laia`/`~/LAIA-ARCH`, permisos, idmaps, contrato
+    `laia-clone`, flujos `install`/`clone`. Enlace cruzado bidireccional.
+  - **Actualizaciones de datos**: Atlas v2 (no "32 aliases"), quitados conteos frágiles
+    ("71 tools", "431/342 tests", "80+ endpoints"), versión coherente (v2 — 2026-05-27),
+    nota de realidad en `/opt` (volcado plano vs modelo versionado objetivo).
+  - Añadida en `arch-layout.md` la **trampa de migración**: fuente gitignored de
+    `.laia-core/` (p.ej. `cron/`) no viaja con clone basado en git.
+  - Nuevo **`workflow/project-map.md`**: plano anotado de TODO el repo (carpetas más
+    importantes, su objetivo, archivos y subcarpetas clave) generado de la estructura
+    real. Enlazado desde `LAIA_ECOSYSTEM.md` (header + §8).
+
 ## 2026-05-26 — Fix installer/clonador: egress preflight no-fatal (claude opus 4.7)
 
 - **Síntoma**: en el Thinkstation `curl ... | sudo bash -- --mode clone`
