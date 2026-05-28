@@ -15,6 +15,47 @@ Formato:
 
 ---
 
+## 2026-05-28 — Fixes release flow: laia-release default OPT_SRC, comentarios obsoletos (claude opus 4.7)
+
+Verificación end-to-end del flujo de release tras el saneamiento (`bin/laia-release`,
+`bin/laia-rollback`, `install.sh`, `Makefile`, `tests/installer/run_all.sh`, coherencia
+main↔stable). Resultado: el flujo funciona, pero con 3 disonancias.
+
+### Arreglado
+
+- **`bin/laia-release`**: default `OPT_SRC` cambiado de `$LAIA_USER_HOME/.laia` a
+  `$LAIA_USER_HOME/LAIA`. Razón: `~/.laia` es runtime (no tiene `.git`), el dev repo
+  vive en `~/LAIA` según `LAIA_ECOSYSTEM.md`. Antes, `sudo -E laia-release` sin
+  argumentos abortaba con "Source tree is not a git repo". Comentario del header y
+  texto del `--help` también actualizados.
+- **`bin/laia-rollback`**: comentario del `--help` mencionaba `~/LAIA-ARCH/` (path
+  inexistente). Cambiado a `~/.laia/` y `/srv/laia/` (los reales según ecosystem).
+
+### Verificado correcto (sin cambios)
+
+- `install.sh`: `DEFAULT_BRANCH="stable"`, `DEFAULT_REPO_URL` correcto, las 3 URLs
+  en el header del script apuntan a stable.
+- Wrappers en `bin/`: `laia`, `laia-clone`, `laia-install`, `laia-release`,
+  `laia-rollback`, `atlas` — todos ejecutables.
+- `tests/installer/run_all.sh`: orquesta 18 tests con HOME temporal aislado.
+- `Makefile`: `make test` corre pytest AGORA + TypeScript typecheck.
+- `bin/laia-release` lógica interna: preflight → smoke tests → build a
+  `/opt/laia-vX.Y.Z` → switch atómico de symlink → restart systemd → healthcheck →
+  auto-rollback en fallo. Robusto.
+- `bin/laia-rollback`: solo flip symlink + restart (no build), simple y atómico.
+- Coherencia main↔stable: `stable` es ancestor de `main`, `git merge --ff-only main`
+  funcionaría. `stable` está 14 commits retrasado (esperado post-saneamiento).
+- Smoke tests post-fix: 50/50 PASS (`test_flags.sh` 24/24, `test_lib_common.sh` 26/26).
+
+### Pendiente conocido
+
+- Próximo release oficial será `v0.1.3` (o el número que decida Jorge): promoverá
+  los 14 commits acumulados (atlas v2, fix migration, fix clone, recovery cron+SOUL,
+  shell_rc, trío docs, skills mattpocock, saneamiento, guía git+GitHub, estos fixes)
+  de main a stable con `git merge --ff-only main && git tag -a v0.1.3`.
+
+---
+
 ## 2026-05-28 — Saneamiento completo del repo en GitHub: unificar LAIA, archivar Hermes (claude opus 4.7)
 
 Operación grande, planificada y ejecutada con verificación obligatoria en cada paso
