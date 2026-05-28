@@ -9,6 +9,7 @@ a tocar algo en este repositorio, **lee esto primero**.
 |---|---|
 | `00-start-here.md` | Este archivo. Punto de entrada. |
 | `ai-mindset.md` | Cómo pensar al trabajar (right-size, mentalidad senior, el porqué de los gates). |
+| `git-github-guide.md` | Guía explicada de git+GitHub: modelo mental, operaciones, errores, historia del repo. |
 | `01-canonical-sources.md` | Dónde vive la verdad. Qué fuentes son canónicas. |
 | `02-how-to-work.md` | Reglas: branches, commits, cierre de turno, qué no hacer. |
 | `03-multi-ai-coordination.md` | Cómo coordinar cuando hay varias IAs simultáneas. |

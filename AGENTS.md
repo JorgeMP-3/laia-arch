@@ -56,6 +56,40 @@ Detalle de la mentalidad y cuándo subir/bajar el rigor: `workflow/ai-mindset.md
 
 Detalle de "qué nunca sin permiso" en `workflow/02-how-to-work.md`. Runbook de release en `workflow/release-flow.md`.
 
+## Git workflow
+
+Modelo del repo `JorgeMP-3/laia-arch` tras el saneamiento del 2026-05-28:
+
+- **`main`** = desarrollo activo de LAIA-ARCH. Default branch. **Nunca commit directo.**
+- **`stable`** = producción (tip de release). El instalador apunta aquí. Solo se promueve desde `main`.
+- **`wip/<agente>/<tarea>`** = trabajo en curso. Una branch por tarea no-trivial. Patrón obligatorio.
+- **`archive/*`** = histórico inmutable (Hermes upstream, orphans previas, wips legados). **No tocar ni borrar.**
+- **`tags vX.Y.Z`** = releases sobre `stable`.
+
+Comandos canónicos:
+
+```bash
+# Empezar tarea
+git switch -c wip/<agente>/<slug> main
+# Trabajar, commitear (Conventional Commits)
+git add <archivos>; git commit -m "feat(area): descripción"
+# Publicar y abrir PR
+git push -u origin wip/<agente>/<slug>     # GitHub muestra URL de PR; abrir contra main
+# Tras merge: limpiar
+git switch main; git pull
+git branch -d wip/<agente>/<slug>
+git push origin --delete wip/<agente>/<slug>
+```
+
+Reglas imperativas:
+- **No** `git push --force` a `main`/`stable`/`archive/*`.
+- **No** `git reset --hard` sin red de seguridad (branch de backup primero).
+- **No** mergear PR sin que la suite (`workflow/02-how-to-work.md` §Tests) pase.
+- Si los commits vienen de orphan disjoint, usar `cherry-pick`, no `merge`.
+- Conflictos en docs append-only (`changelog.md`, `problems.md`, `security.md`) → combinar entradas chronológicamente.
+
+El **porqué** (modelo mental, errores típicos, cómo recuperarse, historia del saneamiento) en `workflow/git-github-guide.md`.
+
 ## Agent skills
 
 Las IAs de desarrollo comparten un catálogo de skills de workflow en `.claude/skills/`
@@ -96,6 +130,7 @@ Esta sección es la config que las skills de ingeniería esperan encontrar:
 |---|---|
 | `LAIA_ECOSYSTEM.md` | Qué es LAIA. Documento canónico. |
 | `workflow/ai-mindset.md` | Cómo pensar al trabajar (el porqué, mentalidad senior). |
+| `workflow/git-github-guide.md` | Modelo mental git+GitHub, operaciones, errores típicos, historia del saneamiento. |
 | `.claude/skills/` | Catálogo de skills de workflow (+ `README.md`, `UPSTREAM.md`). |
 | `workflow/00-start-here.md` | Índice de los archivos operativos. |
 | `workflow/01-canonical-sources.md` | Dónde vive la verdad para cada tema. |

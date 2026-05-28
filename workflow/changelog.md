@@ -15,6 +15,93 @@ Formato:
 
 ---
 
+## 2026-05-28 — Saneamiento completo del repo en GitHub: unificar LAIA, archivar Hermes (claude opus 4.7)
+
+Operación grande, planificada y ejecutada con verificación obligatoria en cada paso
+(`workflow/plans/archive/2026-05-28-github-cleanup-archive-hermes.md`).
+
+### Punto de partida (el lío)
+
+El repo `JorgeMP-3/laia-arch` era un fork de **Hermes Agent** (Nous Research / Teknium)
+que en algún momento pivotó hacia LAIA-ARCH. La transición se hizo creando ramas orphan
+sin historia común. Resultado: **6 historias paralelas disjoint** en el mismo repo:
+
+- `main` = Hermes upstream + parches de Jorge (6.625 commits desde 2025-07).
+- `stable` = snapshot orphan de LAIA del 26-may (1 commit, 2.574 archivos).
+- `feat/installer-cloner-v2`, `feat/installer-wizard` = orphans LAIA viejas.
+- `wip/codex/dev-stable-versioning` = base oficial LAIA con releases v0.1.0/0.1.1/0.1.2 tageados.
+- `local-customizations` = customs pre-LAIA sobre Hermes.
+
+Más, en local, 11 commits de Jorge dispersos: 7 en `stable` orphan, 3 en una wip de
+limpieza, 1 en una wip de mattpocock-skills.
+
+`workflow/02-how-to-work.md` decía "main = dev, stable = prod" pero la realidad era opuesta.
+
+### Saneamiento (13 fases, gate de verificación en cada integración)
+
+1. SSH key añadida en GitHub (auth).
+2. Push de las 3 wips locales a remote.
+3. Backup de las 5 ramas legado en `archive/*` (Hermes upstream, customs, 2 orphans, stable orphan).
+4. Default branch movido temporalmente a `wip/codex/dev-stable-versioning` (UI).
+5. `origin/main` (Hermes) borrado tras verificar backup íntegro.
+6. `wip/codex/dev-stable-versioning` renombrada a `main` (UI). Default vuelve a `main`.
+7. Cherry-pick de los 10 commits locales sobre la nueva main, en 3 branches paralelas:
+   - `wip/jorge/recent-fixes-on-main` (6 commits: atlas v2, fix migration, fix clone config.yaml
+     via Python helper, recover cron+SOUL, shell_rc, docs ecosystem).
+   - `wip/jorge/cleanup-and-trio-on-main` (3 commits: refinación trío docs, chore claude
+     settings, trace LAIA_TRACE).
+   - `wip/claude/mattpocock-dev-skills-on-main` (1 commit: 13 skills + doctrina right-size).
+8. Verificación post-cherry-pick (gates obligatorios): 13/13 skills válidas, 12/12 symlinks
+   Codex, atlas v2 + cron + SOUL + Python helper presentes, AGENTS.md con right-size +
+   guardarraíles + §Agent skills, tags v0.1.x accesibles.
+9. `stable` realineado al tip de LAIA (igual a main).
+10. Las 3 branches `*-on-main` mergeadas en main con `--no-ff` (resolución manual de
+    conflictos en `LAIA_ECOSYSTEM.md`, trío docs, `changelog.md`).
+11. Push de main unificado a GitHub.
+12. Archivado de las 3 wips orphan-based originales en `archive/wip-*-orphan` y borrado
+    de las ramas legado obsoletas (`feat/installer-*`, `local-customizations`).
+13. Docs actualizadas: `workflow/git-github-guide.md` (human-facing), `AGENTS.md` §Git workflow
+    (AI-facing terso), `00-start-here.md` y `01-canonical-sources.md` apuntando a la guía.
+
+### Estado final en GitHub
+
+```
+origin/main                    ← LAIA-ARCH desarrollo unificado (5a41fc87)
+origin/stable                  ← LAIA-ARCH prod tip (be965365)
+origin/wip/*-on-main           ← 3 ramas integradas (mergeadas en main)
+origin/archive/hermes-upstream
+origin/archive/hermes-local-customizations
+origin/archive/laia-pre-versioning-cloner-v2
+origin/archive/laia-pre-versioning-wizard
+origin/archive/laia-stable-orphan-snapshot
+origin/archive/wip-jorge-recent-fixes-orphan
+origin/archive/wip-jorge-cleanup-and-trio-orphan
+origin/archive/wip-claude-mattpocock-orphan
+tags v0.1.0, v0.1.1, v0.1.2 (accesibles desde main)
+```
+
+### Pendientes conocidos
+
+- **b2a99a04 (orphan root del stable)** fue SKIPPED durante el cherry-pick (no se puede
+  aplicar como diff por ser orphan). Su único commit era "fix(clone): refrescar wrappers
+  bin/". Diferencias detectadas: en main no existe la función `_clone_refresh_bin_wrappers`
+  de `bin/laia-clone`, ni el fichero `infra/lxd/image-build/lib-build.sh` (163 líneas). La
+  evolución de main puede haber hecho irrelevante ese fix; revisar caso por caso si surge
+  el síntoma original ("/opt/laia ya existe y los wrappers no se refrescan").
+- Las 3 ramas `wip/*-on-main` en origin están técnicamente obsoletas tras los merges
+  (sus commits ya viven en main); pueden borrarse cuando se considere.
+
+### Lecciones registradas
+
+- Refspec restringido (`+refs/heads/stable:...`) ocultaba el resto del repo. Ampliado a `*`.
+- `git checkout --orphan` recurrente crea historias paralelas que NO se mergean — solo
+  cherry-pick.
+- Cuando un commit es orphan-root, su diff "contra el padre" son TODOS los archivos
+  como nuevos → cherry-pick imposible. Se salta y se aplican los cambios manualmente si
+  hace falta.
+
+---
+
 ## 2026-05-27 — Skills de workflow de desarrollo (mattpocock) integradas para las 3 IAs (claude opus 4.7)
 
 Integración de [mattpocock/skills](https://github.com/mattpocock/skills) como **tooling de

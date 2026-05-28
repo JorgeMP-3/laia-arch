@@ -27,6 +27,7 @@
 | Endpoints concretos de la API admin | `docs/db-export/agora-control-center.md` |
 | Cómo arrancar dev local | `Makefile` (autoritativo) + `workflow/02-how-to-work.md` |
 | Cómo ejecutar el protocolo de ingeniería (FASE 1-4) | skills en `.claude/skills/` — ver `AGENTS.md` §Agent skills |
+| Cómo usar git+GitHub en este repo (modelo, comandos, errores) | `workflow/git-github-guide.md` + `AGENTS.md` §Git workflow |
 | Estado actual (qué se trabajó hoy) | `workflow/changelog.md` |
 | Problemas conocidos sin resolver | `workflow/problems.md` |
 | Planes en marcha | `workflow/plans/` |
