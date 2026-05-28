@@ -88,7 +88,31 @@ Reglas imperativas:
 - Si los commits vienen de orphan disjoint, usar `cherry-pick`, no `merge`.
 - Conflictos en docs append-only (`changelog.md`, `problems.md`, `security.md`) → combinar entradas chronológicamente.
 
-El **porqué** (modelo mental, errores típicos, cómo recuperarse, historia del saneamiento) en `workflow/git-github-guide.md`.
+### Cuántas branches / cuántos PRs por tarea
+
+**Regla por defecto: 1 tarea = 1 branch = 1 PR.** LAIA es solo-dev — Jorge revisa
+y mergea sin equipo. El patrón "muchos PRs pequeños stacked" del mundo corporativo
+**aquí solo añade lío**, no seguridad.
+
+| Caso | Patrón correcto |
+|---|---|
+| Tarea coherente, aunque toque varios archivos/áreas (ej. "adoptar Atlas v2" en agora-backend + scripts + docs) | **1 branch + 1 PR consolidado** con commits separados dentro para legibilidad (`feat: helper`, `feat: migrate config.py`, `test: regression`, `docs: changelog`). |
+| Dos tareas **totalmente independientes** (sin orden de aplicación, distintos archivos) | 1 branch + 1 PR cada una. Mergeables en cualquier orden. |
+| Trabajo en cadena (PR-B depende de PR-A no mergeado aún) | **NO usar stacked PRs.** 1 sola branch + 1 PR con los 2 commits en orden. |
+
+**Por qué los stacked PRs rompen aquí (lección 2026-05-28):**
+Al mergear el PR base con `gh pr merge --delete-branch`, GitHub **auto-cierra
+sin mergear** los PRs que tienen esa branch como base. Los cambios "stacked
+encima" se quedan huérfanos; hay que reabrir y rehacer el merge. Pasó con
+PR #5 y #6 de Atlas adoption: se cerraron solos al borrar `wip/claude/atlas-refs-new`.
+
+**Indicador de "estoy abriendo demasiados PRs":** si el segundo PR usa
+`--base wip/<otra-branch>` en vez de `--base main`, está stacked → fusiona los
+2 en uno solo antes de pushear.
+
+Detalle del error histórico en `workflow/git-github-guide.md` §"Stacked PRs:
+por qué no". El **porqué** general (modelo mental, errores típicos, cómo
+recuperarse, historia del saneamiento) también ahí.
 
 ## Agent skills
 
