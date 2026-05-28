@@ -1,10 +1,17 @@
 # LAIA — Layout en disco y contrato de migración
 
-> Documento técnico. Detalla **dónde vive cada cosa** en disco, con qué permisos, y
-> qué cruza la red en una migración (`laia-clone`). Es la contraparte de implementación
-> de la visión descrita en [`LAIA_ECOSYSTEM.md`](../LAIA_ECOSYSTEM.md) (§"Dónde vive
-> todo"). Si hay contradicción sobre **la idea**, gana `LAIA_ECOSYSTEM.md`; sobre
-> **mecánica de disco/clone**, gana este archivo.
+> Documento técnico. Detalla el **modelo objetivo** de dónde vive cada cosa en disco, con
+> qué permisos, y qué cruza la red en una migración (`laia-clone`). Es la contraparte de
+> implementación de la visión descrita en [`LAIA_ECOSYSTEM.md`](../LAIA_ECOSYSTEM.md)
+> (§"Dónde vive todo").
+>
+> ⚠️ Este archivo describe el **modelo/spec (lo que debería ser)**. Para el **estado real
+> en disco de este host** (con sus divergencias actuales) ver
+> [`project-map.md`](project-map.md) §"Mapa del sistema completo".
+>
+> Si hay contradicción sobre **la idea**, gana `LAIA_ECOSYSTEM.md`; sobre **mecánica de
+> disco/clone (objetivo)**, gana este archivo; sobre **qué hay realmente ahora**, gana
+> `project-map.md`.
 >
 > Última revisión: 2026-05-27.
 
