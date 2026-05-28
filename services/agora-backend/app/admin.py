@@ -20,6 +20,7 @@ from urllib.request import Request as UrlRequest, urlopen
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
+from .atlas_paths import resolved_path
 from .auth import public_user, require_roles
 from .agent_identity import (
     canonical_container_name,
@@ -713,7 +714,7 @@ def _delete_user_job(actor_id: str) -> Callable[[dict, str], dict]:
         result = _run_command(["lxc", "delete", "--force", container], timeout=120)
         if not result["ok"]:
             _append_job_log(log_path, result["stderr"] or result["stdout"])
-        user_dir = Path(os.environ.get("AGORA_ADMIN_USERS_ROOT", "/srv/laia/users")) / slug
+        user_dir = resolved_path("AGORA_ADMIN_USERS_ROOT", "srv_users", "/srv/laia/users") / slug
         rm_result = _run_command(["rm", "-rf", str(user_dir)], timeout=60)
         if not rm_result["ok"]:
             _append_job_log(log_path, rm_result["stderr"] or rm_result["stdout"])
