@@ -15,9 +15,14 @@ fi
 INFRA_DIR="$LAIA_ROOT/infra"
 BACKEND_DIR="$LAIA_ROOT/services/agora-backend"
 FRONTEND_DIR="$LAIA_ROOT/laia-ui"
-DST_FRONTEND="${AGORA_FRONTEND_DIST:-/srv/laia/agora/frontend/dist}"
-DST_DATA="${AGORA_DATA_DIR:-/srv/laia/agora}"
-DST_STATE="${LAIA_STATE_ROOT:-/srv/laia/state}"
+# Atlas-aware defaults: env var → atlas → static fallback.
+_atlas_get() {
+  command -v atlas >/dev/null 2>&1 && atlas get "$1" 2>/dev/null || echo "$2"
+}
+DST_FRONTEND="${AGORA_FRONTEND_DIST:-$(_atlas_get srv_agora /srv/laia/agora)/frontend/dist}"
+DST_DATA="${AGORA_DATA_DIR:-$(_atlas_get srv_agora /srv/laia/agora)}"
+DST_STATE="${LAIA_STATE_ROOT:-$(_atlas_get srv_state /srv/laia/state)}"
+AGORA_HEALTH_URL="$(_atlas_get agora_api http://127.0.0.1:8088)/api/health"
 NGINX_SRC="$INFRA_DIR/nginx/agora.conf"
 NGINX_DST="/etc/nginx/sites-enabled/agora.laiajmp.org"
 SYSTEMD_SRC="$INFRA_DIR/systemd/agora-backend.service"
@@ -119,10 +124,10 @@ fi
 echo ""
 echo "--- 6. Verificacion ---"
 sleep 1
-if curl -sf http://127.0.0.1:8088/api/health > /dev/null 2>&1; then
-  echo "  OK  backend responde en :8088"
+if curl -sf "$AGORA_HEALTH_URL" > /dev/null 2>&1; then
+  echo "  OK  backend responde en $AGORA_HEALTH_URL"
 else
-  echo "  ERR backend no responde"
+  echo "  ERR backend no responde en $AGORA_HEALTH_URL"
 fi
 if curl -sf -H "Host: agora.laiajmp.org" http://127.0.0.1:8090/ > /dev/null 2>&1; then
   echo "  OK  frontend responde en :8090"
