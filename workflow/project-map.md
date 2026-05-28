@@ -1,16 +1,93 @@
 # LAIA — Mapa del proyecto
 
-> Plano de **todo el repositorio**: las carpetas más importantes, su objetivo, y sus
-> archivos y subcarpetas clave. Es el índice estructural del código. Para la **idea** del
-> proyecto ver [`../LAIA_ECOSYSTEM.md`](../LAIA_ECOSYSTEM.md); para el **layout en disco /
-> migración** ver [`arch-layout.md`](arch-layout.md).
+> Plano de **todo el sistema LAIA en este host**: primero las **locations en disco**
+> (repo + despliegue + datos + runtime), luego el detalle del **repositorio** `~/LAIA`.
+> Para la **idea** del proyecto ver [`../LAIA_ECOSYSTEM.md`](../LAIA_ECOSYSTEM.md); para el
+> **modelo/spec de disco, permisos y contrato de migración** ver
+> [`arch-layout.md`](arch-layout.md) (este doc describe lo que **hay realmente**;
+> arch-layout describe lo que **debería ser**).
 >
-> Última revisión: 2026-05-27. (Listados representativos, no exhaustivos: se omiten
+> Última revisión: 2026-05-27, verificado en disco. (Listados representativos: se omiten
 > `__pycache__`, `venv`, `node_modules`, `*.egg-info`.)
 
 ---
 
-## Vista de pájaro
+## Mapa del sistema completo (todas las locations)
+
+LAIA no es solo el repo `~/LAIA`. En este host (`laia-arch`) el sistema se reparte en
+varias locations. **⚠️ El estado real diverge de la spec** (ver notas):
+
+```
+HOST laia-arch
+│
+├── ~/LAIA/                      📦 REPO / árbol de DESARROLLO (donde se edita el código)
+│                                   → detalle completo abajo ("El repositorio ~/LAIA")
+│
+├── /opt/laia → laia-v0.11.0/    🚀 PRODUCTO INSTALADO (lo que corre al teclear `laia`)
+│   ├── laia-v0.11.0/            versión activa (layout PLANO: copia del repo + VERSION)
+│   │   ├── .laia-core/          motor (con venv editable + cron/ vía .pth)
+│   │   ├── services/ infra/ bin/ skills/ plugins/ workspace_store/
+│   │   ├── .laia/state/         estado mínimo
+│   │   └── LAIA_ECOSYSTEM.md  AGENTS.md  CLAUDE.md  Makefile  install.sh
+│   └── laia-v0.0.0-clone/       ⚠️ LEFTOVER del primer clone (basura, borrable)
+│       └── (⚠️ spec pide current→versions/+data/; aquí es volcado plano)
+│
+├── /usr/local/bin/laia*         🔗 symlinks → /opt/laia/bin/{laia,clone,install,release,rollback}
+│
+├── /srv/laia/                   💾 DATOS OPERACIONALES (fuente de verdad, root:laia-arch)
+│   ├── agora/                   → bind-mount a container laia-agora (root-only)
+│   │   └── agora.db, atlas/, plugins/, skills/, logs/   (la BD central)
+│   ├── users/                   → bind-mounts a los agent-<slug>
+│   │   ├── jorge-dev/  verify-bob/  verify-carol/  (home/workspace/plugins de cada uno)
+│   └── (⚠️ NO existe arch/ — la spec §2.2 lo pide; la runtime de ARCH está en ~/LAIA-ARCH)
+│
+├── ~/.laia/                     🔐 SECRETOS + config de pathd/atlas (dir pequeño)
+│   ├── auth.json               (providers LLM — el que lee AGORA por bind-mount)
+│   ├── .env  .env.paths        (API keys; paths generados por pathd)
+│   ├── atlas.yaml              (registro Atlas v2)
+│   ├── config.yaml             (paths para laia-pathd)
+│   └── state/
+│
+├── ~/LAIA-ARCH/                 🏠 LAIA_HOME del agente ARCH (¡lo usa como home COMPLETO!)
+│   │                              ⚠️ La spec dice "solo mesa viva"; en realidad el agente
+│   │                              (base hermes) vuelca AQUÍ todo su estado:
+│   ├── auth.json  config.yaml  .admin-credentials  .env   ← credenciales/config (spec: ~/.laia)
+│   ├── SOUL.md  cron/  sessions/  sandboxes/  logs/  atlas/  platforms/
+│   ├── orchestrator-runs/  migration/  response_store.db  checkpoints/  pastes/  bin/
+│   ├── pathd.sock  *.cache.yaml  .laia_history          ← runtime (spec: /srv/laia/arch)
+│   └── memories/  skills  plugins/                      ← esto SÍ es "mesa viva" (OK)
+│
+├── /root/.laia/                 ⚠️ HUÉRFANO — creado por un `sudo laia` por error (borrable)
+│
+└── LXD (containers)             🧠 EJECUCIÓN
+    ├── laia-agora               cerebro/API (LAIA-AGORA); monta /srv/laia/agora
+    ├── agent-jorge-dev          PA-AGORA de Jorge (executor); monta /srv/laia/users/jorge-dev
+    ├── agent-verify-bob         agente de prueba
+    └── agent-verify-carol       agente de prueba
+        (imágenes LXD: laia-agent [executor], laia-agora [orquestador])
+```
+
+**Las 3 (4) zonas y su estado real:**
+
+| Zona | Propósito (spec) | Realidad en este host |
+|---|---|---|
+| `/opt/laia` | producto versionado `current→versions/` | volcado **plano** + leftover `v0.0.0-clone` |
+| `/srv/laia` | datos + runtime ARCH (`agora/`, `users/`, `arch/`) | falta `arch/`; runtime ARCH vive en `~/LAIA-ARCH` |
+| `~/.laia` | solo secretos | secretos + atlas + config pathd (OK-ish) |
+| `~/LAIA-ARCH` | solo mesa viva (workspaces/memories/skills/plugins) | **home COMPLETO del agente** (auth, config, cron, sessions…) |
+
+> 🔧 **Pendiente de arquitectura (Fase 5 / config-home):** unificar el config-home. Hoy
+> el agente (`LAIA_HOME=~/LAIA-ARCH`) escribe credenciales/runtime en `~/LAIA-ARCH`,
+> mientras AGORA lee `~/.laia/auth.json` → **3 `auth.json` descoordinados**
+> (`~/.laia`, `~/LAIA-ARCH`, `/root/.laia`). Requiere decisión de Jorge: o el agente usa
+> `~/.laia`, o se actualiza la spec. Ver `arch-layout.md`.
+
+---
+
+## El repositorio `~/LAIA`
+
+El árbol de **desarrollo**, donde se edita el código (luego `laia release` lo promueve a
+`/opt`). Vista de pájaro:
 
 ```
 LAIA/

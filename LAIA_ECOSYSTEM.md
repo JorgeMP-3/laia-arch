@@ -297,10 +297,11 @@ no solapados:
 Más la **mesa viva** del operador en `~/LAIA-ARCH/` (workspaces, memorias y skills que
 Jorge edita a diario).
 
-> 📐 El detalle completo — árbol de directorios, permisos, idmaps LXD, contrato de
+> 📐 El **modelo** completo — árbol de directorios, permisos, idmaps LXD, contrato de
 > transferencia `laia-clone` y flujos `install`/`clone` — está en
-> [`workflow/arch-layout.md`](workflow/arch-layout.md). Para el mapa del **repositorio**
-> (qué hace cada carpeta del código) ver [`workflow/project-map.md`](workflow/project-map.md).
+> [`workflow/arch-layout.md`](workflow/arch-layout.md). Para el **mapa real del sistema
+> entero** (todas las locations en disco — `/opt`, `/srv`, `~/.laia`, `~/LAIA-ARCH`,
+> containers — y el repo) ver [`workflow/project-map.md`](workflow/project-map.md).
 
 ---
 
