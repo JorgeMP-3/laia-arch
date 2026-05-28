@@ -15,6 +15,43 @@ Formato:
 
 ---
 
+## 2026-05-27 — Skills de workflow de desarrollo (mattpocock) integradas para las 3 IAs (claude opus 4.7)
+
+Integración de [mattpocock/skills](https://github.com/mattpocock/skills) como **tooling de
+dev** (NO producto, NO Marketplace) para Claude Code + Codex + OpenCode.
+
+- **Vendorizadas 13 skills** en `.claude/skills/` (fuente de verdad, commit upstream
+  `0288510`): grill-me, grill-with-docs, to-prd, to-issues, tdd, triage, diagnose, handoff,
+  zoom-out, improve-codebase-architecture, write-a-skill, setup-matt-pocock-skills,
+  git-guardrails. Cada una con bloque `## LAIA context` cerrado (`<!-- LAIA:START/END -->`)
+  para poder re-vendorizar reemplazando lo de arriba del marcador.
+- **Fan-out a 3 IAs**: `.claude/skills/` lo leen Claude Code y OpenCode nativamente; Codex
+  vía symlinks relativos por-skill en `.codex/skills/` (mode 120000 en git).
+- **git-guardrails** es solo-Claude (instala hook `PreToolUse`): vendorizada **sin symlink
+  Codex** y **NO activada** (no se tocó `.claude/settings.json`). `name` localizado de
+  `git-guardrails-claude-code` a `git-guardrails`.
+- **AGENTS.md** reescrito como canónico: protocolo FASE 1-4 → punteros a skills; gates duros
+  (5 reglas, branching) inline; nuevo bloque `## Agent skills` (tracker=ficheros locales,
+  dominio=`LAIA_ECOSYSTEM.md`). **CLAUDE.md** → stub que apunta a AGENTS.md.
+- `.claude/skills/UPSTREAM.md` documenta procedencia, SHA y convención de actualización.
+- Índice de workflow actualizado (`00-start-here.md`, `01-canonical-sources.md`).
+- **Descripciones** de las 13 skills localizadas (prefijo FASE/categoría en español) para
+  que el diálogo `/skills` se lea claro; nombres y cuerpos intactos. README de uso en
+  `.claude/skills/README.md`.
+- **Triaje reconciliado**: el estado canónico sigue siendo el campo `Estado:` de
+  `problems.md` (`open`/`in-progress`/`blocked`/`resolved`); los roles de Pocock se mapean
+  sobre ese formato (vía `Estado:`+`Owner:`), sin etiquetas nuevas. Mapa en `AGENTS.md`
+  §Agent skills y en el bloque LAIA de `/triage`.
+- **Doctrina reframe (mínimo)**: `AGENTS.md` pasó de protocolo FASE lineal/obligatorio a
+  **right-size** (FASE = default para no-trivial, no ritual) + guardarraíles
+  Siempre/Pregunta/Nunca, más terso. La filosofía/porqué se movió a `workflow/ai-mindset.md`
+  (human-facing, no se carga cada turno). Respaldo: estudios de context-bloat (más reglas y
+  ficheros largos bajan la tasa de éxito de los agentes). CLAUDE.md y 00-start-here actualizados.
+- **Abierto**: verificación de invocación en las 3 CLIs (Slice 4) + evidencia.
+- **Descubierto**: las skills de Pocock esperan config en un bloque `## Agent skills` de
+  AGENTS.md/CLAUDE.md + `docs/agents/` — se mapeó a la realidad LAIA (workflow/) sin crear
+  `docs/agents/`. Plan completo en `~/.claude/plans/vale-me-quiero-instalar-frolicking-creek.md`.
+
 ## 2026-05-27 — Recuperación de paquete `cron/` perdido en migración + fix bug `.bashrc` del instalador (claude opus 4.7)
 
 Dos hilos en la misma sesión, ambos derivados de la migración `laia-hermes`→`laia-arch`.
@@ -97,6 +134,13 @@ Dos hilos en la misma sesión, ambos derivados de la migración `laia-hermes`→
   - Nuevo **`workflow/project-map.md`**: plano anotado de TODO el repo (carpetas más
     importantes, su objetivo, archivos y subcarpetas clave) generado de la estructura
     real. Enlazado desde `LAIA_ECOSYSTEM.md` (header + §8).
+  - **Ampliado `project-map.md`** con sección "Mapa del sistema completo": TODAS las
+    locations en disco verificadas (`/opt`, `/srv`, `~/.laia`, `~/LAIA-ARCH`, `/root/.laia`,
+    containers LXD) con su estado REAL y las divergencias vs spec marcadas. Aclarada la
+    jerarquía doc: LAIA_ECOSYSTEM (idea) / arch-layout (modelo objetivo) / project-map
+    (estado real). Hallazgo destacado: `LAIA_HOME=~/LAIA-ARCH` → el agente usa
+    `~/LAIA-ARCH` como home completo (auth/config/runtime), no solo "mesa viva" →
+    3 auth.json descoordinados (config-home, Fase 5).
 
 ## 2026-05-26 — Fix installer/clonador: egress preflight no-fatal (claude opus 4.7)
 
