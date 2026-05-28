@@ -11,6 +11,7 @@ Uso:
   atlas validate                  Validar estructura de atlas.yaml
   atlas env                       Exportar variables (bash-sourceable)
   atlas graph [--from REF]        Mostrar grafo de dependencias
+  atlas visualize                Generar HTML visual del grafo con Mermaid
   atlas watch [--interval N]      Monitor en vivo
   atlas status                    Estado del daemon y ficheros
   atlas reload                    Recargar config
@@ -431,6 +432,235 @@ def cmd_graph(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_visualize(args: argparse.Namespace) -> int:
+    import json as _json
+    atlas = _import_atlas()
+    refs  = atlas.all_refs()
+    home  = _laia_config_home()
+
+    by_type: dict[str, list[tuple]] = {}
+    for name, entry in refs.items():
+        if not isinstance(entry, dict):
+            continue
+        t = entry.get("type", "path")
+        try:
+            value = atlas.get(name)
+        except atlas.AtlasError:
+            value = f"<error: {name}>"
+        alive = True
+        try:
+            health = atlas.health(name)
+            alive = health.alive
+        except Exception:
+            pass
+        by_type.setdefault(t, []).append((name, value, alive, entry.get("description", "")))
+
+    type_colors = {
+        "path":      ("#60A5FA", "#1D4ED8"),
+        "service":   ("#34D399", "#065F46"),
+        "container":("#FB923C", "#9A3412"),
+        "socket":    ("#A78BFA", "#4C1D95"),
+        "env_file":  ("#FBBF24", "#92400E"),
+    }
+    type_default = ("#9CA3AF", "#374151")
+
+    dep_nodes: dict[str, list[str]] = {}
+    import re as _re
+    for name, entry in refs.items():
+        if not isinstance(entry, dict):
+            dep_nodes[name] = []
+            continue
+        text = " ".join(str(v) for v in entry.values() if isinstance(v, str))
+        found = _re.findall(r"\$\{ref\.([^}]+)\}", text)
+        seen: list[str] = []
+        for k in found:
+            if k not in seen:
+                seen.append(k)
+        dep_nodes[name] = seen
+
+    nodes_json: list[dict] = []
+    edges_json: list[dict] = []
+    added_edges: set[tuple] = set()
+
+    for name, entry in refs.items():
+        if not isinstance(entry, dict):
+            continue
+        t = entry.get("type", "path")
+        bg, fg = type_colors.get(t, type_default)
+        try:
+            health = atlas.health(name)
+            alive = health.alive
+        except Exception:
+            alive = True
+        color = "#16A34A" if alive else "#DC2626"
+        label = entry.get("description", "") or name
+        nodes_json.append({
+            "id": name, "label": name, "description": label,
+            "type": t, "bg": bg, "fg": fg, "color": color,
+        })
+
+    for src, deps in dep_nodes.items():
+        for dep in deps:
+            if (src, dep) not in added_edges:
+                added_edges.add((src, dep))
+                edges_json.append({"from": src, "to": dep})
+
+    nodes_str = _json.dumps(nodes_json, indent=2)
+    edges_str = _json.dumps(edges_json, indent=2)
+
+    html = _HTML_TEMPLATE.replace("__NODES__", nodes_str)
+    html = html.replace("__EDGES__", edges_str)
+
+    output = getattr(args, "output", None)
+    open_browser = getattr(args, "open", False)
+
+    if output:
+        Path(output).write_text(html)
+        print(f"{_C.GRN}✓{_C.RST} wrote {output}")
+        return 0
+
+    import tempfile, webbrowser, urllib.parse
+    with tempfile.NamedTemporaryFile("w", suffix=".html", delete=False) as f:
+        f.write(html)
+        path = f.name
+    url = "file://" + urllib.parse.quote(path)
+    print(f"{_C.GRN}✓{_C.RST} opened {url}")
+    webbrowser.open(url)
+    return 0
+
+
+_HTML_TEMPLATE = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Atlas v2 Registry</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+         background: #0F172A; color: #E2E8F0; min-height: 100vh; }
+  .layout { display: flex; height: 100vh; }
+  .sidebar { width: 320px; background: #1E293B; padding: 20px; overflow-y: auto;
+             border-right: 1px solid #334155; }
+  .sidebar h1 { font-size: 1.1rem; color: #F1F5F9; margin-bottom: 16px;
+                display: flex; align-items: center; gap: 8px; }
+  .badge { font-size: 0.65rem; padding: 2px 6px; border-radius: 4px;
+           font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; }
+  .main { flex: 1; padding: 24px; overflow-y: auto; }
+  .main h2 { color: #F1F5F9; margin-bottom: 16px; font-size: 1rem; }
+  .legend { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 20px; }
+  .legend-item { display: flex; align-items: center; gap: 6px; font-size: 0.75rem; }
+  .legend-dot { width: 10px; height: 10px; border-radius: 50%; }
+  .graph-container { background: #1E293B; border-radius: 12px; padding: 20px;
+                     min-height: 500px; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.8rem; }
+  th { text-align: left; padding: 8px 10px; border-bottom: 1px solid #334155;
+       color: #94A3B8; font-weight: 500; text-transform: uppercase; font-size: 0.7rem; }
+  td { padding: 8px 10px; border-bottom: 1px solid #1E293B; }
+  tr:hover { background: #334155; }
+  .status-ok { color: #16A34A; } .status-dead { color: #DC2626; }
+  .type-pill { font-size: 0.65rem; padding: 2px 7px; border-radius: 10px;
+               font-weight: 600; }
+  .tab-bar { display: flex; gap: 4px; margin-bottom: 16px; }
+  .tab { padding: 8px 16px; border-radius: 8px; font-size: 0.8rem; cursor: pointer;
+         background: #334155; color: #94A3B8; }
+  .tab.active { background: #3B82F6; color: white; }
+  #graph-section, #table-section { display: none; }
+  #graph-section.active, #table-section.active { display: block; }
+</style>
+</head>
+<body>
+<div class="layout">
+  <div class="sidebar">
+    <h1><span style="font-size:1.2rem">🗺</span> Atlas v2</h1>
+    <div id="stats" style="font-size:0.75rem;color:#94A3B8;margin-bottom:16px"></div>
+    <div class="legend">
+      <div class="legend-item"><div class="legend-dot" style="background:#60A5FA"></div>path</div>
+      <div class="legend-item"><div class="legend-dot" style="background:#34D399"></div>service</div>
+      <div class="legend-item"><div class="legend-dot" style="background:#FB923C"></div>container</div>
+      <div class="legend-item"><div class="legend-dot" style="background:#A78BFA"></div>socket</div>
+      <div class="legend-item"><div class="legend-dot" style="background:#FBBF24"></div>env_file</div>
+    </div>
+    <div id="node-list" style="font-size:0.75rem"></div>
+  </div>
+  <div class="main">
+    <div class="tab-bar">
+      <div class="tab active" onclick="showTab('graph')">Graph</div>
+      <div class="tab" onclick="showTab('table')">Table</div>
+    </div>
+    <div id="graph-section" class="active">
+      <h2>Dependency Graph</h2>
+      <div class="graph-container">
+        <pre class="mermaid" id="mermaid-graph"></pre>
+      </div>
+    </div>
+    <div id="table-section">
+      <h2>All References</h2>
+      <table id="ref-table">
+        <thead><tr><th>Name</th><th>Type</th><th>Value</th><th>Status</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+<script>
+const NODES = __NODES__;
+const EDGES = __EDGES__;
+
+mermaid.initialize({ startOnLoad: true, theme: 'dark',
+  themeVariables: { primaryColor: '#3B82F6', primaryTextColor: '#F1F5F9',
+    primaryBorderColor: '#60A5FA', lineColor: '#475569',
+    secondaryColor: '#1E293B', tertiaryColor: '#0F172A' } });
+
+const byType = {};
+NODES.forEach(n => { (byType[n.type] = byType[n.type]||[]).push(n); });
+document.getElementById('stats').innerHTML =
+  Object.entries(byType).map(([t,ns]) =>
+    `<span class="badge" style="background:${ns[0].bg};color:white">${t}: ${ns.length}</span>`).join(' ');
+
+let graph = 'graph TD;\\n';
+const nodeIds = new Set(NODES.map(n=>n.id));
+const subgraphs = {};
+NODES.forEach(n => {
+  if (!subgraphs[n.type]) subgraphs[n.type] = [];
+  subgraphs[n.type].push(n.id);
+});
+Object.entries(subgraphs).forEach(([type, ids]) => {
+  const color = NODES.find(n=>n.id===ids[0])?.bg || '#9CA3AF';
+  graph += `  subgraph ${type} ["${type}"]\\n`;
+  ids.forEach(id => graph += `    ${id}\\n`);
+  graph += `  end\\n`;
+});
+EDGES.forEach(e => {
+  if (nodeIds.has(e.from) && nodeIds.has(e.to))
+    graph += `  ${e.from} --> ${e.to}\\n`;
+});
+document.getElementById('mermaid-graph').textContent = graph;
+
+const tbody = document.querySelector('#ref-table tbody');
+NODES.sort((a,b)=>a.type.localeCompare(b.type)||a.id.localeCompare(b.id))
+.forEach(n => {
+  const tr = document.createElement('tr');
+  tr.innerHTML = `<td>${n.label}</td><td>${n.type}</td>
+    <td style="color:#94A3B8;max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
+        title="${n.description}">${n.description || '—'}</td>
+    <td class="${n.color==='#16A34A'?'status-ok':'status-dead'}">
+      ${n.color==='#16A34A'?'✓ alive':'✗ dead'}</td>`;
+  tbody.appendChild(tr);
+});
+
+function showTab(tab) {
+  document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
+  document.querySelectorAll('[id$="-section"]').forEach(s=>s.classList.remove('active'));
+  document.getElementById(tab+'-section').classList.add('active');
+  event.target.classList.add('active');
+}
+</script>
+</body>
+</html>"""
+
+
 def cmd_watch(args: argparse.Namespace) -> int:
     interval = getattr(args, "interval", 5.0)
     atlas = _import_atlas()
@@ -714,6 +944,13 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--from", dest="from_ref", default=None, metavar="REF",
                    help="Start from this reference (show subtree only)")
     p.set_defaults(func=cmd_graph)
+
+    p = sub.add_parser("visualize", help="Generate self-contained HTML visualization with Mermaid")
+    p.add_argument("--output", dest="output", default=None, metavar="FILE",
+                   help="Write HTML to FILE instead of opening browser")
+    p.add_argument("--no-open", dest="open", action="store_false", default=True,
+                   help="Don't open browser automatically")
+    p.set_defaults(func=cmd_visualize)
 
     p = sub.add_parser("watch", help="Live health monitor")
     p.add_argument("--interval", type=float, default=5.0, metavar="SEC")

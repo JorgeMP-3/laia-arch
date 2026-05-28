@@ -56,6 +56,64 @@ Detalle de la mentalidad y cuándo subir/bajar el rigor: `workflow/ai-mindset.md
 
 Detalle de "qué nunca sin permiso" en `workflow/02-how-to-work.md`. Runbook de release en `workflow/release-flow.md`.
 
+## Git workflow
+
+Modelo del repo `JorgeMP-3/laia-arch` tras el saneamiento del 2026-05-28:
+
+- **`main`** = desarrollo activo de LAIA-ARCH. Default branch. **Nunca commit directo.**
+- **`stable`** = producción (tip de release). El instalador apunta aquí. Solo se promueve desde `main`.
+- **`wip/<agente>/<tarea>`** = trabajo en curso. Una branch por tarea no-trivial. Patrón obligatorio.
+- **`archive/*`** = histórico inmutable (Hermes upstream, orphans previas, wips legados). **No tocar ni borrar.**
+- **`tags vX.Y.Z`** = releases sobre `stable`.
+
+Comandos canónicos:
+
+```bash
+# Empezar tarea
+git switch -c wip/<agente>/<slug> main
+# Trabajar, commitear (Conventional Commits)
+git add <archivos>; git commit -m "feat(area): descripción"
+# Publicar y abrir PR
+git push -u origin wip/<agente>/<slug>     # GitHub muestra URL de PR; abrir contra main
+# Tras merge: limpiar
+git switch main; git pull
+git branch -d wip/<agente>/<slug>
+git push origin --delete wip/<agente>/<slug>
+```
+
+Reglas imperativas:
+- **No** `git push --force` a `main`/`stable`/`archive/*`.
+- **No** `git reset --hard` sin red de seguridad (branch de backup primero).
+- **No** mergear PR sin que la suite (`workflow/02-how-to-work.md` §Tests) pase.
+- Si los commits vienen de orphan disjoint, usar `cherry-pick`, no `merge`.
+- Conflictos en docs append-only (`changelog.md`, `problems.md`, `security.md`) → combinar entradas chronológicamente.
+
+### Cuántas branches / cuántos PRs por tarea
+
+**Regla por defecto: 1 tarea = 1 branch = 1 PR.** LAIA es solo-dev — Jorge revisa
+y mergea sin equipo. El patrón "muchos PRs pequeños stacked" del mundo corporativo
+**aquí solo añade lío**, no seguridad.
+
+| Caso | Patrón correcto |
+|---|---|
+| Tarea coherente, aunque toque varios archivos/áreas (ej. "adoptar Atlas v2" en agora-backend + scripts + docs) | **1 branch + 1 PR consolidado** con commits separados dentro para legibilidad (`feat: helper`, `feat: migrate config.py`, `test: regression`, `docs: changelog`). |
+| Dos tareas **totalmente independientes** (sin orden de aplicación, distintos archivos) | 1 branch + 1 PR cada una. Mergeables en cualquier orden. |
+| Trabajo en cadena (PR-B depende de PR-A no mergeado aún) | **NO usar stacked PRs.** 1 sola branch + 1 PR con los 2 commits en orden. |
+
+**Por qué los stacked PRs rompen aquí (lección 2026-05-28):**
+Al mergear el PR base con `gh pr merge --delete-branch`, GitHub **auto-cierra
+sin mergear** los PRs que tienen esa branch como base. Los cambios "stacked
+encima" se quedan huérfanos; hay que reabrir y rehacer el merge. Pasó con
+PR #5 y #6 de Atlas adoption: se cerraron solos al borrar `wip/claude/atlas-refs-new`.
+
+**Indicador de "estoy abriendo demasiados PRs":** si el segundo PR usa
+`--base wip/<otra-branch>` en vez de `--base main`, está stacked → fusiona los
+2 en uno solo antes de pushear.
+
+Detalle del error histórico en `workflow/git-github-guide.md` §"Stacked PRs:
+por qué no". El **porqué** general (modelo mental, errores típicos, cómo
+recuperarse, historia del saneamiento) también ahí.
+
 ## Agent skills
 
 Las IAs de desarrollo comparten un catálogo de skills de workflow en `.claude/skills/`
@@ -96,6 +154,7 @@ Esta sección es la config que las skills de ingeniería esperan encontrar:
 |---|---|
 | `LAIA_ECOSYSTEM.md` | Qué es LAIA. Documento canónico. |
 | `workflow/ai-mindset.md` | Cómo pensar al trabajar (el porqué, mentalidad senior). |
+| `workflow/git-github-guide.md` | Modelo mental git+GitHub, operaciones, errores típicos, historia del saneamiento. |
 | `.claude/skills/` | Catálogo de skills de workflow (+ `README.md`, `UPSTREAM.md`). |
 | `workflow/00-start-here.md` | Índice de los archivos operativos. |
 | `workflow/01-canonical-sources.md` | Dónde vive la verdad para cada tema. |

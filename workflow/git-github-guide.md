@@ -99,6 +99,27 @@ git branch -d wip/jorge/mi-nueva-feature                # borra la branch local
 git push origin --delete wip/jorge/mi-nueva-feature     # borra la branch remota
 ```
 
+### Stacked PRs: por qué NO
+
+Un "stacked PR" es cuando abres PR-B con base = `wip/.../PR-A` en vez de `main`,
+encadenando uno encima de otro. Suena cómodo (B continúa el trabajo de A) pero
+**aquí rompe siempre**.
+
+**Qué pasó el 2026-05-28**: Claude abrió 4 PRs para Atlas adoption — uno base
+(#4 con refs nuevas) y tres encima (#5 agora-backend, #6 shell scripts, #7
+changelog). Mergeé #4 con `--delete-branch`, que borró la branch base. **GitHub
+auto-cerró #5 y #6 sin mergear** (porque ya no existía su branch base). Hubo que
+reabrirlos como #8 y #9 contra main, perdiendo tiempo y generando ruido en el
+historial.
+
+**Regla**: 1 tarea coherente = 1 branch = 1 PR. Si tienes 3 cambios relacionados,
+3 commits dentro de la **misma** branch. Solo abre PRs separados cuando son
+**totalmente independientes** (mergeables en cualquier orden, sin tocar los
+mismos archivos).
+
+Si una IA te abre un PR con `--base wip/<otra-branch>` (no `--base main`), es
+señal de stacked → pídele que fusione todo en uno solo.
+
 ### Cuándo `git pull` y cuándo `git fetch`
 
 - **`git fetch`**: baja los commits de GitHub a tu local pero NO los aplica a tu branch.
