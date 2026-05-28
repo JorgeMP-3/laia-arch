@@ -32,6 +32,15 @@ LAIA_LOG_FILE="${LAIA_LOG_FILE:-${XDG_CACHE_HOME:-$HOME/.cache}/laia-installer.l
 mkdir -p "$(dirname "$LAIA_LOG_FILE")" 2>/dev/null || true
 
 _log_to_file() {
+  # Skip silently when the log isn't writable — e.g. a root-owned log left by
+  # `sudo laia install`, later read by a non-root invocation. Guarding here
+  # avoids leaking the shell's "Permission denied" redirection error to stderr
+  # (the `2>/dev/null` on the printf can't suppress a failed `>>` open).
+  if [[ -e "$LAIA_LOG_FILE" ]]; then
+    [[ -w "$LAIA_LOG_FILE" ]] || return 0
+  else
+    [[ -w "$(dirname "$LAIA_LOG_FILE")" ]] || return 0
+  fi
   printf '[%s] [%s] %s\n' "$(date -Iseconds)" "$1" "$2" >>"$LAIA_LOG_FILE" 2>/dev/null || true
 }
 

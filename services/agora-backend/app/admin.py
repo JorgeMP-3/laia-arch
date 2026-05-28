@@ -1562,7 +1562,7 @@ def _fix_pm2_stop_respawner(actor_id: str, log_path: str) -> dict:
     """G4 from the handoff: a stray PM2 daemon respawns an old uvicorn
     on host :8088 even after kill. Stop + delete the PM2 entry."""
     # PM2 lives in the operator's HOME, so this needs to run as that user.
-    pm2_user = os.environ.get("AGORA_ADMIN_PM2_USER", "laia-hermes")
+    pm2_user = os.environ.get("AGORA_ADMIN_PM2_USER", "laia-arch")
     args = ["sudo", "-u", pm2_user, "pm2", "delete", "agora-backend"]
     _append_job_log(log_path, " ".join(args))
     result = _run_command(args, timeout=10)

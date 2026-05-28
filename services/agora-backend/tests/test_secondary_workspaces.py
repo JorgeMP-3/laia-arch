@@ -15,7 +15,7 @@ import pytest
 
 @pytest.fixture(scope="module")
 def WorkspaceStore():
-    sys.path.insert(0, "/home/laia-hermes/LAIA")
+    sys.path.insert(0, "/home/laia-arch/LAIA")
     from workspace_store import WorkspaceStore as WS  # type: ignore
     return WS
 
@@ -77,7 +77,7 @@ def test_read_only_can_read(WorkspaceStore, writable_workspace):
 def test_plugin_lists_no_workspaces_if_unmounted(monkeypatch):
     """Plugin returns empty list when no secondary workspaces are mounted."""
     init_py = Path(
-        "/home/laia-hermes/LAIA/.laia-core/plugins/secondary-workspaces/__init__.py"
+        "/home/laia-arch/LAIA/.laia-core/plugins/secondary-workspaces/__init__.py"
     )
     spec = importlib.util.spec_from_file_location("_sw_test", init_py)
     mod = importlib.util.module_from_spec(spec)
@@ -98,7 +98,7 @@ def test_plugin_search_and_get_against_mounted_workspace(
     """Mount a writable_workspace as secondary read-only, then exercise
     search + get + list_all_nodes + list_edges tools."""
     init_py = Path(
-        "/home/laia-hermes/LAIA/.laia-core/plugins/secondary-workspaces/__init__.py"
+        "/home/laia-arch/LAIA/.laia-core/plugins/secondary-workspaces/__init__.py"
     )
     spec = importlib.util.spec_from_file_location("_sw_test_real", init_py)
     mod = importlib.util.module_from_spec(spec)
@@ -131,7 +131,7 @@ def test_plugin_search_and_get_against_mounted_workspace(
 
 def test_plugin_rejects_unknown_workspace():
     init_py = Path(
-        "/home/laia-hermes/LAIA/.laia-core/plugins/secondary-workspaces/__init__.py"
+        "/home/laia-arch/LAIA/.laia-core/plugins/secondary-workspaces/__init__.py"
     )
     spec = importlib.util.spec_from_file_location("_sw_unknown", init_py)
     mod = importlib.util.module_from_spec(spec)

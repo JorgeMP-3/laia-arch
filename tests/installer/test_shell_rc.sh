@@ -140,6 +140,19 @@ assert "exactly one block on previously empty file" \
 assert "LAIA_HOME present" \
   "$(grep -q 'LAIA_HOME="/srv/empty-test"' "$RC_FILE" && echo 0 || echo 1)"
 
+# ── Test 7: apply preserves the rc file mode (not clobbered by mktemp 0600) ──
+echo
+echo "→ Test 7: apply preserves rc mode"
+
+cat >"$RC_FILE" <<'EOF'
+export PATH="$HOME/bin:$PATH"
+EOF
+chmod 644 "$RC_FILE"
+shell_rc_apply "/srv/mode-test" >/dev/null 2>&1
+mode_after="$(stat -c '%a' "$RC_FILE" 2>/dev/null)"
+assert "mode stays 644 after apply (mv would leave 600)" \
+  "$([[ "$mode_after" == "644" ]] && echo 0 || echo 1)"
+
 # ── Summary ────────────────────────────────────────────────────────────────
 echo
 echo "═══════════════════════════════════════════════════"

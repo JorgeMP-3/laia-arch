@@ -261,9 +261,10 @@ def export_log_paths(sync_result: dict, workspace_name: str) -> list[str]:
 
 
 def restart_gateway() -> bool:
+    svc = os.environ.get("LAIA_GATEWAY_LABEL", "ai.hermes.gateway")
     try:
         result = subprocess.run(
-            ["launchctl", "kickstart", "-k", f"gui/{__import__('os').getuid()}/ai.hermes.gateway"],
+            ["launchctl", "kickstart", "-k", f"gui/{os.getuid()}/{svc}"],
             capture_output=True,
             text=True,
             timeout=10,

@@ -15,6 +15,266 @@ Formato:
 
 ---
 
+## 2026-05-27 — Recuperación de paquete `cron/` perdido en migración + fix bug `.bashrc` del instalador (claude opus 4.7)
+
+Dos hilos en la misma sesión, ambos derivados de la migración `laia-hermes`→`laia-arch`.
+
+### A) Agente CLI no arrancaba: `ModuleNotFoundError: No module named 'cron'`
+
+- **Síntoma**: `laia` (dispatcher bash) y `laia --help` funcionaban, pero `laia chat`
+  / one-shot crasheaban en `cli.py:662 from cron import get_job`. También
+  `laia_cli/cron.py:194 from cron.jobs import get_job`.
+- **Causa raíz**: el paquete fuente `.laia-core/cron/` (`__init__.py`, `jobs.py`,
+  `scheduler.py`) está **gitignored** (`.gitignore:31 cron/` y `:61 .laia-core/`).
+  Nunca se commiteó, así que la migración (que respeta `.gitignore`) lo dejó atrás.
+  Faltaba en `/opt` **y** en el árbol dev. No estaba en host, git, backups ni en los
+  contenedores LXD (`laia-agora` = backend; agentes = `laia-executor` only).
+- **Hallazgo mayor**: comparando la VM original contra el dev tree faltaban **11
+  entradas** gitignored: `cron/`, `SOUL.md`, `skills/`, `scripts/`, `bin/`,
+  `ai-agents.json`, `packaging/`, `tinker-atropos/`, `flake.lock`, `uv.lock`,
+  `temp_vision_images/` (esta última, basura de runtime). Solo `cron` es blocker de
+  import; `SOUL.md` se lee en runtime (auto-inyección de persona).
+- **Recuperación** (Jorge ejecutó los `sudo`/VM):
+  - `rsync --ignore-existing` VM→dev tree: trae lo ausente sin pisar los ficheros ya
+    corregidos (que en la VM tienen rutas `laia-hermes`).
+  - Validado: toda la interfaz de `cron` importa (`get_job, create_job, load_jobs,
+    save_jobs, get_due_jobs, list_jobs, update_job, pause_job, parse_schedule,
+    compute_next_run`, `cron.scheduler`).
+  - `rsync --ignore-existing` dev→`/opt/laia-v0.11.0/.laia-core/` para rellenar el
+    mismo hueco en producción.
+  - El editable finder de `/opt` no mapeaba `cron` (se instaló cuando el dir no
+    existía; `pyproject` SÍ lo declara en `packages.find.include`). Reinstalar el
+    editable falló (`BackendUnavailable: setuptools.build_meta` — venv sin setuptools,
+    sin red). **Workaround aplicado**: `.pth` (`zz_laia_core_root.pth`) que añade
+    `/opt/laia-v0.11.0/.laia-core` al `sys.path` del venv → resuelve `cron` y cualquier
+    otro módulo no mapeado, offline y sin rebuild.
+  - Verificado desde CWD neutro: `cron`/`cli` resuelven a `/opt`; el agente corre la
+    cadena completa (ya no rompe en `cron`).
+- **Abierto**:
+  - **Durabilidad git**: falta `git add -f .laia-core/cron .laia-core/SOUL.md` (el
+    convenio aquí ya es force-add dentro de `.laia-core/`). Sin esto, la próxima
+    migración/release lo vuelve a perder.
+  - El `.pth` es parche de runtime; un futuro `laia release` debería incluir `cron/`
+    de forma nativa (depende de cómo sincronice release respecto a `.gitignore`).
+  - **Credenciales**: el agente llega a resolver proveedor y pide `laia auth` (Codex).
+    El proveedor quedó en `openai-codex` pero el login se hizo con `sudo` → fue a
+    `/root/.laia/auth.json`, no a `~/.laia`. Pendiente: `laia model` → Anthropic (hay
+    `ANTHROPIC_API_KEY` en `~/.laia/.env`) o `laia auth` SIN sudo.
+
+### B) Bug del instalador: `.bashrc` queda root-owned tras `install` con sudo
+
+- **Síntoma**: `/home/laia-arch/.bashrc` quedó `root:root 0600` → el usuario no podía
+  leerlo/editarlo y la siguiente shell perdería el `.bashrc` entero. `✗ Failed at
+  shell_rc.sh:46`. (Reparado en disco con `sudo chown`.)
+- **Causa raíz**: `shell_rc_apply`/`shell_rc_remove` escriben el rc vía `mktemp` + `mv`;
+  `mv` reemplaza el fichero heredando metadata del tmp (root:root 0600 bajo sudo) y
+  nunca devolvía propiedad/modo. Mismo patrón que ya se mitigó en `common.sh` para el log.
+- **Fix** (`infra/installer/lib/shell_rc.sh`): helper `shell_rc_restore_meta` (chown a
+  `$LAIA_USER` solo si root + chmod al modo original capturado con `stat` antes del `mv`),
+  invocado tras cada `mv`. Mismo patrón de propiedad de HOME que `factory.sh`.
+- **Test** (`tests/installer/test_shell_rc.sh`): Test 7 de regresión (un rc en 644 no
+  debe quedar en 600 tras `apply`). Suite **19/19** (antes 18).
+- **Abierto**: sin commitear. El cloner (`clone.sh`) deja basura root-owned en el HOME
+  (`~/.laia-clone-stage/`, `~/LAIA-ARCH/.clone-state/`) — mismo patrón, no arreglado.
+
+### C) Reescritura de `LAIA_ECOSYSTEM.md` (visión pura) + nuevo `workflow/arch-layout.md`
+
+- **Motivo**: el documento canónico estaba desactualizado y mezclado con basura muy
+  técnica (puertos, idmaps, contrato clone, conteos de tests/tools) que ensuciaba la
+  idea. Consenso explícito de Jorge para editarlo (regla CLAUDE.md).
+- **Acción** (decisión de Jorge vía AskUserQuestion):
+  - `LAIA_ECOSYSTEM.md` → **documento de visión puro** (568 → 344 líneas): visión,
+    entidades, flujos conceptuales, reglas duras ①–⑭, workspaces, roadmap. §8 (layout
+    en disco) reducido a propósito conceptual + enlace.
+  - Nuevo **`workflow/arch-layout.md`** (264 líneas): se mueve ahí todo el detalle
+    técnico — layout `/opt`/`/srv`/`~/.laia`/`~/LAIA-ARCH`, permisos, idmaps, contrato
+    `laia-clone`, flujos `install`/`clone`. Enlace cruzado bidireccional.
+  - **Actualizaciones de datos**: Atlas v2 (no "32 aliases"), quitados conteos frágiles
+    ("71 tools", "431/342 tests", "80+ endpoints"), versión coherente (v2 — 2026-05-27),
+    nota de realidad en `/opt` (volcado plano vs modelo versionado objetivo).
+  - Añadida en `arch-layout.md` la **trampa de migración**: fuente gitignored de
+    `.laia-core/` (p.ej. `cron/`) no viaja con clone basado en git.
+  - Nuevo **`workflow/project-map.md`**: plano anotado de TODO el repo (carpetas más
+    importantes, su objetivo, archivos y subcarpetas clave) generado de la estructura
+    real. Enlazado desde `LAIA_ECOSYSTEM.md` (header + §8).
+
+## 2026-05-26 — Fix installer/clonador: egress preflight no-fatal (claude opus 4.7)
+
+- **Síntoma**: en el Thinkstation `curl ... | sudo bash -- --mode clone`
+  caía en `1.5/4 Verificar red LXD hacia internet` con `Terminated
+  LAIA_ROOT="$LAIA_ROOT" bash "$script"` — el bash hijo recibía SIGTERM
+  externo mientras `lxc launch ubuntu:24.04` descargaba la imagen pública.
+- **Causa**: `ensure_lxd_egress` en `rebuild-2-images.sh` lanzaba un
+  contenedor temporal pesado (descarga 300 MB) y trataba cualquier fallo
+  como fatal (`die`). Introducido hoy en 4 commits (`23e4ba5e`, `ce121756`,
+  `111d4a02`, `c933ab59`).
+- **Fix** (`infra/lxd/scripts/rebuild-2-images.sh`):
+  - Reescrita `ensure_lxd_egress` — preflight informativo, NUNCA fatal.
+  - Primary path: host-level check (lxdbr0 up/IP, curl archive.ubuntu.com,
+    iptables NAT, lxc image list ubuntu:) en < 5 s. Sin contenedor.
+  - Deep probe (contenedor temporal) ahora opt-in via `LAIA_LXD_DEEP_PROBE=1`.
+  - Nuevo escape: `LAIA_LXD_SKIP_EGRESS=1` salta toda la sección.
+  - stderr de `lxc launch` ahora va a `/tmp/laia-egress-probe.log` (no
+    `/dev/null`).
+- **Hint extra** (`infra/installer/lib/bootstrap.sh`): si
+  `rebuild-2-images.sh` sale con 143/137, log un mensaje accionable
+  apuntando a `journalctl` (oom/oomd/snap.lxd.daemon) y a la mitigación
+  `LAIA_LXD_SKIP_EGRESS=1`.
+- Plan completo en `workflow/plans/2026-05-26-installer-clone-thinkstation-fix.md`.
+- Smoke local pasado (Plan C del plan): `ensure_lxd_egress` retorna 0
+  en ambos modos (defaults + skip), warnings claros para fallos parciales.
+- **Validación parcial en Thinkstation**: el preflight ya NO bloquea
+  (commit `5385ca3b`). Pero apareció el problema real: DNS roto dentro
+  del container (host alcanza archive.ubuntu.com, container no resuelve).
+- **Segundo fix** (commit `be94c18b`): `build-base-image.sh` y
+  `build-agora-image.sh` esperan hasta 20 s a que el DNS del container
+  funcione; si no, dropean `/etc/resolv.conf` estático con `1.1.1.1` +
+  `8.8.8.8` + `9.9.9.9`. Más relax en check `state UP` de lxdbr0
+  (bridges suelen reportar UNKNOWN; chequeo el flag `<...,UP,...>` en
+  lugar de `state UP`).
+- **Tercer fix (commit `b595be98`)**: en el siguiente run de Jorge el
+  container `laia-agent-base` quedó RUNNING **sin IPv4** (DHCP del
+  bridge no le asignó IP), por lo que el fallback de DNS estático no
+  podía resolver (sin ruta, 1.1.1.1 inalcanzable). Nuevo helper
+  compartido `infra/lxd/image-build/lib-build.sh::ensure_container_network`
+  con escalada DHCP → dhclient/networkctl → **IP estática derivada del
+  bridge** (`lxc network get lxdbr0 ipv4.address` → octeto `.249`, gw
+  bridge.1), luego DNS con fallback.
+- **Cuarto fix (commit pendiente)**: ambas imágenes se construyeron OK
+  con el helper, pero el container final `laia-agora` (lanzado por
+  `rebuild-3-provision-agora.sh` step 5/7) volvió a quedar sin IPv4
+  porque el helper sólo estaba en los build-scripts. Step 7/7 hacía
+  `die "no pude obtener IP del container"` y abortaba el clone tras
+  todos los rsyncs OK. Fix:
+  - `rebuild-3-provision-agora.sh` ahora sourcea `lib-build.sh` y
+    llama `ensure_container_network` tras `lxc launch`.
+  - Step 7/7 `Esperar /api/health` ahora prueba en paralelo el
+    endpoint via bridge (`<container_ip>:8000`) Y el proxy del host
+    (`127.0.0.1:8088`); cualquiera que responda es suficiente. Si
+    `lxc list` no devuelve IPv4, fallback a `ip -4 -o addr show eth0`
+    desde dentro. Diagnóstico extendido si TODO falla (journalctl +
+    ip+ss inside container).
+  - `lib-build.sh`: añadido alias `info → log` para que se pueda
+    sourcear desde scripts que usan `log` (rebuild-3) y desde los
+    que usan `info` (build-{base,agora}-image.sh).
+  - Bug menor: `dhclient -4 -v` sin timeout colgaba ~60-75s antes
+    de rendirse. Ahora envuelto con `timeout 8` + flag `-1` (one-try).
+    Ahorra ~60s por container cuando DHCP está roto.
+- **Quinto fix (commit pendiente) — causa raíz del DHCP roto en
+  Thinkstation**: Claude Code en el server diagnosticó con
+  `nft list ruleset` que UFW estaba droppeando 628 DHCP DISCOVERs en
+  udp/67 ANTES de las reglas de LXD (cadena `udp dport 67 → ufw-skip-
+  to-policy-input`). Es el conflicto clásico UFW + LXD documentado.
+  En la VM laia-hermes no aparece porque UFW está inactivo aquí.
+  Fix integrado en el installer (`rebuild-2-images.sh::lxd_apply_network_config`):
+  detecta `ufw status | head -1 | grep 'Status: active'`, comprueba si
+  ya existe regla para el bridge (`Anywhere on lxdbr0` o `on lxdbr0 ALLOW IN`),
+  y si no, ejecuta `ufw allow in on lxdbr0 && ufw reload`. Idempotente.
+  Más check informativo en `lxd_host_egress_check` que reporta el
+  estado de UFW.
+- **Sexto fix (commit `a8f15d78`) — UFW fix en init-defaults.sh**: el
+  fix anterior vivía en `rebuild-2-images.sh::lxd_apply_network_config`,
+  pero `boot_build_images` salta rebuild-2 si las imágenes ya están
+  presentes. En el re-run de Jorge tras el quinto fix las imágenes
+  existían → rebuild-2 se saltó → UFW fix nunca se aplicó → DHCP
+  seguía droppeado. Movido el fix a `init-defaults.sh` (que SIEMPRE
+  corre desde `boot_init_defaults`).
+- **Séptimo fix (commit `82fe5ecd`) — cloner usa layout pre-T.14.1**:
+  Jorge: "el clone solo me trajo cron + state.db + workspaces, falta
+  todo lo demás". Causa: la migración E2E T.14.1 del 26-mayo movió toda
+  la data ARCH del operador de `~/.laia/` a `~/LAIA-ARCH/`, pero
+  `clone_phase_h_rsync_arch_data` seguía usando `legacy_laia` como source
+  base. Fix: detectar si la fuente tiene `~/LAIA-ARCH/` poblado y, si sí,
+  usarlo como autoritativo (`arch_src_kind=laia_home`).
+- **Décimo fix (commit pendiente) — clone refresca wrappers bin/**:
+  Tras el noveno fix, la nueva versión de `bin/laia` solo surtía efecto
+  si Jorge re-corría `laia-release` (que requiere `--src` y promueve a
+  nueva versión completa, demasiado overhead para un cambio de 1 binario).
+  Fix en `laia-clone::_clone_refresh_bin_wrappers`: cuando el install-
+  first detecta que /opt/laia ya existe (rama de skip), aún copia los
+  5 wrappers (`laia`, `laia-install`, `laia-clone`, `laia-release`,
+  `laia-rollback`) del repo al `/opt/laia-vX.Y.Z/bin/`. `install -m 0755`,
+  idempotente, ~1s. Ahora basta con re-correr el clone (o cualquier
+  install-first) para que los bugfixes de los wrappers surtan efecto.
+- **Noveno fix (commit `93adc703`) — `laia` lanza chat agente**:
+  En el Thinkstation, Jorge esperaba que escribir `laia` (o `laia-arch`)
+  en la terminal le abriera el chat interactivo con su agente LLM,
+  pero el bash dispatcher (`bin/laia`) solo manejaba subcomandos del
+  installer (install/clone/release/rollback/status). Fix:
+  - `laia` (sin args) → exec del Python CLI agente
+    (`/opt/laia/.laia-core/venv/bin/laia` o fallback al dev tree).
+  - Subcomandos no reconocidos (chat, setup, auth, login, model,
+    skills, plugins, gateway, cron, doctor, sessions, …) → forward al
+    Python CLI.
+  - `laia status` ahora va al Python CLI (agent components); el bash
+    status del host queda accesible via `laia-status` directo.
+  - Installer subcommands (install, clone, release, rollback, init,
+    wizard, diagnose, reset) sin cambios.
+  - Help text reescrito para mostrar las dos categorías.
+- **Octavo fix (commit `0f7d712e`) — rsync único del árbol LAIA-ARCH**:
+  Tras el séptimo fix, Jorge re-corrió y el destino aún tenía solo
+  `cron response_store.db sessions state.db workspaces` — las loops
+  per-spec fallaban silenciosamente después de las primeras 1-2
+  iteraciones (causa raíz no identificada; sospecha de interacción
+  entre `clone_rsync_to_privileged_dest`/stage promotion y rsync
+  exit codes de transferencia parcial). En lugar de seguir parcheando
+  las loops, simplificamos: cuando `arch_src_kind=laia_home`, hacemos
+  UN SOLO `clone_rsync_to_privileged_dest` del árbol LAIA-ARCH/ entero
+  con excludes de runtime cruft (.laia-clone-stage/, *.lock, *.sock,
+  .update_check). rsync es incremental → idempotente. Las loops
+  per-spec quedan como fallback para layout legacy (~/.laia/). Añadido
+  log final que lista el contenido del dest para verificación visual.
+
+## 2026-05-26 — Ecosystem E2E migration + T.14 polish (claude opus 4.7)
+
+- Ejecutado `workflow/plans/2026-05-25-ecosystem-e2e-verification.md` T.0-T.13
+  (482 MB migrados de `~/.laia/` a layout canónico; backend on PM2/LXD,
+  pathd, ui-server vivos). Reporte completo en `/tmp/laia-migrate-report.md`.
+- **T.14.1 (cancela `/srv/laia/arch/`)**: el código (laia_cli, pathd) corre
+  como `laia-hermes` y no puede traversar `/srv/laia/arch/` (root:root 700).
+  Decisión con Jorge: toda la data de ARCH (interactiva + operacional) vive
+  bajo `LAIA_HOME` (= `~/LAIA-ARCH/`). `/srv/laia/arch/` queda deprecado.
+  Doc `workflow/arch-data-layout.md` reescrito para reflejarlo.
+- **T.14.2 (limpieza `~/.laia/`)**: Jorge cerró su `laia` CLI activo en pts/3
+  que había recreado stubs. Stubs vacíos eliminados; los dirs con contenido
+  (sessions, workspaces, sandboxes, logs) fusionados con LAIA_HOME. `~/.laia/`
+  ahora solo legacy compat (`auth.json`, `.env`, `bin/`, `cache/`, etc.).
+- **T.14.3 (LXD)**: daemon LXD estaba colgado en `lxc init` (5+ min sin I/O).
+  Restart de `snap.lxd.daemon` lo destrabó. `agent-verify-bob` aprovisionado y
+  registrado en AGORA.
+- **Bug fixes encontrados en el camino**:
+  - `infra/lxd/scripts/create-agent.sh`: container name no soporta `_` (LXD
+    rechaza). Mapeo automático `_ → -` en el nombre. Slug DB se mantiene.
+  - `infra/lxd/scripts/create-agent.sh`: `LXD_UID_OFFSET` default era `100000`,
+    pero LXD usa `1000000` (per `/etc/subuid`). Corregido. Esto rompía bind
+    mounts de `/srv/laia/users/<slug>/` — `nobody:nogroup` desde container.
+  - `infra/installer/lib/clone.sh`: 5 patches que eliminan refs a `/srv/laia/arch`
+    como destino canónico. Las refs como SOURCE legacy se preservan (clones
+    desde hosts pre-T.14.1).
+- **T.14.4 + T.14.5 (F.5 chat + F.10 executor)**: chat E2E completo
+  funciona (verify-bob → openai-codex → write_file → forwarder → executor
+  container → bind mount → host file con contenido correcto). Persistencia
+  post-recreate (F.5.5) y aislamiento entre containers (F.5.6) verificados.
+  Tras destrabar auth.json bind mount con `rebuild-3b-fix-authjson.sh`.
+- **T.14.6 (F.14 webhooks)**: endpoint correcto es `/api/webhooks/{slug}`
+  con header `X-Laia-Signature: <hex>` (no `sha256=<hex>`). Creación de
+  webhooks via LLM tool `webhook_subscribe` (plugin `agent-scheduler`), no
+  REST API. F.14.2 (good HMAC = 200) y F.14.3 (bad HMAC = 401) verificados.
+- **T.14.9 (test E2E permanente)**: nuevo `tests/e2e/test_ecosystem_layout.sh`
+  + target `make test-e2e`. Pasa con LAIA_HOME=~/LAIA-ARCH: 25 OK / 1 WARN
+  / 0 FAIL / 1 SKIPPED.
+- **Pendiente / abierto**:
+  - JWT secret se regenera en cada arranque del backend (config.py:64 sin
+    AGORA_JWT_SECRET en env). Bug: invalida tokens a cada restart. Anotado
+    en problems.md.
+  - PM2 `agora-backend` queda en `errored` 5322 restarts — la copia host
+    intenta arrancar pero el container `laia-agora` ya sirve :8088. PM2 debe
+    eliminarse o el container debe pararse para no haber doble servicio.
+  - Snapshot LXD/Multipass post-T.14: `multipass snapshot <vm-name> --name
+    post-t14-clean-2026-05-26` (host Mac, no la VM).
+  - Tag git `v2026.05-ecosystem-clean` pendiente de commit + decisión de
+    Jorge sobre push.
+
 ## 2026-05-25 — LAIA_ECOSYSTEM canonicaliza layout LAIA-ARCH (codex)
 
 - Actualizado `LAIA_ECOSYSTEM.md` §8 para que el documento canónico refleje
