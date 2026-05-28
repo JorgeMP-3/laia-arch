@@ -11493,6 +11493,9 @@ class AIAgent:
                     break
 
                 except Exception as api_error:
+                    import os as _os_trace, traceback as _tb_trace
+                    if _os_trace.environ.get("LAIA_TRACE"):
+                        _tb_trace.print_exc()
                     # Stop spinner before printing error messages
                     if thinking_spinner:
                         thinking_spinner.stop("(╥_╥) error, retrying...")
