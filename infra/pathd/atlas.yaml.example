@@ -11,8 +11,6 @@
 # Interpolación: ${ref.<nombre>} para referenciar otra entrada.
 # Override de emergencia: export ATLAS_<NOMBRE>=valor (gana sobre el YAML).
 #
-# CLI: atlas get <nombre> | atlas doctor | atlas list | atlas watch
-
 version: 2
 
 refs:
@@ -49,7 +47,7 @@ refs:
   laia_core:
     type: path
     value: ${ref.laia_root}/.laia-core
-    description: "Motor del agente — herramientas, gateway, CLI base"
+    description: "Motor del agente — 71 herramientas, gateway, CLI base"
 
   agora_backend:
     type: path
@@ -74,7 +72,7 @@ refs:
   skills_dir:
     type: path
     value: ${ref.laia_root}/skills
-    description: "Skills bundled con el producto"
+    description: "Skills bundled con el producto (32 packs)"
 
   bin_dir:
     type: path
@@ -92,6 +90,53 @@ refs:
     type: path
     value: ${ref.srv_laia}/users
     description: "Home de cada usuario (bind-mounted a sus containers)"
+
+  srv_state:
+    type: path
+    value: ${ref.srv_laia}/state
+    optional: true
+    repair_hint: "sudo install -d -m755 /srv/laia/state"
+    description: "Estado persistente del orquestador LXD (agents.json — se crea al provisionar el primer agent)"
+
+  # ── Paths del laia-executor (refs nuevas Fase 1) ──────────────────────────
+  # Marcadas optional: estos paths viven dentro del container del executor o
+  # son parte del producto instalado en /opt/laia. En el host dev no existen.
+
+  executor_token_file:
+    type: path
+    value: /etc/laia/executor-token
+    optional: true
+    description: "Bearer token para la API HTTP del executor (mode 0600, montado en el container)"
+
+  executor_profile_file:
+    type: path
+    value: /etc/laia/agent.json
+    optional: true
+    description: "Agent profile JSON leído por el executor (slug, identidad — dentro del container)"
+
+  executor_workspace_root:
+    type: path
+    value: /var/lib/laia/workspace
+    optional: true
+    description: "Base para workspaces privados por usuario en el executor (dentro del container)"
+
+  executor_plugins_root:
+    type: path
+    value: ${ref.opt_laia}/plugins
+    optional: true
+    description: "Plugins root para laia-executor (LAIA_EXECUTOR_PLUGINS_ROOT — dentro del container)"
+
+  workspace_store_lib:
+    type: path
+    value: ${ref.opt_laia}/lib
+    optional: true
+    description: "Path producción del paquete workspace_store (solo en /opt/laia instalado)"
+
+  laia_process_log_dir:
+    type: path
+    value: /var/log/laia-processes
+    optional: true
+    description: "Logs stdout/stderr de procesos background del executor (dentro del container)"
 
   # ── Workspace interactivo de LAIA-ARCH ────────────────────────────────────
 
@@ -118,7 +163,7 @@ refs:
     port: 8088
     protocol: http
     health_path: /health
-    description: "API REST de LAIA-AGORA (auth JWT)"
+    description: "API REST de LAIA-AGORA (80+ endpoints, auth JWT)"
 
   executor_api:
     type: service
@@ -128,6 +173,48 @@ refs:
     health_path: /health
     optional: true
     description: "Executor del PA-AGORA de Jorge (dentro de LXD)"
+
+  # ── Servicios del gateway (.laia-core/gateway/platforms/) ─────────────────
+
+  whatsapp_bridge:
+    type: service
+    host: 127.0.0.1
+    port: 9000
+    protocol: http
+    optional: true
+    description: "Puente Node.js de WhatsApp (port default; override WHATSAPP_BRIDGE_PORT)"
+
+  signal_cli:
+    type: service
+    host: 127.0.0.1
+    port: 8080
+    protocol: http
+    optional: true
+    description: "Daemon signal-cli en modo HTTP"
+
+  gateway_api:
+    type: service
+    host: 127.0.0.1
+    port: 8642
+    protocol: http
+    optional: true
+    description: "API OpenAI-compatible del gateway (.laia-core/gateway/platforms/api_server.py)"
+
+  feishu_webhook:
+    type: service
+    host: 127.0.0.1
+    port: 8765
+    protocol: http
+    optional: true
+    description: "Receptor de webhooks de Feishu (Lark)"
+
+  bluebubbles_webhook:
+    type: service
+    host: 127.0.0.1
+    port: 8645
+    protocol: http
+    optional: true
+    description: "Receptor de webhooks de BlueBubbles (iMessage)"
 
   # ── Contenedores LXD ─────────────────────────────────────────────────────
 
