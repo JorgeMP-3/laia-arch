@@ -30,6 +30,30 @@ añade una línea `- **Resuelto**: 2026-MM-DD en commit <hash>`.
 
 ---
 
+## agora-backend-test-pool-contamination (open)
+
+- **Descubierto**: 2026-05-28 por claude opus 4.7 durante PR-2 de atlas adoption.
+- **Síntoma**: `tests/test_laia_coordinator.py::test_laia_chat_endpoint_employee_uses_base_toolset`
+  y `test_laia_chat_endpoint_admin_streams` fallan SOLO cuando la suite completa
+  corre desde el principio, con: `worker crashed: test_session_id_defaults_to_user_scoped.<locals>._capture()
+  got an unexpected keyword argument 'mode'`.
+- **Causa raíz sospechada**: `tests/test_chat_engine.py::test_session_id_defaults_to_user_scoped`
+  (línea 303) instala `pool.get_or_create = _capture` vía `chat_engine.set_pool(pool)`.
+  El pool es un global mutado que persiste entre tests; cuando `test_laia_coordinator`
+  corre después, invoca `pool.get_or_create(..., mode=...)` y el mock obsoleto crashea.
+- **Reproducción**:
+  ```bash
+  cd services/agora-backend
+  .venv/bin/python -m pytest tests/ -q -x  # falla
+  .venv/bin/python -m pytest tests/test_laia_coordinator.py -q  # solo: pasa
+  ```
+- **Workaround**: ejecutar con `--deselect` los 2 tests o aislar `test_chat_engine`
+  con `pytest --forked` (requiere pytest-forked).
+- **Owner**: sin asignar.
+- **Estado**: open. **Pre-existente** a los cambios de atlas adoption.
+
+---
+
 ## laia-core-cron-package-gitignored-lost-in-migration (in-progress)
 
 - **Descubierto**: 2026-05-27 por claude opus 4.7.

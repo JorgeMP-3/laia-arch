@@ -4,14 +4,16 @@ import os
 import secrets
 from pathlib import Path
 
+from .atlas_paths import resolved_path
+
 
 class Settings:
     def __init__(self) -> None:
         self.env = os.environ.get("AGORA_ENV", "dev")
-        self.laia_root = Path(os.environ.get("LAIA_ROOT", str(Path.home() / "LAIA")))
+        self.laia_root = resolved_path("LAIA_ROOT", "laia_root", str(Path.home() / "LAIA"))
 
         # ── AGORA data dir ────────────────────────────────────────────────────
-        self.prod_data_dir = Path(os.environ.get("AGORA_DATA_DIR", "/srv/laia/agora"))
+        self.prod_data_dir = resolved_path("AGORA_DATA_DIR", "srv_agora", "/srv/laia/agora")
         self.dev_data_dir = Path(
             os.environ.get(
                 "AGORA_DEV_DATA_DIR",
@@ -70,7 +72,7 @@ class Settings:
         self.refresh_token_days = int(os.environ.get("AGORA_REFRESH_DAYS", "7"))
 
         # ── LXD orchestrator state ────────────────────────────────────────────
-        _prod_state = Path(os.environ.get("LAIA_STATE_ROOT", "/srv/laia/state"))
+        _prod_state = resolved_path("LAIA_STATE_ROOT", "srv_state", "/srv/laia/state")
         _dev_state = self.laia_root / ".laia" / "state"
         self.lxd_state_dir = _prod_state if _prod_state.exists() else _dev_state
         self.lxd_state_path = self.lxd_state_dir / "agents.json"
