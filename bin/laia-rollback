@@ -62,9 +62,9 @@ EXAMPLES
 
 NOTE
     Rollback only flips the symlink and restarts services. It does NOT rebuild,
-    re-run migrations, or touch user data in ~/LAIA-ARCH/. If a release made
-    breaking schema changes, plain rollback may leave the agent in an
-    inconsistent state — restore from snapshot in that case.
+    re-run migrations, or touch user data in ~/.laia/ or /srv/laia/. If a
+    release made breaking schema changes, plain rollback may leave the agent
+    in an inconsistent state — restore from snapshot in that case.
 EOF
 }
 

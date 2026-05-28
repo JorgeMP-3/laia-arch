@@ -3,7 +3,7 @@
 # laia-release — promote a dev tree to /opt/laia-vX.Y.Z and restart services
 #
 # Typical workflow:
-#   cd ~/.laia
+#   cd ~/LAIA
 #   git status                       # working tree clean
 #   git tag v0.4.0
 #   sudo -E laia-release             # detects tag, builds, switches, restarts
@@ -59,7 +59,7 @@ USAGE
     sudo -E laia release [OPTIONS] [SRC_TREE]
 
 ARGUMENTS
-    SRC_TREE              Dev tree to release (default: ~/.laia)
+    SRC_TREE              Dev tree to release (default: ~/LAIA)
 
 OPTIONS
     --version VER         Force release version (default: git describe HEAD tag)
@@ -121,8 +121,10 @@ parse_args() {
     esac
   done
 
-  # Default source: the user's hidden dev tree.
-  [[ -n "$OPT_SRC" ]] || OPT_SRC="$LAIA_USER_HOME/.laia"
+  # Default source: the user's LAIA-ARCH dev repo.
+  # NOTE: ~/.laia is runtime state (auth.json, .env, atlas.yaml, state/), NOT
+  # a git tree. The dev repo lives at ~/LAIA per LAIA_ECOSYSTEM.md.
+  [[ -n "$OPT_SRC" ]] || OPT_SRC="$LAIA_USER_HOME/LAIA"
 }
 
 # ─── Main ───────────────────────────────────────────────────────────────────
