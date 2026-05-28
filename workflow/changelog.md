@@ -15,6 +15,63 @@ Formato:
 
 ---
 
+## 2026-05-28 — Fix `atlas visualize`: reescritura UI + cero deps externas (claude opus 4.7)
+
+El comando `atlas visualize` (introducido el mismo día en commit `28a47d02`)
+generaba HTML con Mermaid 11 pero el grafo no renderizaba ("Syntax error in
+text"). Causa raíz: combinación de timing de `startOnLoad`, `graph TD;` con
+punto y coma, y `subgraph env_file ["env_file"]` (sintaxis ambigua en algunas
+builds de Mermaid 11).
+
+Decisión: en vez de parchear Mermaid, **reescribir el visualize de cero** con
+SVG vanilla + JS minimal. Justificación: para 35 nodos / 16 aristas no se
+necesita una librería de grafos pesada; control total sobre la estética y
+cero dependencias externas (HTML self-contained de verdad, abre desde
+`file://` sin red).
+
+### Cambios
+
+- **`bin/atlas`**:
+  - `cmd_visualize()` reescrita: recoge refs + edges + health en un payload
+    JSON, sustituye un único placeholder en la plantilla.
+  - `_HTML_TEMPLATE` reescrito (~750 líneas): CSS con tokens light/dark, HTML
+    semántico, JS vanilla.
+  - Helper `_open_in_browser()` extraído.
+  - **Bug `--no-open` arreglado**: ahora se respeta (antes se ignoraba).
+  - Help strings y docstring del módulo actualizados.
+- **`tests/test_atlas.py`**: nueva clase `TestCliVisualize` con 6 tests
+  (salida HTML, refs presentes, JSON parseable, cero deps de red, placeholder
+  sustituido, `--no-open` respetado vía monkey-patch de `webbrowser.open`).
+- **`workflow/plans/atlas-visualize-fix.md`**: convertido a post-mortem con
+  diagnóstico, decisión técnica, y lista de criterios cumplidos.
+
+### Funcionalidades de la webapp
+
+- Topbar con brand, búsqueda (atajo `/`), contador de estados, toggle de tema
+  light/dark.
+- Sidebar con filtros por tipo (con conteos) y por estado.
+- Vista grafo: SVG con layout layered (una columna por tipo), nodos con punto
+  de estado, aristas curvadas con flecha, pan/zoom, hover resalta conectados.
+- Vista tabla: columnas ordenables, filas filtrables.
+- Panel de detalle: status + detalle de error + repair hint + dependencias y
+  consumidores (clickeables para drill-down).
+- Esc cierra detalle / limpia búsqueda.
+
+### Verificación
+
+- `pytest tests/test_atlas.py -q` → **74/74 PASS** (68 originales + 6 nuevos).
+- HTML resultante: **~47 KB** (cero red en runtime, verificado por test).
+- `./bin/atlas visualize --output /tmp/atlas.html --no-open` ahora funciona
+  sin abrir navegador.
+
+### Sobre el flujo de trabajo
+
+Aplicada por primera vez la regla recién documentada en AGENTS.md "1 tarea =
+1 branch = 1 PR" (PR #10 acababa de mergearse). El trabajo entero va en
+`wip/claude/atlas-visualize-fix` contra `main`, no stacked.
+
+---
+
 ## 2026-05-28 — Atlas v2 adoption Fase 1: descubrimiento Minimax + 3 PRs Claude (claude opus 4.7 + minimax 5 agentes)
 
 División del trabajo: **5 agentes de Minimax descubrieron** (no escribieron código),

@@ -11,7 +11,7 @@ Uso:
   atlas validate                  Validar estructura de atlas.yaml
   atlas env                       Exportar variables (bash-sourceable)
   atlas graph [--from REF]        Mostrar grafo de dependencias
-  atlas visualize                Generar HTML visual del grafo con Mermaid
+  atlas visualize [--output F]    Generar webapp HTML self-contained del registro
   atlas watch [--interval N]      Monitor en vivo
   atlas status                    Estado del daemon y ficheros
   atlas reload                    Recargar config
@@ -433,229 +433,1069 @@ def cmd_graph(args: argparse.Namespace) -> int:
 
 
 def cmd_visualize(args: argparse.Namespace) -> int:
+    """Generate a self-contained HTML visualization of the Atlas registry.
+
+    Renders a force-directed graph + sortable table using plain SVG and
+    vanilla JS — no external libraries, no network at runtime, no install
+    step beyond the existing CLI. The HTML opens directly from ``file://``.
+    """
     import json as _json
-    atlas = _import_atlas()
-    refs  = atlas.all_refs()
-    home  = _laia_config_home()
-
-    by_type: dict[str, list[tuple]] = {}
-    for name, entry in refs.items():
-        if not isinstance(entry, dict):
-            continue
-        t = entry.get("type", "path")
-        try:
-            value = atlas.get(name)
-        except atlas.AtlasError:
-            value = f"<error: {name}>"
-        alive = True
-        try:
-            health = atlas.health(name)
-            alive = health.alive
-        except Exception:
-            pass
-        by_type.setdefault(t, []).append((name, value, alive, entry.get("description", "")))
-
-    type_colors = {
-        "path":      ("#60A5FA", "#1D4ED8"),
-        "service":   ("#34D399", "#065F46"),
-        "container":("#FB923C", "#9A3412"),
-        "socket":    ("#A78BFA", "#4C1D95"),
-        "env_file":  ("#FBBF24", "#92400E"),
-    }
-    type_default = ("#9CA3AF", "#374151")
-
-    dep_nodes: dict[str, list[str]] = {}
     import re as _re
-    for name, entry in refs.items():
-        if not isinstance(entry, dict):
-            dep_nodes[name] = []
-            continue
-        text = " ".join(str(v) for v in entry.values() if isinstance(v, str))
-        found = _re.findall(r"\$\{ref\.([^}]+)\}", text)
-        seen: list[str] = []
-        for k in found:
-            if k not in seen:
-                seen.append(k)
-        dep_nodes[name] = seen
 
-    nodes_json: list[dict] = []
-    edges_json: list[dict] = []
-    added_edges: set[tuple] = set()
+    atlas = _import_atlas()
+    refs = atlas.all_refs()
+
+    # ── Build node + edge dataset ───────────────────────────────────────────
+    # One node per ref. One edge per ``${ref.X}`` dependency found in any
+    # string value of the entry. Health and resolved value are computed eagerly
+    # so the HTML stays self-contained (no callbacks to runtime atlas).
+    nodes: list[dict] = []
+    edges: list[dict] = []
+    seen_edges: set[tuple[str, str]] = set()
 
     for name, entry in refs.items():
         if not isinstance(entry, dict):
             continue
-        t = entry.get("type", "path")
-        bg, fg = type_colors.get(t, type_default)
+        ref_type = entry.get("type", "path")
+        optional = bool(entry.get("optional", False))
+        description = entry.get("description", "") or ""
+        repair_hint = entry.get("repair_hint", "") or ""
+
+        try:
+            resolved = atlas.get(name)
+        except atlas.AtlasError as exc:  # noqa: BLE001 — surface error to UI
+            resolved = f"<error: {exc}>"
+
         try:
             health = atlas.health(name)
-            alive = health.alive
-        except Exception:
+            alive = bool(health.alive)
+            detail = health.detail or ""
+            latency_ms = float(health.latency_ms) if health.latency_ms else 0.0
+        except Exception as exc:  # noqa: BLE001
             alive = True
-        color = "#16A34A" if alive else "#DC2626"
-        label = entry.get("description", "") or name
-        nodes_json.append({
-            "id": name, "label": name, "description": label,
-            "type": t, "bg": bg, "fg": fg, "color": color,
+            detail = f"health check raised: {exc}"
+            latency_ms = 0.0
+
+        # State trichotomy: alive → ok ; dead+optional → warn ; dead → bad
+        if alive:
+            state = "ok"
+        elif optional:
+            state = "warn"
+        else:
+            state = "bad"
+
+        nodes.append({
+            "id": name,
+            "type": ref_type,
+            "value": str(resolved),
+            "description": description,
+            "optional": optional,
+            "state": state,
+            "alive": alive,
+            "detail": detail,
+            "latency_ms": latency_ms,
+            "repair_hint": repair_hint,
         })
 
-    for src, deps in dep_nodes.items():
-        for dep in deps:
-            if (src, dep) not in added_edges:
-                added_edges.add((src, dep))
-                edges_json.append({"from": src, "to": dep})
+        # Dependencies: order-preserving deduplication of ${ref.X} mentions.
+        text = " ".join(str(v) for v in entry.values() if isinstance(v, str))
+        for dep in _re.findall(r"\$\{ref\.([^}]+)\}", text):
+            pair = (name, dep)
+            if pair in seen_edges:
+                continue
+            seen_edges.add(pair)
+            edges.append({"from": name, "to": dep})
 
-    nodes_str = _json.dumps(nodes_json, indent=2)
-    edges_str = _json.dumps(edges_json, indent=2)
+    node_ids = {n["id"] for n in nodes}
+    edges = [e for e in edges if e["to"] in node_ids]
 
-    html = _HTML_TEMPLATE.replace("__NODES__", nodes_str)
-    html = html.replace("__EDGES__", edges_str)
+    # ── Aggregate stats for the header strip ────────────────────────────────
+    by_type: dict[str, int] = {}
+    by_state = {"ok": 0, "warn": 0, "bad": 0}
+    for n in nodes:
+        by_type[n["type"]] = by_type.get(n["type"], 0) + 1
+        by_state[n["state"]] = by_state.get(n["state"], 0) + 1
+
+    payload = {
+        "generated_at": time.strftime("%Y-%m-%d %H:%M:%S %z").strip(),
+        "registry_path": str(atlas._atlas_config_path()),
+        "version": _VERSION,
+        "nodes": nodes,
+        "edges": edges,
+        "stats": {
+            "total": len(nodes),
+            "by_type": by_type,
+            "by_state": by_state,
+            "edges": len(edges),
+        },
+    }
+
+    html = _HTML_TEMPLATE.replace(
+        "__ATLAS_DATA__",
+        _json.dumps(payload, indent=None, separators=(",", ":")),
+    )
 
     output = getattr(args, "output", None)
-    open_browser = getattr(args, "open", False)
+    open_browser = bool(getattr(args, "open", True))
 
     if output:
-        Path(output).write_text(html)
+        Path(output).write_text(html, encoding="utf-8")
         print(f"{_C.GRN}✓{_C.RST} wrote {output}")
+        if open_browser:
+            _open_in_browser(output)
         return 0
 
-    import tempfile, webbrowser, urllib.parse
-    with tempfile.NamedTemporaryFile("w", suffix=".html", delete=False) as f:
+    import tempfile
+    with tempfile.NamedTemporaryFile("w", suffix=".html", delete=False, encoding="utf-8") as f:
         f.write(html)
         path = f.name
-    url = "file://" + urllib.parse.quote(path)
-    print(f"{_C.GRN}✓{_C.RST} opened {url}")
-    webbrowser.open(url)
+    print(f"{_C.GRN}✓{_C.RST} wrote {path}")
+    if open_browser:
+        _open_in_browser(path)
     return 0
 
 
-_HTML_TEMPLATE = """<!DOCTYPE html>
-<html lang="en">
+def _open_in_browser(path: str) -> None:
+    """Open a local file in the default browser via ``file://`` URL."""
+    import webbrowser
+    import urllib.parse
+    url = "file://" + urllib.parse.quote(path)
+    print(f"  opening {url}")
+    webbrowser.open(url)
+
+
+_HTML_TEMPLATE = r"""<!DOCTYPE html>
+<html lang="en" data-theme="light">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Atlas v2 Registry</title>
-<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Atlas v2 — Registry</title>
 <style>
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-         background: #0F172A; color: #E2E8F0; min-height: 100vh; }
-  .layout { display: flex; height: 100vh; }
-  .sidebar { width: 320px; background: #1E293B; padding: 20px; overflow-y: auto;
-             border-right: 1px solid #334155; }
-  .sidebar h1 { font-size: 1.1rem; color: #F1F5F9; margin-bottom: 16px;
-                display: flex; align-items: center; gap: 8px; }
-  .badge { font-size: 0.65rem; padding: 2px 6px; border-radius: 4px;
-           font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; }
-  .main { flex: 1; padding: 24px; overflow-y: auto; }
-  .main h2 { color: #F1F5F9; margin-bottom: 16px; font-size: 1rem; }
-  .legend { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 20px; }
-  .legend-item { display: flex; align-items: center; gap: 6px; font-size: 0.75rem; }
-  .legend-dot { width: 10px; height: 10px; border-radius: 50%; }
-  .graph-container { background: #1E293B; border-radius: 12px; padding: 20px;
-                     min-height: 500px; }
-  table { width: 100%; border-collapse: collapse; font-size: 0.8rem; }
-  th { text-align: left; padding: 8px 10px; border-bottom: 1px solid #334155;
-       color: #94A3B8; font-weight: 500; text-transform: uppercase; font-size: 0.7rem; }
-  td { padding: 8px 10px; border-bottom: 1px solid #1E293B; }
-  tr:hover { background: #334155; }
-  .status-ok { color: #16A34A; } .status-dead { color: #DC2626; }
-  .type-pill { font-size: 0.65rem; padding: 2px 7px; border-radius: 10px;
-               font-weight: 600; }
-  .tab-bar { display: flex; gap: 4px; margin-bottom: 16px; }
-  .tab { padding: 8px 16px; border-radius: 8px; font-size: 0.8rem; cursor: pointer;
-         background: #334155; color: #94A3B8; }
-  .tab.active { background: #3B82F6; color: white; }
-  #graph-section, #table-section { display: none; }
-  #graph-section.active, #table-section.active { display: block; }
+/* ─── Tokens ──────────────────────────────────────────────────────────── */
+:root {
+  --bg: #ffffff;
+  --bg-soft: #f8fafc;
+  --bg-elev: #ffffff;
+  --border: #e2e8f0;
+  --border-strong: #cbd5e1;
+  --fg: #0f172a;
+  --fg-soft: #475569;
+  --fg-muted: #94a3b8;
+  --accent: #2563eb;
+  --accent-soft: #eff6ff;
+  --ok: #16a34a;
+  --ok-soft: #dcfce7;
+  --warn: #d97706;
+  --warn-soft: #fef3c7;
+  --bad: #dc2626;
+  --bad-soft: #fee2e2;
+  --type-path: #2563eb;
+  --type-service: #059669;
+  --type-container: #ea580c;
+  --type-socket: #7c3aed;
+  --type-env_file: #ca8a04;
+  --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.04);
+  --shadow-md: 0 4px 12px rgba(15, 23, 42, 0.06);
+  --font: -apple-system, BlinkMacSystemFont, "Segoe UI", "Inter",
+          "Helvetica Neue", Arial, sans-serif;
+  --mono: "SF Mono", "JetBrains Mono", "Menlo", "Consolas", monospace;
+}
+[data-theme="dark"] {
+  --bg: #0b1220;
+  --bg-soft: #111a2e;
+  --bg-elev: #131e36;
+  --border: #1e2a44;
+  --border-strong: #2a3a5c;
+  --fg: #e2e8f0;
+  --fg-soft: #cbd5e1;
+  --fg-muted: #94a3b8;
+  --accent: #60a5fa;
+  --accent-soft: #1e293b;
+  --ok: #22c55e;
+  --ok-soft: #14241b;
+  --warn: #f59e0b;
+  --warn-soft: #2a200e;
+  --bad: #ef4444;
+  --bad-soft: #2a1414;
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.4);
+}
+
+/* ─── Base ────────────────────────────────────────────────────────────── */
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body {
+  font-family: var(--font);
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--fg);
+  background: var(--bg);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+button { font: inherit; color: inherit; background: none; border: none; cursor: pointer; }
+input { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+
+/* ─── Layout ──────────────────────────────────────────────────────────── */
+.app { display: grid; grid-template-rows: auto 1fr; height: 100vh; }
+.topbar {
+  display: flex; align-items: center; gap: 16px;
+  padding: 12px 20px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-elev);
+  box-shadow: var(--shadow-sm);
+}
+.brand { display: flex; align-items: baseline; gap: 8px; }
+.brand .name { font-weight: 600; font-size: 15px; letter-spacing: -0.01em; }
+.brand .ver { font-size: 11px; color: var(--fg-muted); font-variant-numeric: tabular-nums; }
+.search {
+  flex: 1; max-width: 480px; position: relative;
+}
+.search input {
+  width: 100%; padding: 7px 12px 7px 32px;
+  border: 1px solid var(--border-strong);
+  background: var(--bg);
+  border-radius: 6px;
+  font-size: 13px;
+}
+.search input::placeholder { color: var(--fg-muted); }
+.search .icon {
+  position: absolute; left: 10px; top: 50%; transform: translateY(-50%);
+  width: 14px; height: 14px; color: var(--fg-muted);
+}
+.search .kbd {
+  position: absolute; right: 8px; top: 50%; transform: translateY(-50%);
+  font-family: var(--mono); font-size: 10px; color: var(--fg-muted);
+  border: 1px solid var(--border); padding: 1px 5px; border-radius: 3px;
+  background: var(--bg-soft);
+}
+.spacer { flex: 1; }
+.stats { display: flex; gap: 10px; font-size: 12px; color: var(--fg-soft); }
+.stats .stat { display: flex; align-items: center; gap: 4px; }
+.stats .dot { width: 8px; height: 8px; border-radius: 50%; }
+.icon-btn {
+  width: 30px; height: 30px; border-radius: 6px;
+  display: inline-flex; align-items: center; justify-content: center;
+  color: var(--fg-soft);
+}
+.icon-btn:hover { background: var(--bg-soft); color: var(--fg); }
+
+/* ─── Body ────────────────────────────────────────────────────────────── */
+.body { display: grid; grid-template-columns: 240px 1fr 0; min-height: 0; }
+.body.with-detail { grid-template-columns: 240px 1fr 380px; }
+.sidebar {
+  border-right: 1px solid var(--border);
+  padding: 16px;
+  overflow-y: auto;
+  background: var(--bg-soft);
+}
+.section-label {
+  font-size: 11px; font-weight: 600; color: var(--fg-muted);
+  text-transform: uppercase; letter-spacing: 0.06em;
+  margin: 0 0 8px 4px;
+}
+.filter-list { display: flex; flex-direction: column; gap: 2px; margin-bottom: 20px; }
+.filter-btn {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 6px 10px; border-radius: 6px;
+  font-size: 13px; color: var(--fg-soft);
+  text-align: left;
+}
+.filter-btn:hover { background: var(--bg-elev); color: var(--fg); }
+.filter-btn.active { background: var(--accent-soft); color: var(--accent); font-weight: 500; }
+.filter-btn .left { display: flex; align-items: center; gap: 8px; }
+.filter-btn .swatch {
+  width: 8px; height: 8px; border-radius: 2px; display: inline-block;
+}
+.filter-btn .count { font-size: 11px; color: var(--fg-muted); font-variant-numeric: tabular-nums; }
+.filter-btn.active .count { color: var(--accent); }
+.view-switch {
+  display: flex; gap: 2px; padding: 2px; margin-bottom: 20px;
+  background: var(--bg-elev); border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.view-switch button {
+  flex: 1; padding: 6px 10px; font-size: 12px;
+  border-radius: 4px; color: var(--fg-soft);
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+}
+.view-switch button.active { background: var(--bg-soft); color: var(--fg); font-weight: 500; }
+
+.main {
+  overflow: auto;
+  background: var(--bg);
+  position: relative;
+}
+.main-inner { padding: 20px 24px; min-height: 100%; }
+
+/* ─── Graph view ──────────────────────────────────────────────────────── */
+.graph-wrap {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-elev);
+  box-shadow: var(--shadow-sm);
+  position: relative;
+  height: calc(100vh - 110px);
+  overflow: hidden;
+}
+.graph-controls {
+  position: absolute; top: 10px; right: 10px; z-index: 2;
+  display: flex; gap: 4px;
+  background: var(--bg-elev); border: 1px solid var(--border);
+  border-radius: 6px; padding: 2px;
+  box-shadow: var(--shadow-sm);
+}
+.graph-controls button {
+  width: 26px; height: 26px; border-radius: 4px;
+  color: var(--fg-soft); display: flex; align-items: center; justify-content: center;
+}
+.graph-controls button:hover { background: var(--bg-soft); color: var(--fg); }
+.graph-empty {
+  position: absolute; inset: 0;
+  display: none; align-items: center; justify-content: center;
+  color: var(--fg-muted); font-size: 13px;
+}
+.graph-empty.show { display: flex; }
+#graph-svg { width: 100%; height: 100%; cursor: grab; user-select: none; }
+#graph-svg.dragging { cursor: grabbing; }
+#graph-svg .group-bg {
+  fill: var(--bg-soft); stroke: var(--border); stroke-dasharray: 4 4;
+}
+#graph-svg .group-label {
+  font-size: 11px; font-weight: 600; fill: var(--fg-muted);
+  text-transform: uppercase; letter-spacing: 0.06em;
+}
+#graph-svg .edge {
+  stroke: var(--border-strong); stroke-width: 1.5;
+  fill: none; pointer-events: none;
+}
+#graph-svg .edge.highlight { stroke: var(--accent); stroke-width: 2; }
+#graph-svg .node-shape {
+  fill: var(--bg-elev); stroke-width: 2;
+  transition: filter 0.15s, transform 0.15s;
+}
+#graph-svg .node-label {
+  font-size: 11px; fill: var(--fg);
+  pointer-events: none; font-family: var(--mono);
+}
+#graph-svg .node { cursor: pointer; }
+#graph-svg .node:hover .node-shape { filter: brightness(0.96); }
+#graph-svg .node.selected .node-shape { stroke-width: 3; }
+#graph-svg .node.dim .node-shape { opacity: 0.15; }
+#graph-svg .node.dim .node-label { opacity: 0.3; }
+#graph-svg .edge.dim { opacity: 0.1; }
+
+/* ─── Table view ──────────────────────────────────────────────────────── */
+.table-wrap {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-elev);
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+}
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+thead th {
+  text-align: left;
+  padding: 10px 14px;
+  font-size: 11px; font-weight: 600;
+  color: var(--fg-muted);
+  text-transform: uppercase; letter-spacing: 0.06em;
+  background: var(--bg-soft);
+  border-bottom: 1px solid var(--border);
+  position: sticky; top: 0;
+  cursor: pointer; user-select: none;
+}
+thead th:hover { color: var(--fg); }
+thead th.sorted { color: var(--accent); }
+thead th .arrow { display: inline-block; width: 8px; margin-left: 4px; }
+tbody td {
+  padding: 9px 14px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+tbody tr { cursor: pointer; }
+tbody tr:hover { background: var(--bg-soft); }
+tbody tr.selected { background: var(--accent-soft); }
+tbody tr:last-child td { border-bottom: none; }
+td.col-name { font-family: var(--mono); font-size: 12px; }
+td.col-value { font-family: var(--mono); font-size: 12px; color: var(--fg-soft); word-break: break-all; }
+td.col-status .pill {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 2px 8px; border-radius: 999px;
+  font-size: 11px; font-weight: 500;
+}
+td.col-status .pill .dot { width: 6px; height: 6px; border-radius: 50%; }
+.pill.ok { background: var(--ok-soft); color: var(--ok); }
+.pill.warn { background: var(--warn-soft); color: var(--warn); }
+.pill.bad { background: var(--bad-soft); color: var(--bad); }
+.pill.ok .dot { background: var(--ok); }
+.pill.warn .dot { background: var(--warn); }
+.pill.bad .dot { background: var(--bad); }
+.type-pill {
+  display: inline-block; padding: 1px 7px; border-radius: 4px;
+  font-size: 11px; font-weight: 500;
+  font-family: var(--mono);
+  background: var(--bg-soft); color: var(--fg-soft);
+  border: 1px solid var(--border);
+}
+
+/* ─── Detail panel ────────────────────────────────────────────────────── */
+.detail {
+  border-left: 1px solid var(--border);
+  background: var(--bg-elev);
+  overflow-y: auto;
+  display: none;
+}
+.body.with-detail .detail { display: block; }
+.detail-header {
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border);
+  display: flex; align-items: flex-start; gap: 12px;
+}
+.detail-header .title {
+  flex: 1;
+  font-family: var(--mono); font-size: 14px; font-weight: 600;
+  word-break: break-all;
+}
+.detail-section { padding: 14px 20px; border-bottom: 1px solid var(--border); }
+.detail-section:last-child { border-bottom: none; }
+.detail-section h3 {
+  font-size: 11px; font-weight: 600; color: var(--fg-muted);
+  text-transform: uppercase; letter-spacing: 0.06em;
+  margin: 0 0 8px 0;
+}
+.detail-section p { margin: 0; }
+.detail-section .value {
+  font-family: var(--mono); font-size: 12px; color: var(--fg-soft);
+  background: var(--bg-soft); padding: 8px 10px; border-radius: 4px;
+  border: 1px solid var(--border);
+  word-break: break-all;
+}
+.detail-section .desc { font-size: 13px; color: var(--fg-soft); line-height: 1.55; }
+.dep-list { display: flex; flex-direction: column; gap: 4px; }
+.dep-link {
+  display: flex; align-items: center; gap: 6px;
+  padding: 5px 8px; border-radius: 4px;
+  font-family: var(--mono); font-size: 12px;
+  color: var(--accent);
+}
+.dep-link:hover { background: var(--accent-soft); }
+.dep-link .arrow { color: var(--fg-muted); }
+.detail-empty {
+  padding: 40px 20px; text-align: center;
+  color: var(--fg-muted); font-size: 13px;
+}
+
+/* ─── Misc ────────────────────────────────────────────────────────────── */
+.hidden { display: none !important; }
+.meta-line {
+  display: flex; gap: 16px; font-size: 12px; color: var(--fg-muted);
+  margin-bottom: 14px;
+}
+.meta-line code { font-family: var(--mono); color: var(--fg-soft); }
+@media (max-width: 900px) {
+  .body { grid-template-columns: 0 1fr 0; }
+  .sidebar { display: none; }
+  .body.with-detail { grid-template-columns: 0 1fr 320px; }
+}
 </style>
 </head>
 <body>
-<div class="layout">
-  <div class="sidebar">
-    <h1><span style="font-size:1.2rem">🗺</span> Atlas v2</h1>
-    <div id="stats" style="font-size:0.75rem;color:#94A3B8;margin-bottom:16px"></div>
-    <div class="legend">
-      <div class="legend-item"><div class="legend-dot" style="background:#60A5FA"></div>path</div>
-      <div class="legend-item"><div class="legend-dot" style="background:#34D399"></div>service</div>
-      <div class="legend-item"><div class="legend-dot" style="background:#FB923C"></div>container</div>
-      <div class="legend-item"><div class="legend-dot" style="background:#A78BFA"></div>socket</div>
-      <div class="legend-item"><div class="legend-dot" style="background:#FBBF24"></div>env_file</div>
+<div class="app">
+  <header class="topbar">
+    <div class="brand">
+      <span class="name">Atlas</span>
+      <span class="ver" id="ver"></span>
     </div>
-    <div id="node-list" style="font-size:0.75rem"></div>
-  </div>
-  <div class="main">
-    <div class="tab-bar">
-      <div class="tab active" onclick="showTab('graph')">Graph</div>
-      <div class="tab" onclick="showTab('table')">Table</div>
+    <div class="search">
+      <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <circle cx="11" cy="11" r="7"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+      </svg>
+      <input id="search" type="text" placeholder="Search references" autocomplete="off" spellcheck="false">
+      <span class="kbd">/</span>
     </div>
-    <div id="graph-section" class="active">
-      <h2>Dependency Graph</h2>
-      <div class="graph-container">
-        <pre class="mermaid" id="mermaid-graph"></pre>
+    <div class="spacer"></div>
+    <div class="stats">
+      <div class="stat"><span class="dot" style="background:var(--ok)"></span><span id="s-ok">0</span></div>
+      <div class="stat"><span class="dot" style="background:var(--warn)"></span><span id="s-warn">0</span></div>
+      <div class="stat"><span class="dot" style="background:var(--bad)"></span><span id="s-bad">0</span></div>
+    </div>
+    <button class="icon-btn" id="theme-toggle" title="Toggle theme">
+      <svg id="icon-sun" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+        <circle cx="12" cy="12" r="4"></circle>
+        <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/>
+      </svg>
+    </button>
+  </header>
+  <div class="body" id="body">
+    <aside class="sidebar">
+      <div class="section-label">Types</div>
+      <div class="filter-list" id="type-filters"></div>
+      <div class="section-label">State</div>
+      <div class="filter-list" id="state-filters"></div>
+      <div class="section-label">View</div>
+      <div class="view-switch">
+        <button data-view="graph" class="active">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="6" cy="6" r="2"></circle><circle cx="18" cy="6" r="2"></circle>
+            <circle cx="12" cy="18" r="2"></circle><path d="M7.5 7.5L11 16M16.5 7.5L13 16"/>
+          </svg>
+          Graph
+        </button>
+        <button data-view="table">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="3" y="4" width="18" height="16" rx="1"></rect>
+            <line x1="3" y1="10" x2="21" y2="10"></line><line x1="9" y1="4" x2="9" y2="20"></line>
+          </svg>
+          Table
+        </button>
       </div>
-    </div>
-    <div id="table-section">
-      <h2>All References</h2>
-      <table id="ref-table">
-        <thead><tr><th>Name</th><th>Type</th><th>Value</th><th>Status</th></tr></thead>
-        <tbody></tbody>
-      </table>
-    </div>
+    </aside>
+    <main class="main">
+      <div class="main-inner">
+        <div class="meta-line">
+          <span>Registry <code id="m-path"></code></span>
+          <span>Generated <code id="m-time"></code></span>
+        </div>
+        <section id="view-graph" class="view-section">
+          <div class="graph-wrap">
+            <div class="graph-controls">
+              <button id="zoom-in" title="Zoom in">+</button>
+              <button id="zoom-out" title="Zoom out">−</button>
+              <button id="zoom-reset" title="Reset view">⤺</button>
+            </div>
+            <svg id="graph-svg"></svg>
+            <div class="graph-empty" id="graph-empty">No references match the current filters.</div>
+          </div>
+        </section>
+        <section id="view-table" class="view-section hidden">
+          <div class="table-wrap">
+            <table>
+              <thead><tr id="table-head"></tr></thead>
+              <tbody id="table-body"></tbody>
+            </table>
+          </div>
+        </section>
+      </div>
+    </main>
+    <aside class="detail" id="detail">
+      <div id="detail-content"></div>
+    </aside>
   </div>
 </div>
+
 <script>
-const NODES = __NODES__;
-const EDGES = __EDGES__;
+"use strict";
 
-mermaid.initialize({ startOnLoad: true, theme: 'dark',
-  themeVariables: { primaryColor: '#3B82F6', primaryTextColor: '#F1F5F9',
-    primaryBorderColor: '#60A5FA', lineColor: '#475569',
-    secondaryColor: '#1E293B', tertiaryColor: '#0F172A' } });
+// ── Data injected by Python at build time ─────────────────────────────────
+const DATA = __ATLAS_DATA__;
 
-const byType = {};
-NODES.forEach(n => { (byType[n.type] = byType[n.type]||[]).push(n); });
-document.getElementById('stats').innerHTML =
-  Object.entries(byType).map(([t,ns]) =>
-    `<span class="badge" style="background:${ns[0].bg};color:white">${t}: ${ns.length}</span>`).join(' ');
+// ── Type → CSS color var ──────────────────────────────────────────────────
+const TYPE_VAR = {
+  path: "--type-path",
+  service: "--type-service",
+  container: "--type-container",
+  socket: "--type-socket",
+  env_file: "--type-env_file",
+};
+const typeColor = t => getComputedStyle(document.documentElement)
+                          .getPropertyValue(TYPE_VAR[t] || "--fg-muted").trim();
+const STATE_VAR = { ok: "--ok", warn: "--warn", bad: "--bad" };
+const stateColor = s => getComputedStyle(document.documentElement)
+                            .getPropertyValue(STATE_VAR[s] || "--fg-muted").trim();
 
-let graph = 'graph TD;\\n';
-const nodeIds = new Set(NODES.map(n=>n.id));
-const subgraphs = {};
-NODES.forEach(n => {
-  if (!subgraphs[n.type]) subgraphs[n.type] = [];
-  subgraphs[n.type].push(n.id);
-});
-Object.entries(subgraphs).forEach(([type, ids]) => {
-  const color = NODES.find(n=>n.id===ids[0])?.bg || '#9CA3AF';
-  graph += `  subgraph ${type} ["${type}"]\\n`;
-  ids.forEach(id => graph += `    ${id}\\n`);
-  graph += `  end\\n`;
-});
-EDGES.forEach(e => {
-  if (nodeIds.has(e.from) && nodeIds.has(e.to))
-    graph += `  ${e.from} --> ${e.to}\\n`;
-});
-document.getElementById('mermaid-graph').textContent = graph;
+// ── App state ─────────────────────────────────────────────────────────────
+const state = {
+  view: "graph",
+  search: "",
+  types: new Set(Object.keys(DATA.stats.by_type)),
+  states: new Set(["ok", "warn", "bad"]),
+  selected: null,   // node id
+  sort: { col: "id", dir: 1 },
+  zoom: 1,
+  pan: { x: 0, y: 0 },
+};
 
-const tbody = document.querySelector('#ref-table tbody');
-NODES.sort((a,b)=>a.type.localeCompare(b.type)||a.id.localeCompare(b.id))
-.forEach(n => {
-  const tr = document.createElement('tr');
-  tr.innerHTML = `<td>${n.label}</td><td>${n.type}</td>
-    <td style="color:#94A3B8;max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
-        title="${n.description}">${n.description || '—'}</td>
-    <td class="${n.color==='#16A34A'?'status-ok':'status-dead'}">
-      ${n.color==='#16A34A'?'✓ alive':'✗ dead'}</td>`;
-  tbody.appendChild(tr);
-});
+const nodeById = new Map(DATA.nodes.map(n => [n.id, n]));
 
-function showTab(tab) {
-  document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
-  document.querySelectorAll('[id$="-section"]').forEach(s=>s.classList.remove('active'));
-  document.getElementById(tab+'-section').classList.add('active');
-  event.target.classList.add('active');
+// ── Topbar values ─────────────────────────────────────────────────────────
+document.getElementById("ver").textContent = "v" + DATA.version;
+document.getElementById("m-path").textContent = DATA.registry_path;
+document.getElementById("m-time").textContent = DATA.generated_at;
+document.getElementById("s-ok").textContent = DATA.stats.by_state.ok || 0;
+document.getElementById("s-warn").textContent = DATA.stats.by_state.warn || 0;
+document.getElementById("s-bad").textContent = DATA.stats.by_state.bad || 0;
+
+// ── Sidebar filters ───────────────────────────────────────────────────────
+function buildTypeFilters() {
+  const container = document.getElementById("type-filters");
+  const entries = Object.entries(DATA.stats.by_type).sort();
+  container.innerHTML = "";
+  const all = document.createElement("button");
+  all.className = "filter-btn active";
+  all.dataset.type = "__all__";
+  all.innerHTML = `<span class="left">All types</span><span class="count">${DATA.stats.total}</span>`;
+  container.appendChild(all);
+  for (const [t, n] of entries) {
+    const btn = document.createElement("button");
+    btn.className = "filter-btn active";
+    btn.dataset.type = t;
+    btn.innerHTML =
+      `<span class="left"><span class="swatch" style="background:${typeColor(t)}"></span>${t}</span>` +
+      `<span class="count">${n}</span>`;
+    container.appendChild(btn);
+  }
+  container.addEventListener("click", e => {
+    const btn = e.target.closest(".filter-btn");
+    if (!btn) return;
+    const t = btn.dataset.type;
+    if (t === "__all__") {
+      const allOn = state.types.size === Object.keys(DATA.stats.by_type).length;
+      state.types = new Set(allOn ? [] : Object.keys(DATA.stats.by_type));
+    } else if (state.types.has(t)) {
+      state.types.delete(t);
+    } else {
+      state.types.add(t);
+    }
+    refreshFilters();
+    render();
+  });
 }
+function buildStateFilters() {
+  const container = document.getElementById("state-filters");
+  const labels = { ok: "Alive", warn: "Optional offline", bad: "Dead" };
+  container.innerHTML = "";
+  for (const s of ["ok", "warn", "bad"]) {
+    const btn = document.createElement("button");
+    btn.className = "filter-btn active";
+    btn.dataset.state = s;
+    btn.innerHTML =
+      `<span class="left"><span class="swatch" style="background:${stateColor(s)};border-radius:50%"></span>${labels[s]}</span>` +
+      `<span class="count">${DATA.stats.by_state[s] || 0}</span>`;
+    container.appendChild(btn);
+  }
+  container.addEventListener("click", e => {
+    const btn = e.target.closest(".filter-btn");
+    if (!btn) return;
+    const s = btn.dataset.state;
+    if (state.states.has(s)) state.states.delete(s); else state.states.add(s);
+    refreshFilters();
+    render();
+  });
+}
+function refreshFilters() {
+  document.querySelectorAll("#type-filters .filter-btn").forEach(b => {
+    const t = b.dataset.type;
+    const active = t === "__all__"
+      ? state.types.size === Object.keys(DATA.stats.by_type).length
+      : state.types.has(t);
+    b.classList.toggle("active", active);
+  });
+  document.querySelectorAll("#state-filters .filter-btn").forEach(b => {
+    b.classList.toggle("active", state.states.has(b.dataset.state));
+  });
+}
+
+// ── Search ────────────────────────────────────────────────────────────────
+const searchInput = document.getElementById("search");
+let searchTimer = null;
+searchInput.addEventListener("input", () => {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => {
+    state.search = searchInput.value.trim().toLowerCase();
+    render();
+  }, 100);
+});
+document.addEventListener("keydown", e => {
+  if (e.key === "/" && document.activeElement !== searchInput) {
+    e.preventDefault();
+    searchInput.focus();
+    searchInput.select();
+  } else if (e.key === "Escape") {
+    if (document.activeElement === searchInput) {
+      searchInput.blur();
+      searchInput.value = "";
+      state.search = "";
+      render();
+    } else if (state.selected) {
+      selectNode(null);
+    }
+  }
+});
+
+// ── View switch ───────────────────────────────────────────────────────────
+document.querySelector(".view-switch").addEventListener("click", e => {
+  const btn = e.target.closest("button");
+  if (!btn) return;
+  state.view = btn.dataset.view;
+  document.querySelectorAll(".view-switch button").forEach(b =>
+    b.classList.toggle("active", b === btn));
+  document.getElementById("view-graph").classList.toggle("hidden", state.view !== "graph");
+  document.getElementById("view-table").classList.toggle("hidden", state.view !== "table");
+  render();
+});
+
+// ── Theme ─────────────────────────────────────────────────────────────────
+document.getElementById("theme-toggle").addEventListener("click", () => {
+  const html = document.documentElement;
+  html.dataset.theme = html.dataset.theme === "dark" ? "light" : "dark";
+  render();   // colors are CSS-var driven; nodes need re-paint for new vars
+});
+
+// ── Filter logic ──────────────────────────────────────────────────────────
+function visibleNodes() {
+  const q = state.search;
+  return DATA.nodes.filter(n => {
+    if (!state.types.has(n.type)) return false;
+    if (!state.states.has(n.state)) return false;
+    if (q && !n.id.toLowerCase().includes(q)
+          && !n.value.toLowerCase().includes(q)
+          && !n.description.toLowerCase().includes(q)) return false;
+    return true;
+  });
+}
+
+// ── Graph layout (deterministic, grouped by type) ─────────────────────────
+// We lay out nodes in vertical columns, one per type. Each column is sized
+// to its contents. This avoids force-simulation overhead, gives a stable
+// reading order, and keeps related refs near each other.
+function layout(nodes) {
+  const order = ["path", "service", "container", "socket", "env_file"];
+  const byType = {};
+  for (const n of nodes) (byType[n.type] = byType[n.type] || []).push(n);
+  const COL_GAP = 60;
+  const COL_W = 200;
+  const NODE_H = 28;
+  const NODE_GAP = 8;
+  const PAD_TOP = 48;
+  const PAD_BOTTOM = 24;
+  const TITLE_GAP = 12;
+
+  const cols = order.filter(t => byType[t] && byType[t].length);
+  const layout = { nodes: [], groups: [], width: 0, height: 0 };
+  let x = 24;
+  let maxH = 0;
+  for (const t of cols) {
+    const list = byType[t].slice().sort((a, b) => a.id.localeCompare(b.id));
+    const h = PAD_TOP + list.length * NODE_H + (list.length - 1) * NODE_GAP + PAD_BOTTOM;
+    layout.groups.push({ type: t, x, y: 12, width: COL_W, height: h, count: list.length });
+    let y = 12 + PAD_TOP - TITLE_GAP;
+    for (const n of list) {
+      layout.nodes.push({
+        ...n,
+        x: x + COL_W / 2,
+        y: y + NODE_H / 2,
+        boxX: x + 10,
+        boxY: y,
+        boxW: COL_W - 20,
+        boxH: NODE_H,
+      });
+      y += NODE_H + NODE_GAP;
+    }
+    if (h > maxH) maxH = h;
+    x += COL_W + COL_GAP;
+  }
+  layout.width = x;
+  layout.height = maxH + 24;
+  return layout;
+}
+
+// ── Graph render ──────────────────────────────────────────────────────────
+const svg = document.getElementById("graph-svg");
+const SVG_NS = "http://www.w3.org/2000/svg";
+function el(tag, attrs = {}, parent = null) {
+  const e = document.createElementNS(SVG_NS, tag);
+  for (const k in attrs) e.setAttribute(k, attrs[k]);
+  if (parent) parent.appendChild(e);
+  return e;
+}
+
+function renderGraph() {
+  svg.innerHTML = "";
+  const visible = visibleNodes();
+  const visibleIds = new Set(visible.map(n => n.id));
+  document.getElementById("graph-empty").classList.toggle("show", visible.length === 0);
+  if (visible.length === 0) return;
+
+  const L = layout(visible);
+  const root = el("g", { id: "viewport" }, svg);
+  applyTransform();
+
+  // Arrow marker
+  const defs = el("defs", {}, root);
+  const marker = el("marker", {
+    id: "arrow", viewBox: "0 0 10 10", refX: "9", refY: "5",
+    markerWidth: "6", markerHeight: "6", orient: "auto-start-reverse",
+  }, defs);
+  el("path", { d: "M 0 0 L 10 5 L 0 10 z", fill: "var(--border-strong)" }, marker);
+
+  // Group backgrounds + labels
+  for (const g of L.groups) {
+    el("rect", {
+      class: "group-bg", x: g.x, y: g.y, width: g.width, height: g.height, rx: 8,
+    }, root);
+    el("text", {
+      class: "group-label", x: g.x + 14, y: g.y + 22,
+    }, root).textContent = `${g.type} · ${g.count}`;
+  }
+
+  // Edges (curved between columns; straight within)
+  const edgeLayer = el("g", { id: "edges" }, root);
+  const nodePos = new Map(L.nodes.map(n => [n.id, n]));
+  for (const e of DATA.edges) {
+    if (!visibleIds.has(e.from) || !visibleIds.has(e.to)) continue;
+    const src = nodePos.get(e.from);
+    const dst = nodePos.get(e.to);
+    if (!src || !dst) continue;
+    const x1 = src.boxX + (dst.x > src.x ? src.boxW : 0);
+    const y1 = src.y;
+    const x2 = dst.boxX + (src.x > dst.x ? dst.boxW : 0);
+    const y2 = dst.y;
+    const dx = Math.abs(x2 - x1);
+    const cx1 = x1 + (x2 > x1 ? dx * 0.4 : -dx * 0.4);
+    const cx2 = x2 + (x2 > x1 ? -dx * 0.4 : dx * 0.4);
+    el("path", {
+      class: "edge",
+      d: `M ${x1} ${y1} C ${cx1} ${y1} ${cx2} ${y2} ${x2} ${y2}`,
+      "marker-end": "url(#arrow)",
+      "data-from": e.from, "data-to": e.to,
+    }, edgeLayer);
+  }
+
+  // Nodes
+  const nodeLayer = el("g", { id: "nodes" }, root);
+  for (const n of L.nodes) {
+    const g = el("g", { class: "node", "data-id": n.id }, nodeLayer);
+    el("rect", {
+      class: "node-shape",
+      x: n.boxX, y: n.boxY, width: n.boxW, height: n.boxH, rx: 6,
+      stroke: typeColor(n.type),
+      fill: "var(--bg-elev)",
+    }, g);
+    // State indicator dot on the left edge of the box
+    el("circle", {
+      cx: n.boxX + 10, cy: n.y, r: 3.5,
+      fill: stateColor(n.state),
+    }, g);
+    const label = el("text", {
+      class: "node-label",
+      x: n.boxX + 20, y: n.y + 4,
+    }, g);
+    label.textContent = n.id;
+    g.addEventListener("click", ev => { ev.stopPropagation(); selectNode(n.id); });
+    g.addEventListener("mouseenter", () => highlightConnected(n.id, true));
+    g.addEventListener("mouseleave", () => highlightConnected(n.id, false));
+  }
+
+  if (state.selected) markSelected();
+}
+
+function highlightConnected(id, on) {
+  const connected = new Set([id]);
+  for (const e of DATA.edges) {
+    if (e.from === id) connected.add(e.to);
+    if (e.to === id) connected.add(e.from);
+  }
+  svg.querySelectorAll(".node").forEach(n => {
+    n.classList.toggle("dim", on && !connected.has(n.dataset.id));
+  });
+  svg.querySelectorAll(".edge").forEach(p => {
+    const hit = p.dataset.from === id || p.dataset.to === id;
+    p.classList.toggle("highlight", on && hit);
+    p.classList.toggle("dim", on && !hit);
+  });
+}
+
+function markSelected() {
+  svg.querySelectorAll(".node").forEach(n => {
+    n.classList.toggle("selected", n.dataset.id === state.selected);
+  });
+}
+
+// ── Pan + zoom on the SVG ─────────────────────────────────────────────────
+function applyTransform() {
+  const vp = svg.querySelector("#viewport");
+  if (vp) vp.setAttribute("transform",
+    `translate(${state.pan.x} ${state.pan.y}) scale(${state.zoom})`);
+}
+{
+  let dragging = false, sx = 0, sy = 0, px = 0, py = 0;
+  svg.addEventListener("mousedown", e => {
+    if (e.target.closest(".node")) return;
+    dragging = true; sx = e.clientX; sy = e.clientY;
+    px = state.pan.x; py = state.pan.y;
+    svg.classList.add("dragging");
+  });
+  window.addEventListener("mousemove", e => {
+    if (!dragging) return;
+    state.pan.x = px + (e.clientX - sx);
+    state.pan.y = py + (e.clientY - sy);
+    applyTransform();
+  });
+  window.addEventListener("mouseup", () => { dragging = false; svg.classList.remove("dragging"); });
+  svg.addEventListener("wheel", e => {
+    e.preventDefault();
+    const factor = e.deltaY < 0 ? 1.1 : 0.9;
+    state.zoom = Math.min(3, Math.max(0.3, state.zoom * factor));
+    applyTransform();
+  }, { passive: false });
+}
+document.getElementById("zoom-in").addEventListener("click", () => {
+  state.zoom = Math.min(3, state.zoom * 1.2); applyTransform();
+});
+document.getElementById("zoom-out").addEventListener("click", () => {
+  state.zoom = Math.max(0.3, state.zoom / 1.2); applyTransform();
+});
+document.getElementById("zoom-reset").addEventListener("click", () => {
+  state.zoom = 1; state.pan = { x: 0, y: 0 }; applyTransform();
+});
+
+// ── Table render ──────────────────────────────────────────────────────────
+const COLUMNS = [
+  { key: "id", label: "Name", cls: "col-name" },
+  { key: "type", label: "Type", cls: "col-type" },
+  { key: "value", label: "Resolved value", cls: "col-value" },
+  { key: "state", label: "Status", cls: "col-status" },
+  { key: "optional", label: "Optional", cls: "col-opt" },
+];
+function buildTableHead() {
+  const tr = document.getElementById("table-head");
+  tr.innerHTML = "";
+  for (const c of COLUMNS) {
+    const th = document.createElement("th");
+    th.textContent = c.label;
+    th.dataset.col = c.key;
+    th.addEventListener("click", () => {
+      if (state.sort.col === c.key) state.sort.dir *= -1;
+      else { state.sort.col = c.key; state.sort.dir = 1; }
+      renderTable();
+    });
+    tr.appendChild(th);
+  }
+}
+function renderTable() {
+  const head = document.getElementById("table-head");
+  head.querySelectorAll("th").forEach(th => {
+    th.classList.toggle("sorted", th.dataset.col === state.sort.col);
+    const arrow = state.sort.col === th.dataset.col
+      ? (state.sort.dir > 0 ? "↑" : "↓") : "";
+    th.innerHTML = `${COLUMNS.find(c => c.key === th.dataset.col).label}` +
+                   ` <span class="arrow">${arrow}</span>`;
+  });
+  const rows = visibleNodes().slice().sort((a, b) => {
+    const k = state.sort.col;
+    const va = a[k] == null ? "" : a[k];
+    const vb = b[k] == null ? "" : b[k];
+    if (va < vb) return -1 * state.sort.dir;
+    if (va > vb) return  1 * state.sort.dir;
+    return 0;
+  });
+  const tbody = document.getElementById("table-body");
+  tbody.innerHTML = "";
+  for (const n of rows) {
+    const tr = document.createElement("tr");
+    tr.dataset.id = n.id;
+    if (n.id === state.selected) tr.classList.add("selected");
+    tr.innerHTML =
+      `<td class="col-name">${escape(n.id)}</td>` +
+      `<td><span class="type-pill" style="color:${typeColor(n.type)}">${n.type}</span></td>` +
+      `<td class="col-value" title="${escape(n.value)}">${escape(n.value)}</td>` +
+      `<td class="col-status">${statusPill(n)}</td>` +
+      `<td>${n.optional ? "yes" : ""}</td>`;
+    tr.addEventListener("click", () => selectNode(n.id));
+    tbody.appendChild(tr);
+  }
+}
+function statusPill(n) {
+  if (n.state === "ok") return `<span class="pill ok"><span class="dot"></span>alive</span>`;
+  if (n.state === "warn") return `<span class="pill warn"><span class="dot"></span>offline</span>`;
+  return `<span class="pill bad"><span class="dot"></span>dead</span>`;
+}
+function escape(s) {
+  return String(s).replace(/[&<>"']/g, c =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+}
+
+// ── Detail panel ──────────────────────────────────────────────────────────
+function selectNode(id) {
+  state.selected = id;
+  const body = document.getElementById("body");
+  body.classList.toggle("with-detail", !!id);
+  if (id) renderDetail(nodeById.get(id));
+  markSelected();
+  document.querySelectorAll("#table-body tr").forEach(tr =>
+    tr.classList.toggle("selected", tr.dataset.id === id));
+}
+function renderDetail(n) {
+  const deps = DATA.edges.filter(e => e.from === n.id).map(e => e.to);
+  const consumers = DATA.edges.filter(e => e.to === n.id).map(e => e.from);
+  const el = document.getElementById("detail-content");
+  const stateText = n.state === "ok" ? "Alive"
+                  : n.state === "warn" ? "Offline (optional)" : "Dead";
+  const detailLine = n.detail ? `<div class="desc" style="margin-top:6px;color:var(--fg-soft)">${escape(n.detail)}</div>` : "";
+  const repairLine = n.repair_hint
+    ? `<pre class="value" style="white-space:pre-wrap;margin-top:6px">${escape(n.repair_hint)}</pre>` : "";
+  const descLine = n.description
+    ? `<p class="desc">${escape(n.description)}</p>` : `<p class="desc" style="color:var(--fg-muted)">No description.</p>`;
+  el.innerHTML = `
+    <div class="detail-header">
+      <div class="title">${escape(n.id)}</div>
+      <span class="type-pill" style="color:${typeColor(n.type)}">${n.type}</span>
+      <button class="icon-btn" id="detail-close" title="Close (Esc)">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg>
+      </button>
+    </div>
+    <div class="detail-section">
+      <h3>Status</h3>
+      ${statusPill(n)} <span style="font-size:12px;color:var(--fg-muted);margin-left:6px">${stateText}${n.optional ? " · optional" : ""}</span>
+      ${detailLine}
+      ${repairLine}
+    </div>
+    <div class="detail-section">
+      <h3>Resolved value</h3>
+      <div class="value">${escape(n.value)}</div>
+    </div>
+    <div class="detail-section">
+      <h3>Description</h3>
+      ${descLine}
+    </div>
+    <div class="detail-section">
+      <h3>Depends on (${deps.length})</h3>
+      <div class="dep-list">${
+        deps.length
+          ? deps.map(d => `<button class="dep-link" data-jump="${escape(d)}">${escape(d)}<span class="arrow">↗</span></button>`).join("")
+          : `<span style="font-size:12px;color:var(--fg-muted)">No dependencies.</span>`
+      }</div>
+    </div>
+    <div class="detail-section">
+      <h3>Used by (${consumers.length})</h3>
+      <div class="dep-list">${
+        consumers.length
+          ? consumers.map(d => `<button class="dep-link" data-jump="${escape(d)}">${escape(d)}<span class="arrow">↗</span></button>`).join("")
+          : `<span style="font-size:12px;color:var(--fg-muted)">No consumers in registry.</span>`
+      }</div>
+    </div>
+  `;
+  document.getElementById("detail-close").addEventListener("click", () => selectNode(null));
+  el.querySelectorAll(".dep-link").forEach(b =>
+    b.addEventListener("click", () => selectNode(b.dataset.jump)));
+}
+
+// ── Main render ───────────────────────────────────────────────────────────
+function render() {
+  if (state.view === "graph") renderGraph();
+  else renderTable();
+}
+
+// ── Click outside any node clears selection ──────────────────────────────
+svg.addEventListener("click", () => selectNode(null));
+
+// ── Initial paint ─────────────────────────────────────────────────────────
+buildTypeFilters();
+buildStateFilters();
+buildTableHead();
+render();
 </script>
 </body>
 </html>"""
@@ -945,7 +1785,7 @@ def _build_parser() -> argparse.ArgumentParser:
                    help="Start from this reference (show subtree only)")
     p.set_defaults(func=cmd_graph)
 
-    p = sub.add_parser("visualize", help="Generate self-contained HTML visualization with Mermaid")
+    p = sub.add_parser("visualize", help="Generate self-contained HTML webapp of the registry")
     p.add_argument("--output", dest="output", default=None, metavar="FILE",
                    help="Write HTML to FILE instead of opening browser")
     p.add_argument("--no-open", dest="open", action="store_false", default=True,

@@ -670,3 +670,94 @@ class TestRuntimePaths:
         invalidate_cache()
         lrp = self._load()
         assert lrp.laia_root() == Path("/tmp/fallback_root")
+
+
+# ---------------------------------------------------------------------------
+# CLI — atlas visualize (self-contained HTML generation)
+# ---------------------------------------------------------------------------
+
+class TestCliVisualize:
+    """Verifies the ``atlas visualize`` command produces a usable HTML file.
+
+    We don't drive a real browser (Selenium/Playwright is too heavy for unit
+    tests); instead we assert structural properties of the output: every
+    declared ref appears, the JSON payload is parseable, the HTML has no
+    obvious malformation, and there is zero network dependency.
+    """
+
+    def _run(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+             extra_yaml: str = "") -> tuple[Path, str]:
+        cli = _load_cli()
+        registry = tmp_path / "atlas.yaml"
+        registry.write_text(
+            "version: 2\n"
+            "refs:\n"
+            "  laia_root: { type: path, value: /tmp/x, description: 'root path' }\n"
+            "  child:     { type: path, value: '${ref.laia_root}/child' }\n"
+            "  api:       { type: service, host: 127.0.0.1, port: 8088, optional: true }\n"
+            + extra_yaml
+        )
+        monkeypatch.setenv("ATLAS_CONFIG", str(registry))
+        invalidate_cache()
+        out = tmp_path / "out.html"
+        args = types.SimpleNamespace(output=str(out), open=False)
+        rc = cli.cmd_visualize(args)
+        assert rc == 0
+        assert out.exists()
+        return out, out.read_text(encoding="utf-8")
+
+    def test_generates_html_with_output(self, tmp_path: Path,
+                                        monkeypatch: pytest.MonkeyPatch) -> None:
+        out, html = self._run(tmp_path, monkeypatch)
+        assert out.stat().st_size > 0
+        assert "<html" in html and "</html>" in html
+
+    def test_contains_every_ref_name(self, tmp_path: Path,
+                                     monkeypatch: pytest.MonkeyPatch) -> None:
+        _, html = self._run(tmp_path, monkeypatch)
+        for name in ("laia_root", "child", "api"):
+            assert f'"id":"{name}"' in html, f"missing ref {name} in payload"
+
+    def test_payload_json_is_parseable(self, tmp_path: Path,
+                                       monkeypatch: pytest.MonkeyPatch) -> None:
+        import json
+        import re
+        _, html = self._run(tmp_path, monkeypatch)
+        match = re.search(r"const DATA = (\{.*?\});", html, re.DOTALL)
+        assert match, "embedded DATA constant not found"
+        data = json.loads(match.group(1))
+        assert data["stats"]["total"] == 3
+        assert any(n["id"] == "child" for n in data["nodes"])
+        # ${ref.laia_root} dependency must surface as an edge.
+        assert {"from": "child", "to": "laia_root"} in data["edges"]
+
+    def test_no_external_network_dependency(self, tmp_path: Path,
+                                            monkeypatch: pytest.MonkeyPatch) -> None:
+        _, html = self._run(tmp_path, monkeypatch)
+        # Self-contained: no CDN script tags, no fetch(), no remote URLs in JS.
+        assert "cdn.jsdelivr.net" not in html
+        assert "unpkg.com" not in html
+        assert "https://cdn" not in html
+        # No <script src="http..."> at all.
+        assert 'script src="http' not in html
+
+    def test_placeholder_substituted(self, tmp_path: Path,
+                                     monkeypatch: pytest.MonkeyPatch) -> None:
+        _, html = self._run(tmp_path, monkeypatch)
+        assert "__ATLAS_DATA__" not in html
+
+    def test_no_open_flag_respected(self, tmp_path: Path,
+                                    monkeypatch: pytest.MonkeyPatch,
+                                    capsys: pytest.CaptureFixture) -> None:
+        """``--no-open`` must NOT call webbrowser.open."""
+        import webbrowser as _wb
+        cli = _load_cli()
+        registry = tmp_path / "atlas.yaml"
+        registry.write_text("version: 2\nrefs:\n  x: { type: path, value: /tmp }\n")
+        monkeypatch.setenv("ATLAS_CONFIG", str(registry))
+        invalidate_cache()
+        opens: list[str] = []
+        monkeypatch.setattr(_wb, "open", lambda url: opens.append(url))
+        out = tmp_path / "out.html"
+        cli.cmd_visualize(types.SimpleNamespace(output=str(out), open=False))
+        assert opens == [], f"webbrowser.open was called: {opens}"
