@@ -131,7 +131,7 @@ else
       warn "password de $slug no recuperable; uso LAIA_DEFAULT_USER_PASSWORD/chattest"
     fi
     agora_api="$(jq -r '.api_url // empty' "$STATE_DIR/laia-agora-state.json" 2>/dev/null || true)"
-    [[ -n "$agora_api" ]] || agora_api="http://127.0.0.1:8088"
+    [[ -n "$agora_api" ]] || agora_api="$(command -v atlas >/dev/null 2>&1 && atlas get agora_api 2>/dev/null || echo http://127.0.0.1:8088)"
     json_write "$STATE_DIR/laia-state-${slug}.json" \
       --arg slug "$slug" \
       --arg uid "$user_id" \

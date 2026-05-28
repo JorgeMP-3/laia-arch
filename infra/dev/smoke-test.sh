@@ -4,7 +4,7 @@
 set -uo pipefail
 
 SLUG="${SLUG:-jorge-dev}"
-API_URL="${AGORA_API_URL:-http://127.0.0.1:8088}"
+API_URL="${AGORA_API_URL:-$(command -v atlas >/dev/null 2>&1 && atlas get agora_api 2>/dev/null || echo http://127.0.0.1:8088)}"
 DRY_RUN=0
 TIMEOUT_TESTS="${AGORA_SMOKE_TEST_TIMEOUT:-60}"
 TIMEOUT_CHAT="${AGORA_SMOKE_CHAT_TIMEOUT:-30}"

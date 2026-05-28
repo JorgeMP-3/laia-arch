@@ -29,7 +29,7 @@ fi
 
 SKILLS_DIR="${SKILLS_DIR:-$REPO_ROOT/skills}"
 CLI="$REPO_ROOT/infra/dev/laia-marketplace.py"
-API="${AGORA_API:-http://127.0.0.1:8088}"
+API="${AGORA_API:-$(command -v atlas >/dev/null 2>&1 && atlas get agora_api 2>/dev/null || echo http://127.0.0.1:8088)}"
 TOKEN="${AGORA_TOKEN:-dev-admin-token}"
 
 if [[ -t 1 ]]; then
