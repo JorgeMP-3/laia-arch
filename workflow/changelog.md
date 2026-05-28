@@ -15,6 +15,118 @@ Formato:
 
 ---
 
+## 2026-05-28 — Atlas v2 adoption Fase 1: descubrimiento Minimax + 3 PRs Claude (claude opus 4.7 + minimax 5 agentes)
+
+División del trabajo: **5 agentes de Minimax descubrieron** (no escribieron código),
+**Claude aplicó** los cambios en 3 PRs incrementales. 2 PRs propuestos se saltaron
+con razón técnica documentada.
+
+### Descubrimiento (Minimax × 5 agentes)
+
+Output en `workflow/plans/atlas-v2/` (10 archivos `.md`, ~1133 líneas), inventario
+de hardcodes por área:
+
+- `agora-backend-app.md`: 38 hardcodes en `admin.py`, `main.py`, `config.py`,
+  `storage.py`, `orchestrator.py`. La mayoría con env-var fallback ya existente.
+- `agora-backend-otro.md`: solapamiento + análisis de `agent_pool`, `models`,
+  `agent_identity`, `llm_config`, tests.
+- `bin-y-libs.md`: 16 hardcodes en `bin/laia*` y `infra/installer/lib/*.sh`.
+- `gateway.md`: 15 hardcodes en `.laia-core/gateway/platforms/` (WhatsApp ×9,
+  Signal, Feishu, BlueBubbles, API server).
+- `laia-core-agent.md`: **0 hardcodes reales** (todo via `get_laia_home()`).
+- `laia-core-entry.md`: **0 hardcodes reales** (cli.py, run_agent.py, etc.).
+- `laia-core-tools.md`: **0 hardcodes reales** en tools/.
+- `laia-executor.md`: 9 hardcodes (paths /etc/laia, /var/lib/laia, /var/log).
+- `orchestrator-pathd.md`: 1 hardcode host-side + 4 filter strings; ~50 paths
+  container-internal correctamente marcados OUT OF SCOPE.
+- `scripts.md`: 18 hardcodes en `infra/dev/*.sh` + `infra/scripts/*.sh`.
+
+**Realidad descubierta**: los 578 hardcodes del scanner `atlas consumers` se
+descomponen en ~80 accionables + el resto en comentarios, fixtures de tests,
+y rutas container-internal correctamente fuera de scope de Atlas-host.
+
+### Aplicación (Claude × 3 PRs incrementales)
+
+**PR #4 — `feat(atlas): añadir 12 refs nuevas`** (base main):
+- Paths del executor (6, optional): `executor_token_file`, `executor_profile_file`,
+  `executor_workspace_root`, `executor_plugins_root`, `workspace_store_lib`,
+  `laia_process_log_dir`.
+- Subdir operacional (1, optional): `srv_state` (`${srv_laia}/state`).
+- Servicios del gateway (5, optional): `whatsapp_bridge`, `signal_cli`,
+  `gateway_api`, `feishu_webhook`, `bluebubbles_webhook`.
+- `~/.laia/atlas.yaml`: 23 → 35 refs. `atlas validate` ✓. `atlas doctor` 0 DEAD
+  reales, 14 optional offline (esperado en dev). `pytest tests/test_atlas.py`:
+  68/68 PASS.
+- Plantilla `infra/pathd/atlas.yaml.example` actualizada en paralelo.
+- Discovery reports completos en `workflow/plans/atlas-v2/`.
+
+**PR #5 — `feat(agora-backend): adoptar atlas.get() para paths host-side`**
+(stacked sobre #4):
+- Nuevo helper `services/agora-backend/app/atlas_paths.py`:
+  - `resolved_path(env_var, atlas_ref, default)` → `Path`
+  - `resolved_container(env_var, atlas_ref, default)` → `str`
+  - `atlas_string(atlas_ref, default)` → `str`
+  - Importación lazy de atlas desde `.laia-core`; degrada limpio si falta.
+- `config.py` (3 paths): `LAIA_ROOT` → `laia_root`, `AGORA_DATA_DIR` → `srv_agora`,
+  `LAIA_STATE_ROOT` → `srv_state`.
+- `admin.py:716`: `AGORA_ADMIN_USERS_ROOT` → `srv_users`.
+- Suite agora-backend: 361/361 PASS (excluyendo 2 tests con bug pre-existente
+  registrado en `workflow/problems.md` como `agora-backend-test-pool-contamination`).
+
+**PR #6 — `feat(infra): shell scripts leen atlas con fallback graceful`**
+(stacked sobre #4):
+- 4 scripts shell migrados al patrón:
+  `${ENV:-$(command -v atlas >/dev/null && atlas get ref 2>/dev/null || echo default)}`
+- `infra/dev/smoke-test.sh`, `seed-base-skills.sh`, `rebuild-state.sh`,
+  `infra/scripts/deploy-agora.sh` (con helper `_atlas_get()` inline +
+  healthcheck URL dinámico).
+- bash -n ✓, atlas resuelve correctamente con/sin atlas en PATH.
+
+### PRs saltados con razón
+
+- **PR-3 (laia-executor)**: el executor declara explícitamente
+  `tools/__init__.py:6: "No \`.laia-core\` dependency"`. No puede importar atlas
+  en runtime. Los defaults ya son env-var-backed; migrar no aporta valor.
+- **PR-4 (.laia-core/gateway/platforms/)**: código upstream LAIA Agent
+  (mattpocock/teknium). Modificar 5 archivos con 15 hardcodes complicaría
+  merges futuros con upstream. Los servicios ya están **registrados** en
+  atlas.yaml (PR-1) — el conocimiento queda capturado. Migración del código
+  pendiente de coordinar con autor upstream o vía fork explícito.
+
+### Decisiones arquitectónicas aplicadas (sin consenso explícito de Jorge)
+
+1. **Container-internal paths NO añadidos a atlas.yaml** (`opt_laia_internal`,
+   `opt_laia_data`, etc.). Atlas-host no debería describir layout interno de
+   containers LXD — eso es responsabilidad de la imagen.
+2. **`agent-jorge` en atlas pero NO en código real**: se deja como está (la
+   ref existe como referencia, optional, repair hint `lxc start agent-jorge`).
+3. **Pathd daemon migración a atlas.py**: deferred. Sigue usando `laia_paths.py`
+   (legacy config.yaml). Proyecto aparte de mayor scope arquitectónico.
+
+### Bug pre-existente registrado
+
+`workflow/problems.md` → `agora-backend-test-pool-contamination` (open):
+2 tests del coordinator fallan cuando la suite completa corre desde el
+principio. Causa: `chat_engine.set_pool()` muta global, no se limpia entre
+tests. No causado por estos PRs.
+
+### Pendiente (no aplicado)
+
+- **Container refs hardcodeados `laia-agora`** en `admin.py:336, 442, 1489`,
+  `main.py:901`, etc. El helper `resolved_container()` ya está listo en PR-2;
+  aplicar en un PR-2b si Jorge quiere.
+- **Discrepancia `AGORA_IMAGE_ALIAS=laia-agora` vs `_ALLOWED_IMAGE_ALIASES=laia-agent`**
+  (admin.py:876 vs config): bug real o intencional, requiere decisión de Jorge.
+- **Fase 5 del plan original** (deuda estructural `/opt/laia` plano vs versionado):
+  bloqueada por decisión arquitectónica de Jorge.
+
+### Orden de merge sugerido
+
+1. **#4** primero (refs nuevas; riesgo 0).
+2. **#5** y **#6** después (rebase automático sobre main).
+
+---
+
 ## 2026-05-28 — Fixes release flow: laia-release default OPT_SRC, comentarios obsoletos (claude opus 4.7)
 
 Verificación end-to-end del flujo de release tras el saneamiento (`bin/laia-release`,
