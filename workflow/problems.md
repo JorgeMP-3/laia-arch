@@ -106,7 +106,7 @@ añade una línea `- **Resuelto**: 2026-MM-DD en commit <hash>`.
 - **Owner**: sin asignar.
 - **Estado**: open.
 
-## backend-suite-laia-chat-test-leak (duplicate)
+## backend-suite-laia-chat-test-leak (resolved · duplicate)
 
 > **Duplicado de `agora-backend-test-pool-contamination`** (mismo síntoma y causa raíz, mejor
 > diagnosticada allí). Se trata como **slice A2** del plan de estabilización. No trabajar este
@@ -126,8 +126,9 @@ añade una línea `- **Resuelto**: 2026-MM-DD en commit <hash>`.
   `cd services/agora-backend && .venv/bin/python -m pytest tests/ -q`.
 - **Workaround**: ejecutar los ficheros afectados de forma aislada para diagnosis;
   la suite completa sigue siendo roja hasta resetear el estado compartido.
-- **Owner**: sin asignar.
-- **Estado**: open.
+- **Owner**: Coder-Codex (vía la entrada consolidada).
+- **Estado**: resolved — mismo fix que `agora-backend-test-pool-contamination`
+  (slice A2, PR #14, commit `9f7f7887`, mergeado el 2026-05-29).
 
 ## install-wizard-ui-tests-stale (resolved)
 
