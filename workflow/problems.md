@@ -49,8 +49,14 @@ añade una línea `- **Resuelto**: 2026-MM-DD en commit <hash>`.
   ```
 - **Workaround**: ejecutar con `--deselect` los 2 tests o aislar `test_chat_engine`
   con `pytest --forked` (requiere pytest-forked).
-- **Owner**: sin asignar.
+- **Fix propuesto**: aislar el `pool` global entre tests (reset/teardown del fixture que lo
+  muta, o `set_pool` con cleanup) para que el mock obsoleto no se filtre. Causa raíz ya
+  identificada → **ready-for-agent**.
+- **Owner**: sin asignar (ready-for-agent — repro y causa raíz completas, listo para coger).
 - **Estado**: open. **Pre-existente** a los cambios de atlas adoption.
+- **Plan**: slice **A2** de la estabilización — ver
+  [`plans/estabilizacion/slices.md`](plans/estabilizacion/slices.md). Consolida también
+  `backend-suite-laia-chat-test-leak` (mismo bug).
 
 ---
 
@@ -99,7 +105,11 @@ añade una línea `- **Resuelto**: 2026-MM-DD en commit <hash>`.
 - **Owner**: sin asignar.
 - **Estado**: open.
 
-## backend-suite-laia-chat-test-leak (open)
+## backend-suite-laia-chat-test-leak (duplicate)
+
+> **Duplicado de `agora-backend-test-pool-contamination`** (mismo síntoma y causa raíz, mejor
+> diagnosticada allí). Se trata como **slice A2** del plan de estabilización. No trabajar este
+> por separado; ver la entrada consolidada.
 
 - **Descubierto**: 2026-05-25 por codex durante `tests/run_integrity.py --tier unit`
   fuera del sandbox.

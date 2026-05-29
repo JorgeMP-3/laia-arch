@@ -1,5 +1,12 @@
 # LAIA Path Resolver (Atlas)
 
+> 🛠️ **Layout v2 (2026-05-29):** el registro, el snapshot, el socket y el estado del
+> resolver se mueven de `~/.laia/` a `/srv/laia/arch/` (`config.yaml`, `atlas.yaml`,
+> `.env.paths`, `state/`, `pathd.sock`) como parte del **Bloque C** del plan
+> (`workflow/plans/estabilizacion/`). **Hasta ejecutar la migración, este doc describe el
+> layout v1 vigente** (`~/.laia/`). Las rutas `~/.laia/...` de abajo siguen siendo las reales
+> en disco hoy.
+
 Atlas is the live path resolver of the LAIA ecosystem — a single registry in
 `~/.laia/config.yaml` defines short aliases for every project directory, and
 a daemon (`laia-pathd`) keeps the alias→path mapping fresh by watching the

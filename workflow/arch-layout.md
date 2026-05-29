@@ -13,7 +13,14 @@
 > disco/clone (objetivo)**, gana este archivo; sobre **qué hay realmente ahora**, gana
 > `project-map.md`.
 >
-> Última revisión: 2026-05-27.
+> Última revisión: 2026-05-29.
+>
+> 🛠️ **Layout v2 (2026-05-29) — secretos a `/srv/laia/arch/secrets/`, `~/.laia/` eliminado.**
+> Este doc ya describe el **layout objetivo v2** decidido en
+> [`plans/estabilizacion/`](plans/estabilizacion/) (Bloque C). La migración **aún NO está
+> aplicada**: en disco y en el código (`clone.sh`, `infra/lxd/scripts/rebuild-3*`) todavía
+> rige el layout v1 (secretos en `~/.laia/`) hasta ejecutar el Bloque C. Donde abajo se cita
+> `~/.laia/` con nota *(v1)*, es el comportamiento aún vigente que la migración reemplazará.
 
 ---
 
@@ -26,9 +33,9 @@ semántica de clone y sus permisos. Confundirlas lleva a `agora.db` duplicados y
 | Location | Qué es | Owner / modo | ¿Clona? |
 |---|---|---|---|
 | `/opt/laia/` | Código del producto instalado | root:laia-arch 0755 | NO — se reinstala |
-| `/srv/laia/` | Datos factory operacionales (fuente de verdad) | root:laia-arch 0750 | SÍ — rsync íntegro |
-| `~/laia-arch/LAIA-ARCH/` | Mesa viva interactiva del operador | laia-arch 0700 | SÍ — rsync live |
-| `~/.laia/` | Credenciales sensibles del LAIA-ARCH | laia-arch 0600 | SÍ — solo 3 archivos |
+| `/srv/laia/` | Datos operacionales **+ secretos** (fuente de verdad): `agora/`, `users/`, `arch/`, `arch/secrets/` | root:laia-arch 0750 (`secrets/` 0700) | SÍ — rsync íntegro |
+| `~/laia-arch/LAIA-ARCH/` | Mesa viva interactiva del operador (incl. `SOUL.md`) | laia-arch 0700 | SÍ — rsync live |
+| ~~`~/.laia/`~~ | **Eliminado (v2)** — los secretos se consolidan en `/srv/laia/arch/secrets/` | — | — |
 
 ---
 
@@ -79,9 +86,10 @@ Hay **dos** `.laia-core` en esta máquina y conviene no confundirlos:
 - Editar `~/LAIA/.laia-core` **no** cambia lo que corre hasta `laia release` (promueve
   dev → `/opt/laia-vX.Y.Z`). Para probar dev sin release: invocar directo
   `~/LAIA/.laia-core/venv/bin/laia`.
-- **Identidad y credenciales son comunes** a ambos y salen siempre de `~/.laia/`
-  (`auth.json`, `.env`, `atlas.yaml`), `~/LAIA-ARCH/` (mesa viva) y `/srv/laia/arch/`
-  (runtime). NO dependen de qué código corra.
+- **Identidad y credenciales son comunes** a ambos: secretos en `/srv/laia/arch/secrets/`
+  (`auth.json`, `.env`), runtime y `atlas.yaml`/`config.yaml` en `/srv/laia/arch/`, mesa
+  viva (incl. `SOUL.md`) en `~/LAIA-ARCH/`. NO dependen de qué código corra. *(v1: los
+  secretos vivían en `~/.laia/`; el repunte es Bloque C.)*
 - **Regla de oro:** ejecutar `laia` **sin sudo**, como `laia-arch`. Con `sudo` corre como
   root y la config se va a `/root/.laia/` (error a evitar).
 
@@ -106,9 +114,11 @@ correspondientes. Es lo que `laia-clone` rsynchea íntegro.
 │       └── plugins/                 → agent-<slug>:/opt/laia/plugins
 │
 ├── arch/                            ← runtime sensible/operacional de LAIA-ARCH
+│   ├── secrets/                     (0700; auth.json, .env — antes en ~/.laia)
 │   ├── cron/                        (jobs programados)
 │   ├── sessions/                    (historial de sesiones)
 │   ├── sandboxes/                   (ejecución temporal / peligrosa)
+│   ├── atlas.yaml                   (registro Atlas v2 — refs del ecosistema)
 │   ├── atlas/                       (snapshot de paths)
 │   ├── logs/                        (logs operacionales)
 │   ├── platforms/                   (estado/config de integraciones)
@@ -117,8 +127,8 @@ correspondientes. Es lo que `laia-clone` rsynchea íntegro.
 │   ├── whatsapp/                    (state de WhatsApp si aplica)
 │   ├── state.db                     (workspace store de Jorge ARCH)
 │   ├── response_store.db            (store interno de respuestas)
-│   ├── SOUL.md                      (identidad del LAIA-ARCH)
-│   └── config.yaml                  (config operacional)
+│   ├── .env.paths                   (snapshot de paths para systemd)
+│   └── config.yaml                  (config operacional / laia-pathd)
 │
 ├── backups/
 └── state/
@@ -139,38 +149,42 @@ frecuencia. Owner `laia-arch`, mode 0700. Es el `LAIA_HOME` humano del operador.
 ├── workspaces/                      (workspaces personales de Jorge ARCH)
 ├── memories/                        (memorias persistentes editables)
 ├── skills/                          (skills personales que Jorge desarrolla)
-└── plugins/                         (plugins personales que Jorge desarrolla)
+├── plugins/                         (plugins personales que Jorge desarrolla)
+└── SOUL.md                          (identidad del LAIA-ARCH — contenido curado)
 ```
 
-**NO contiene:** sesiones, sandboxes, atlas, cron, logs, SOUL.md, config.yaml,
-state.db, response_store.db, `.env`, `auth.json`. Eso vive en `/srv/laia/arch/` o en
-el directorio de credenciales (§2.4).
+**NO contiene:** sesiones, sandboxes, atlas, cron, logs, config.yaml, state.db,
+response_store.db, `.env`, `auth.json`. Eso vive en `/srv/laia/arch/` (runtime) o
+`/srv/laia/arch/secrets/` (secretos; §2.4).
 
-### 2.4 — `~/.laia/` — Credenciales sensibles del LAIA-ARCH
+### 2.4 — `/srv/laia/arch/secrets/` — Secretos del LAIA-ARCH
 
-SOLO información sensible. Mode 0600. Es el único directorio del HOME relevante para el
-ecosistema. Bind-mounted readonly al container `laia-agora` para que el backend pueda
-leer `auth.json` sin reescribirlo.
+SOLO información sensible. Subdir `0700`, archivos `0600`, root-owned (bajo `/srv/laia/`).
+Bind-mounted readonly al container `laia-agora` para que el backend pueda leer `auth.json`
+sin reescribirlo. **Sustituye al antiguo `~/.laia/` (v1), eliminado del home.**
 
 ```
-/home/laia-arch/.laia/
+/srv/laia/arch/secrets/
 ├── auth.json                        (canonical — providers LLM, tokens)
 ├── .env                             (secretos: API keys, claves de servicio)
-├── atlas.yaml                       (registro Atlas v2 — refs del ecosistema)
-├── config.yaml                      (paths para laia-pathd)
-└── admin-session.json              (sesión activa LAIA-ARCH en AGORA)
+└── admin-session.json              (sesión activa LAIA-ARCH en AGORA; opcional en clone)
 ```
 
-**NO contiene:** workspaces, memories, skills, plugins, cron, sessions, SOUL.md,
-state.db, response_store.db, mlx-servers, cache, logs, bin, checkpoints. Esos viven en
-`~/LAIA-ARCH/`, `/srv/laia/arch/` o no existen (runtime regenerable).
+El resto de lo que vivía en `~/.laia/` v1 se reubica como runtime operacional en
+`/srv/laia/arch/` (§2.2): `atlas.yaml`, `config.yaml`, `.env.paths`, `state/`. Los efímeros
+(`pathd.sock`, `auth.lock`) los recrea el daemon en la ubicación declarada.
 
-- **Creado por:** `laia-install` inicializa con placeholders. `laia-clone` rsynchea solo
-  los archivos sensibles, mode 0600.
+- **Creado por:** `laia-install` inicializa `secrets/` con placeholders. `laia-clone`
+  rsynchea solo los archivos sensibles, mode 0600.
 
-> ℹ️ El registro **Atlas v2** (`atlas.yaml`) declara todas las coordenadas del
-> ecosistema (paths, servicios, containers, sockets, env files) como referencias
-> tipadas. Sustituye al "Atlas Path Registry v1" de 32 aliases planos. Ver
+> 🛠️ **Migración v1→v2 (Bloque C):** mientras no se ejecute, AGORA monta los secretos
+> desde `~/.laia/` (lo esperan `rebuild-3-provision-agora.sh` / `rebuild-3b-fix-authjson.sh`).
+> Mover la fuente del bind-mount a `/srv/laia/arch/secrets/` se hace en lockstep y con
+> backup. Ver [`plans/estabilizacion/`](plans/estabilizacion/).
+
+> ℹ️ El registro **Atlas v2** (`atlas.yaml`, en `/srv/laia/arch/`) declara todas las
+> coordenadas del ecosistema (paths, servicios, containers, sockets, env files) como
+> referencias tipadas. Sustituye al "Atlas Path Registry v1" de 32 aliases planos. Ver
 > `bin/atlas` (`atlas doctor`, `atlas get`, …).
 
 ### 2.5 — Lo que NO está en ningún sitio del producto
@@ -196,13 +210,12 @@ Tabla canónica de qué cruza la red en una migración:
 | `/opt/laia/` | NO | `laia-install` recrea en destino | Versionado limpio |
 | `/srv/laia/agora/` | **SÍ** | rsync íntegro | Incluye `agora.db` (fuente única) |
 | `/srv/laia/users/<slug>/{home,workspace,plugins}` | **SÍ** | rsync por slug enumerado de `agora.db` | UID/GID re-mapeados |
-| `/srv/laia/arch/` | **SÍ** | rsync sensible/runtime | SOUL, config, sessions, sandboxes, atlas, cron, logs, DBs internas |
-| `~/LAIA-ARCH/{workspaces,memories,skills,plugins}` | **SÍ** | rsync live ARCH | Zona editable/interactiva del operador |
+| `/srv/laia/arch/` | **SÍ** | rsync sensible/runtime | config, sessions, sandboxes, atlas, cron, logs, DBs internas, `secrets/` |
+| `~/LAIA-ARCH/{workspaces,memories,skills,plugins,SOUL.md}` | **SÍ** | rsync live ARCH | Zona editable/interactiva del operador |
 | `/srv/laia/backups/`, `/srv/laia/state/` | **SÍ** | rsync íntegro | |
-| `~/.laia/auth.json` | **SÍ** | rsync único archivo, mode 0600 | Canonical |
-| `~/.laia/.env` | **SÍ** | rsync único archivo, mode 0600 | Secretos |
-| `~/.laia/admin-session.json` | OPCIONAL | rsync con flag `--keep-session` | Por defecto NO; obliga relogin |
-| `~/.laia/<cualquier otro>` | NO | — | mlx-servers, cache, logs, agora.db huérfano |
+| `/srv/laia/arch/secrets/auth.json` | **SÍ** | rsync único archivo, mode 0600 | Canonical *(v1: `~/.laia/auth.json`)* |
+| `/srv/laia/arch/secrets/.env` | **SÍ** | rsync único archivo, mode 0600 | Secretos *(v1: `~/.laia/.env`)* |
+| `/srv/laia/arch/secrets/admin-session.json` | OPCIONAL | rsync con flag `--keep-session` | Por defecto NO; obliga relogin |
 | `~/<resto del HOME>` | NO | — | No es producto LAIA |
 | Containers vía `lxc export/import` | NO | — | Rompe arm64↔amd64; se reconstruyen locales |
 | Snapshots LXD legacy | NO | — | No enumerados |
@@ -242,14 +255,15 @@ viejo por SSH. NUNCA se ejecuta desde el origen empujando hacia el destino.
   el destino con su arch nativa.
 - Terminas logueado en el destino, listo para configurar nginx/dominio sin volver al origen.
 
-**Path remapping en transit:** el origen puede tener layout dev (datos del ARCH en
-`~/.laia/`) o layout factory (`/srv/laia/arch/` + `~/LAIA-ARCH/`). El clone normaliza
+**Path remapping en transit:** el origen puede tener layout dev/v1 (datos del ARCH en
+`~/.laia/`) o layout factory v2 (`/srv/laia/arch/` + `~/LAIA-ARCH/`). El clone normaliza
 siempre al layout factory en destino:
 
-- `workspaces`, `memories`, `skills`, `plugins` → `~/LAIA-ARCH/`.
-- `SOUL.md`, `config.yaml`, `sessions`, `sandboxes`, `atlas`, `cron`, `logs`, DBs internas
-  y runtime sensible → `/srv/laia/arch/`.
-- Credenciales (`auth.json`, `.env`) → `~/.laia/` mientras AGORA siga montándolas desde ahí.
+- `workspaces`, `memories`, `skills`, `plugins`, `SOUL.md` → `~/LAIA-ARCH/`.
+- `config.yaml`, `sessions`, `sandboxes`, `atlas`, `cron`, `logs`, DBs internas y runtime
+  sensible → `/srv/laia/arch/`.
+- Credenciales (`auth.json`, `.env`) → `/srv/laia/arch/secrets/` (v2). *(En el código v1 aún
+  van a `~/.laia/`; el repunte de `clone_dest_arch_creds_dir` es parte del Bloque C.)*
 
 ```
 Viejo (origen, contactado por SSH)        Nuevo (destino, ejecuta el comando)
@@ -265,9 +279,9 @@ Viejo (origen, contactado por SSH)        Nuevo (destino, ejecuta el comando)
     o ~/.laia/{...}                            /srv/laia/arch/<runtime-dir>
                                                (+ rewrite paths: en config.yaml)
                                                 │
-  Credenciales sensibles:
-    ~/.laia/auth.json       ◄── rsync ─── /home/laia-arch/.laia/auth.json (0600)
-    ~/.laia/.env            ◄── rsync ─── /home/laia-arch/.laia/.env (0600)
+  Credenciales sensibles (v2 destino):
+    auth.json   ◄── rsync ─── /srv/laia/arch/secrets/auth.json (0600)   [v1: ~/.laia/]
+    .env        ◄── rsync ─── /srv/laia/arch/secrets/.env (0600)        [v1: ~/.laia/]
                                                 │
                                           2. rebuild-3-provision-agora.sh (arch nativa)
                                           3. rebuild-4-first-user.sh --existing-user-only

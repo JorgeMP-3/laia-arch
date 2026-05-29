@@ -5,7 +5,7 @@
 1. **`~/LAIA/LAIA_ECOSYSTEM.md`** — documento canónico. Define qué es LAIA, su
    arquitectura, las reglas duras, el layout en disco, el contrato `laia-clone`, el
    roadmap. **Si cualquier otra fuente contradice este archivo, gana este archivo.**
-2. **`~/.laia/workspaces/laia-ecosystem/workspace.db`** — base de conocimiento técnico
+2. **`~/LAIA-ARCH/workspaces/laia-ecosystem/workspace.db`** — base de conocimiento técnico
    exhaustivo. Cada nodo describe un subsistema con campos, endpoints, modelos Pydantic,
    tests. Útil para consulta profunda, no para definir qué es LAIA.
 3. **`~/LAIA/docs/db-export/`** — export markdown de `workspace.db` (auto-regenerable).

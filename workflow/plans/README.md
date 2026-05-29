@@ -31,21 +31,28 @@ Cómo se sabe que está hecho. Tests, comandos, observaciones.
 Lo que puede salir mal y cómo mitigarlo.
 ```
 
+## Mega-proyecto activo
+
+- [`estabilizacion/`](estabilizacion/) — **Estabilización de LAIA-ARCH + entorno de
+  desarrollo (VM)**. Bundle del proyecto en una carpeta: idea/estrategia, plan técnico
+  (FASE 2), auditoría profunda y snapshot verificado del servidor. Estado: plan técnico
+  en `draft` (pendiente de OK para desglose en slices con `to-issues`).
+  Owner: claude-code / Jorge.
+
 ## Planes activos
 
 - [`2026-05-25-installer-textual-remake.md`](2026-05-25-installer-textual-remake.md)
-  — Remake del wizard de instalación/clonado con Textual. **En curso**:
-  Fases 1-4 completadas (bug TTY cerrado, contrato JSON, Textual default,
-  legacy rich borrado, unificado bajo `bin/laia`); 5 CRITICAL + 4 HIGH
-  hardening fixes commiteados; Fase 5 pendiente (headless TOML + pirámide
-  de tests). Owner: claude-code.
+  — Remake del wizard de instalación/clonado con Textual. **En curso** (Fases 1-4
+  hechas; Fase 5 pendiente: headless TOML + pirámide de tests). Owner: claude-code.
 - [`2026-05-25-installer-vm-smoke.md`](2026-05-25-installer-vm-smoke.md)
-  — Guía para validar install + clone en VM real antes de Fase 5.
-  Comandos concretos para Multipass, qué verificar, dónde mirar si algo
-  falla. Owner: jorge (operador), claude-code (autor).
-- [`2026-05-25-dev-stable-versioning.md`](2026-05-25-dev-stable-versioning.md)
-  — Runbook aprobado para separar desarrollo y producción: `main` para dev,
-  `stable` para prod, tags semver sobre `stable`, promote manual y rollback.
-  Owner: próxima IA implementadora, con Jorge aprobando cambios materiales.
-- [`integrity-tests.md`](integrity-tests.md) — Runner de integridad por capas.
-  Owner: codex.
+  — Guía para validar install + clone en VM real. Owner: jorge (operador),
+  claude-code (autor).
+- [`atlas-remaining-work-phases-2026-05-27.md`](atlas-remaining-work-phases-2026-05-27.md)
+  — Fases ⏳ pendientes de adopción de Atlas (1-4), estructura `/opt` (5) y cosmético
+  (6). La herramienta Atlas v2 ya está completa. Owner: por asignar.
+
+## Archivados (`archive/`)
+
+Trabajo completado o superseded — histórico, no tocar: Atlas v2 (`atlas-audit-report`,
+`atlas-v2-implementation-report`, `atlas-visualize-fix`, componentes en `atlas-v2/`),
+`dev-stable-versioning` (superseded por `release-flow.md`), y la limpieza GitHub/Hermes.

@@ -7,9 +7,9 @@ Es intencionadamente manual: no hay CI/CD todavía.
 
 | Rama | Uso | Dónde corre |
 |---|---|---|
-| `feat/*`, `wip/*` | Trabajo temporal de Jorge o una IA | VM dev |
-| `main` | Integración/desarrollo validado | VM QEMU en Mac |
-| `stable` | Producción | Lenovo ThinkStation Ubuntu |
+| `feat/*`, `wip/*` | Trabajo temporal de Jorge o una IA | VM `laia-dev` (LXD en el host) |
+| `main` | Integración/desarrollo validado | VM `laia-dev` (LXD en el host) |
+| `stable` | Producción | Lenovo ThinkStation (host, prod) |
 
 Reglas:
 
@@ -23,8 +23,8 @@ Reglas:
 
 | Máquina | Rama | Datos |
 |---|---|---|
-| VM Mac QEMU | `main` o `feat/*` | Sintéticos, regenerables |
-| ThinkStation Ubuntu | `stable` | Reales |
+| VM `laia-dev` (LXD en el host) | `main` o `feat/*` | Sintéticos, regenerables; `/srv/laia` propio |
+| ThinkStation (host, prod) | `stable` | Reales |
 
 Los datos están aislados porque cada máquina tiene su propio `/srv/laia/`.
 No compartas `/srv/laia/` entre dev y prod.
@@ -45,7 +45,7 @@ Antes de promover una versión a `stable`:
 En la VM dev:
 
 ```bash
-cd /home/jorge/LAIA
+cd /home/laia-arch/LAIA
 git switch main
 git pull origin main
 bash tests/installer/run_all.sh
@@ -65,7 +65,7 @@ Si `git merge --ff-only main` falla, no hagas merge normal y no hagas
 En el ThinkStation:
 
 ```bash
-cd /home/jorge/LAIA
+cd /home/laia-arch/LAIA
 git fetch --all --tags
 git switch stable
 git pull origin stable
@@ -98,7 +98,7 @@ sudo /usr/local/bin/laia diagnose
 Si producción necesita un fix urgente:
 
 ```bash
-cd /home/jorge/LAIA
+cd /home/laia-arch/LAIA
 git fetch origin
 git switch stable
 git pull origin stable
@@ -134,8 +134,8 @@ Si un release toca cualquiera de estos paths:
 entonces, en la máquina destino, reconstruye imágenes antes de validar:
 
 ```bash
-cd /home/jorge/LAIA
-sudo LAIA_ROOT=/home/jorge/LAIA bash infra/lxd/scripts/rebuild-2-images.sh
+cd /home/laia-arch/LAIA
+sudo LAIA_ROOT=/home/laia-arch/LAIA bash infra/lxd/scripts/rebuild-2-images.sh
 ```
 
 Después recrea o verifica los containers que dependan de esas imágenes según
