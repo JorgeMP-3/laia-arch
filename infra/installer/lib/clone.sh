@@ -500,11 +500,37 @@ clone_phase_state_dir() {
   printf '%s/.clone-state\n' "$(clone_dest_laia_home)"
 }
 
+clone_user_group() {
+  id -gn "$LAIA_USER" 2>/dev/null || printf '%s\n' "$LAIA_USER"
+}
+
+clone_home_artifact_restore_owner() {
+  local path="$1"
+  [[ -e "$path" ]] || return 0
+  if [[ "$(id -u)" -eq 0 && "${LAIA_USER:-root}" != "root" ]]; then
+    chown -R "$LAIA_USER:$(clone_user_group)" "$path" 2>/dev/null || true
+  fi
+}
+
+clone_stage_prepare() {
+  local stage="$1"
+  rm -rf "$stage" 2>/dev/null || true
+  mkdir -p "$stage"
+  clone_home_artifact_restore_owner "${stage%/*}"
+}
+
+clone_stage_cleanup() {
+  local stage="$1"
+  rm -rf "$stage" 2>/dev/null || true
+  rmdir "$LAIA_USER_HOME/.laia-clone-stage" 2>/dev/null || true
+}
+
 clone_phase_mark_start() {
   local phase="$1" state_dir
   state_dir="$(clone_phase_state_dir)"
   mkdir -p "$state_dir" 2>/dev/null || true
   rm -f "$state_dir/$phase.done" 2>/dev/null || true
+  clone_home_artifact_restore_owner "$state_dir"
 }
 
 clone_phase_mark_done() {
@@ -516,6 +542,7 @@ clone_phase_mark_done() {
   # `test_clone_local.sh::(C) idempotency` md5s every file in the dest and
   # would flag a timestamp difference as a regression.
   : > "$state_dir/$phase.done"
+  clone_home_artifact_restore_owner "$state_dir"
 }
 
 # Returns 0 (skip phase) if --resume is on AND the phase marker exists.
@@ -563,22 +590,23 @@ clone_phase3_users() {
     # Remote: stage to $HOME first (so SSH runs as $LAIA_USER with their keys),
     # then promote to /srv with sudo. Avoids root-needs-SSH-keys.
     local stage="$LAIA_USER_HOME/.laia-clone-stage/users"
-    rm -rf "$stage" 2>/dev/null || true
-    mkdir -p "$stage"
+    clone_stage_prepare "$stage"
 
     log_info "  Staging in $stage"
     clone_rsync "users stage" "${CLONE_RSYNC_OPTS[@]}" "$src" "$stage/" \
-      || { rm -f "$excludes_file"; die "Phase 3 stage rsync failed"; }
+      || { rm -f "$excludes_file"; clone_home_artifact_restore_owner "$stage"; die "Phase 3 stage rsync failed"; }
 
     log_info "  Promoting to $dst"
     if inst_is_override_mode; then
       mkdir -p "$dst"
-      clone_rsync "users promote" -a --info=progress2,stats1,name1 --human-readable --outbuf=L "$stage/" "$dst"
+      clone_rsync "users promote" -a --info=progress2,stats1,name1 --human-readable --outbuf=L "$stage/" "$dst" \
+        || { clone_home_artifact_restore_owner "$stage"; die "Phase 3 promote failed"; }
     else
       sudo mkdir -p "$dst"
-      clone_rsync "users promote" sudo rsync -a --info=progress2,stats1,name1 --human-readable --outbuf=L "$stage/" "$dst"
+      clone_rsync "users promote" sudo rsync -a --info=progress2,stats1,name1 --human-readable --outbuf=L "$stage/" "$dst" \
+        || { clone_home_artifact_restore_owner "$stage"; die "Phase 3 promote failed"; }
     fi
-    rm -rf "$stage" 2>/dev/null || true
+    clone_stage_cleanup "$stage"
   fi
 
   rm -f "$excludes_file"
@@ -605,17 +633,19 @@ clone_rsync_to_privileged_dest() {
     fi
   else
     local stage="$LAIA_USER_HOME/.laia-clone-stage/$(basename "$dst")"
-    rm -rf "$stage" 2>/dev/null || true
-    mkdir -p "$stage"
-    clone_rsync "$label stage" "${CLONE_RSYNC_OPTS[@]}" "$src" "$stage/" || die "$label stage rsync failed"
+    clone_stage_prepare "$stage"
+    clone_rsync "$label stage" "${CLONE_RSYNC_OPTS[@]}" "$src" "$stage/" \
+      || { clone_home_artifact_restore_owner "$stage"; die "$label stage rsync failed"; }
     if inst_is_override_mode; then
       mkdir -p "$dst"
-      clone_rsync "$label promote" -a --numeric-ids --info=progress2,stats1,name1 --human-readable --outbuf=L "$stage/" "$dst/" || die "$label promote failed"
+      clone_rsync "$label promote" -a --numeric-ids --info=progress2,stats1,name1 --human-readable --outbuf=L "$stage/" "$dst/" \
+        || { clone_home_artifact_restore_owner "$stage"; die "$label promote failed"; }
     else
       sudo mkdir -p "$dst"
-      clone_rsync "$label promote" sudo rsync -a --numeric-ids --info=progress2,stats1,name1 --human-readable --outbuf=L "$stage/" "$dst/" || die "$label promote failed"
+      clone_rsync "$label promote" sudo rsync -a --numeric-ids --info=progress2,stats1,name1 --human-readable --outbuf=L "$stage/" "$dst/" \
+        || { clone_home_artifact_restore_owner "$stage"; die "$label promote failed"; }
     fi
-    rm -rf "$stage" 2>/dev/null || true
+    clone_stage_cleanup "$stage"
   fi
 }
 
@@ -633,18 +663,20 @@ clone_rsync_to_laia_home_dest() {
     clone_rsync "$label" "${CLONE_RSYNC_OPTS[@]}" "$src" "$dst/" || die "$label rsync failed"
   else
     local stage="$LAIA_USER_HOME/.laia-clone-stage/$(basename "$dst")"
-    rm -rf "$stage" 2>/dev/null || true
-    mkdir -p "$stage"
-    clone_rsync "$label stage" "${CLONE_RSYNC_OPTS[@]}" "$src" "$stage/" || die "$label stage rsync failed"
+    clone_stage_prepare "$stage"
+    clone_rsync "$label stage" "${CLONE_RSYNC_OPTS[@]}" "$src" "$stage/" \
+      || { clone_home_artifact_restore_owner "$stage"; die "$label stage rsync failed"; }
     if inst_is_override_mode; then
       mkdir -p "$dst"
-      clone_rsync "$label promote" -a --info=progress2,stats1,name1 --human-readable --outbuf=L "$stage/" "$dst/" || die "$label promote failed"
+      clone_rsync "$label promote" -a --info=progress2,stats1,name1 --human-readable --outbuf=L "$stage/" "$dst/" \
+        || { clone_home_artifact_restore_owner "$stage"; die "$label promote failed"; }
     else
       sudo -u "$LAIA_USER" mkdir -p "$dst"
-      clone_rsync "$label promote" sudo rsync -a --info=progress2,stats1,name1 --human-readable --outbuf=L "$stage/" "$dst/" || die "$label promote failed"
+      clone_rsync "$label promote" sudo rsync -a --info=progress2,stats1,name1 --human-readable --outbuf=L "$stage/" "$dst/" \
+        || { clone_home_artifact_restore_owner "$stage"; die "$label promote failed"; }
       sudo chown -R "$LAIA_USER:$LAIA_USER" "$dst"
     fi
-    rm -rf "$stage" 2>/dev/null || true
+    clone_stage_cleanup "$stage"
   fi
 }
 
@@ -760,17 +792,20 @@ clone_phase_h_rsync_arch_data() {
       clone_rsync "arch file $rel" "${CLONE_RSYNC_OPTS[@]}" "$OPT_SOURCE_DIR/home/.laia/$rel" "$dst/$rel" || true
     else
       local stage="$LAIA_USER_HOME/.laia-clone-stage/arch-files"
-      mkdir -p "$stage"
+      clone_stage_prepare "$stage"
       clone_rsync "arch file $rel stage" "${CLONE_RSYNC_OPTS[@]}" "${src_base}${rel}" "$stage/$rel" || true
       if [[ -f "$stage/$rel" ]]; then
         if inst_is_override_mode; then
           mkdir -p "$dst"
-          clone_rsync "arch file $rel promote" -a --info=progress2,stats1,name1 --human-readable --outbuf=L "$stage/$rel" "$dst/$rel"
+          clone_rsync "arch file $rel promote" -a --info=progress2,stats1,name1 --human-readable --outbuf=L "$stage/$rel" "$dst/$rel" \
+            || { clone_home_artifact_restore_owner "$stage"; die "arch file $rel promote failed"; }
         else
           sudo mkdir -p "$dst"
-          clone_rsync "arch file $rel promote" sudo rsync -a --info=progress2,stats1,name1 --human-readable --outbuf=L "$stage/$rel" "$dst/$rel"
+          clone_rsync "arch file $rel promote" sudo rsync -a --info=progress2,stats1,name1 --human-readable --outbuf=L "$stage/$rel" "$dst/$rel" \
+            || { clone_home_artifact_restore_owner "$stage"; die "arch file $rel promote failed"; }
         fi
       fi
+      clone_stage_cleanup "$stage"
     fi
   done < <(_clone_arch_legacy_file_specs)
 

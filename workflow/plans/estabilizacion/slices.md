@@ -5,7 +5,9 @@
 > **Tipo:** HITL = necesita decisión/revisión de Jorge · AFK = una IA lo hace y lo deja listo.
 >
 > El bug de los 2 tests (slice A2) vive en [`workflow/problems.md`](../../problems.md)
-> (`agora-backend-test-pool-contamination`). El cierre del agujero de `auth.json` (644→0600)
+> (`agora-backend-test-pool-contamination`) — ✅ **resuelto** (PR #14, commit `9f7f7887`,
+> mergeado a `main` el 2026-05-29; verificado por el Lead: RED en `main` → GREEN×2 con el fix).
+> El cierre del agujero de `auth.json` (644→0600)
 > **no es un slice aparte**: se hace dentro de **C2** vía `raw.idmap` (decisión de Jorge,
 > 2026-05-29 — el servidor es solo suyo, riesgo bajo, evita hacer el idmap dos veces).
 
@@ -81,9 +83,10 @@ Estado de cada slice: `[ ]` pendiente · `[~]` en curso · `[x]` hecho.
 
 ---
 
-## [ ] B1 · Provisionar VM de desarrollo `laia-dev`  — HITL · prioridad
+## [~] B1 · Provisionar VM de desarrollo `laia-dev`  — HITL · prioridad
 
-**Bloqueado por:** ninguno.
+**Bloqueado por:** ninguno. · **En curso** (Coder-Opus, branch `wip/claude/vm-laia-dev`, sin push aún).
+**Runbook:** [`infra/dev/laia-dev-vm-runbook.md`](../../../infra/dev/laia-dev-vm-runbook.md).
 
 VM de **LXD** (`lxc launch --vm`) dentro del host, con LXD anidado (`security.nesting=true`),
 ~8 GiB RAM / 6–8 vCPU, **disco en pool LXD sobre `/mnt/data` (HDD `sda`, 3.4 T libres)**,
@@ -95,10 +98,30 @@ fiel (laia-agora + 1 agente). Layout idéntico a producción.
 > desgaste de la flash por escrituras constantes. El NVMe root queda excluido (ahí vive prod).
 > El USB `VM-USB` se reserva como **destino de backup removible** (off-site, paso de D5).
 
-- [ ] `lxc list` muestra `laia-dev` RUNNING con nesting.
-- [ ] Accesible desde el Mac por Tailscale (terminal/editor), sin IP en la LAN.
-- [ ] Dentro: `laia-install` termina OK y `/api/health` responde.
-- [ ] Snapshot creado y restaurado OK (prueba de "volver atrás en segundos").
+- [x] `lxc list` muestra `laia-dev` RUNNING con nesting (perfil `laia-dev`, 8 GiB/6 vCPU, disco `dir` en `/mnt/data`, red aislada `laiadev0` 10.123.0.x).
+- [~] Accesible desde el Mac por Tailscale — pasos en el runbook; **pendiente** que Jorge autorice la URL de `tailscale up`.
+- [~] Dentro: `laia-install` + `/api/health` — documentado con 3 gotchas; **pendiente marcar "verificado"** con la salida real (como §2.6 hizo con la red).
+- [~] Snapshot creado y restaurado OK — snapshot `b1-base` **creado**; **falta probar el restore** (§5 del runbook = PENDIENTE).
+
+### Hallazgos de la revisión del Lead (2026-05-29) — a cerrar antes del PR
+
+- 🔴 **Seguridad: `auth.json` REAL de prod dentro de la VM.** El factory bootstrap exige creds
+  LLM (Gotcha 3) y se copió el `auth.json` real del host (10403 B, **modo 644**, tokens OpenAI)
+  a la VM; el snapshot `b1-base` (12:04) se tomó **después** (11:58) → **bakea los tokens reales**.
+  La VM es el sandbox de romper cosas y no debe llevar creds de producción. **Remediar:** creds
+  *throwaway*/dev en la VM → borrar `b1-base` → re-snapshot limpio. (Severidad final = decisión de Jorge.)
+- 🟡 **Cambio a nivel host (UFW).** Se hizo `sudo ufw allow/route allow` para el bridge nuevo
+  `laiadev0`. Aditivo y aislado (no toca `lxdbr0` de prod), riesgo bajo — registrado para conocimiento de Jorge.
+- 🟡 **Disco `dir` (no zfs/btrfs).** zfs/btrfs no es viable sin root interactivo en este host;
+  consecuencia: el snapshot es copia del `root.img` (sparse), no instantáneo. Decisión atribuida a
+  Jorge (2026-05-29) — pendiente de confirmar por él.
+- 🟢 **Hallazgo valioso (alimenta C3/C4):** UFW bloquea **todo** bridge LXD nuevo en este host
+  (drop terminal en `FORWARD`/`INPUT`); un bridge nuevo necesita `ufw allow in` + `ufw route allow in`.
+  → requisito incorporado en **C3** (migración) y **C4** (installer); ver más abajo.
+
+**Pendiente para cerrar B1:** remediar el `auth.json` (creds throwaway + re-snapshot), confirmar
+`laia-install`+`/api/health` verdes y marcarlo "verificado", §5 (restore del snapshot) y §6 (operación),
+y Tailscale unido → entonces PR para revisión **Lead + Jorge (HITL)**.
 
 ## [ ] B2 · `~/LAIA` del host → checkout pristino de `stable`  — HITL
 
@@ -147,7 +170,9 @@ el estado viejo **crudo** de prod en la VM y correr ahí el script.
 
 - [ ] Re-ejecutable sin corromper (idempotente; markers de resume).
 - [ ] Rollback probado (revertir device; `~/.laia` intacto hasta verde).
-- [ ] Ensayo en VM con réplica cruda: AGORA verde tras migrar.
+- [ ] Ensayo en VM con réplica cruda: AGORA verde tras migrar. (Nota B1: si el LXD anidado de
+  la VM tiene UFW activo, su `lxdbr0` interno necesita las reglas `ufw allow/route allow` o el
+  cerebro se queda sin red tras el restart.)
 - [ ] Aplicado a prod con backup (paso HITL, ventana de reinicio planificada).
 
 ## [ ] C4 · Instalador "nace en el layout nuevo" (install-native)  — AFK
@@ -161,6 +186,9 @@ instalación nueva nace ordenada — una sola configuración en todas las máqui
 - [ ] Install limpio en la VM produce el layout nuevo (sin `~/.laia`).
 - [ ] `laia auth` escribe en `/srv/laia/arch/secrets`.
 - [ ] `tests/installer/` actualizados y verdes.
+- [ ] **(B1)** Si la instalación crea un bridge LXD propio en un host con **UFW activo**,
+  añade `ufw allow in on <bridge>` + `ufw route allow in on <bridge>` (o equivalente), o el
+  cerebro/agentes se quedan sin DHCP/DNS/egress. Hallazgo del runbook de B1.
 
 ## [ ] D1 · Sistema de backups permanente  — AFK
 

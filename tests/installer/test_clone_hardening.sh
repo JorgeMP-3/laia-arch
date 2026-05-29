@@ -73,6 +73,91 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# Sudo clone must not leave root-owned HOME control artifacts
+# ---------------------------------------------------------------------------
+
+echo
+echo "→ sudo clone leaves resume markers user-owned and staging clean"
+if command -v sudo >/dev/null 2>&1 && sudo -n true >/dev/null 2>&1; then
+  SUDO_CLONE_DIR="$TMPDIR_TEST/sudo-clone"
+  SUDO_SRC="$SUDO_CLONE_DIR/source"
+  SUDO_DEST="$SUDO_CLONE_DIR/dest"
+  mkdir -p "$SUDO_SRC/LAIA-ARCH" \
+           "$SUDO_SRC/users/jorge/home" \
+           "$SUDO_SRC/agora" \
+           "$SUDO_SRC/home/.laia" \
+           "$SUDO_DEST"
+  printf 'SOUL\n' >"$SUDO_SRC/LAIA-ARCH/SOUL.md"
+  printf 'file\n' >"$SUDO_SRC/users/jorge/home/file.txt"
+  printf 'auth\n' >"$SUDO_SRC/home/.laia/auth.json"
+
+  out=$(
+    sudo -n env \
+      LAIA_HOME_OVERRIDE="$SUDO_DEST/LAIA-ARCH" \
+      LAIA_USERS_DIR_OVERRIDE="$SUDO_DEST/srv-users" \
+      LAIA_AGORA_DIR_OVERRIDE="$SUDO_DEST/agora" \
+      LAIA_ARCH_DIR_OVERRIDE="$SUDO_DEST/arch" \
+      LAIA_ARCH_CREDS_DIR_OVERRIDE="$SUDO_DEST/creds" \
+      LAIA_TOOLS_HOME_OVERRIDE="$SUDO_DEST/tools-home" \
+      LAIA_INSTALL_ROOT_OVERRIDE="$SUDO_DEST/opt" \
+      LAIA_LOG_FILE="$SUDO_CLONE_DIR/run.log" \
+      NO_COLOR=1 \
+      "$LAIA_ROOT/bin/laia-clone" --source-dir "$SUDO_SRC" --yes --no-lxd \
+      2>&1
+  )
+  rc=$?
+  if [[ $rc -ne 0 ]]; then
+    printf '%s\n' "$out" >&2
+    assert "sudo laia-clone fixture exits 0" 1
+  else
+    assert "sudo laia-clone fixture exits 0" 0
+
+    owner_bad=0
+    while IFS= read -r marker; do
+      [[ -z "$marker" ]] && continue
+      [[ "$(stat -c '%U' "$marker")" == "$(id -un)" ]] || owner_bad=1
+    done < <(find "$SUDO_DEST/LAIA-ARCH/.clone-state" -type f -name '*.done' 2>/dev/null | sort)
+    assert "sudo clone .clone-state markers are owned by invoking user" "$owner_bad"
+
+    if [[ -e "$HOME/.laia-clone-stage" ]]; then
+      assert "sudo clone leaves no staging dir in HOME on success" 1
+    else
+      assert "sudo clone leaves no staging dir in HOME on success" 0
+    fi
+  fi
+else
+  echo "  (sudo -n unavailable — skipping sudo clone ownership block)"
+fi
+
+echo
+echo "→ staging helper cleans transient stage and preserves user ownership on failure"
+stage_out=$(
+  bash -c '
+    set -e
+    export LAIA_ROOT="'"$LAIA_ROOT"'"
+    export LAIA_USER="$(id -un)"
+    export LAIA_USER_HOME="'"$TMPDIR_TEST"'/stage-home"
+    source "'"$LAIA_ROOT"'/infra/installer/lib/common.sh"
+    inst_is_override_mode() { return 0; }
+    source "'"$LAIA_ROOT"'/infra/installer/lib/clone.sh"
+    stage="$LAIA_USER_HOME/.laia-clone-stage/users"
+    clone_stage_prepare "$stage"
+    [[ -d "$stage" ]] || echo "BUG: stage not created"
+    clone_home_artifact_restore_owner "$stage"
+    [[ "$(stat -c "%U" "$stage")" == "$LAIA_USER" ]] || echo "BUG: stage not user-owned"
+    clone_stage_cleanup "$stage"
+    [[ ! -e "$LAIA_USER_HOME/.laia-clone-stage" ]] || echo "BUG: stage root not removed"
+    echo "ok"
+  ' 2>&1
+)
+if grep -q "BUG:" <<<"$stage_out"; then
+  printf '%s\n' "$stage_out" | grep "BUG:" >&2
+  assert "stage helper ownership/cleanup behavior" 1
+else
+  assert "stage helper ownership/cleanup behavior" 0
+fi
+
+# ---------------------------------------------------------------------------
 # SSH timeout configurable via LAIA_SSH_TIMEOUT
 # ---------------------------------------------------------------------------
 

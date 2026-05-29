@@ -30,9 +30,10 @@ añade una línea `- **Resuelto**: 2026-MM-DD en commit <hash>`.
 
 ---
 
-## agora-backend-test-pool-contamination (open)
+## agora-backend-test-pool-contamination (resolved)
 
 - **Descubierto**: 2026-05-28 por claude opus 4.7 durante PR-2 de atlas adoption.
+- **Resuelto**: 2026-05-29 en commit `9f7f7887`.
 - **Síntoma**: `tests/test_laia_coordinator.py::test_laia_chat_endpoint_employee_uses_base_toolset`
   y `test_laia_chat_endpoint_admin_streams` fallan SOLO cuando la suite completa
   corre desde el principio, con: `worker crashed: test_session_id_defaults_to_user_scoped.<locals>._capture()
@@ -52,8 +53,8 @@ añade una línea `- **Resuelto**: 2026-MM-DD en commit <hash>`.
 - **Fix propuesto**: aislar el `pool` global entre tests (reset/teardown del fixture que lo
   muta, o `set_pool` con cleanup) para que el mock obsoleto no se filtre. Causa raíz ya
   identificada → **ready-for-agent**.
-- **Owner**: sin asignar (ready-for-agent — repro y causa raíz completas, listo para coger).
-- **Estado**: open. **Pre-existente** a los cambios de atlas adoption.
+- **Owner**: Coder-Codex.
+- **Estado**: resolved.
 - **Plan**: slice **A2** de la estabilización — ver
   [`plans/estabilizacion/slices.md`](plans/estabilizacion/slices.md). Consolida también
   `backend-suite-laia-chat-test-leak` (mismo bug).
@@ -92,7 +93,7 @@ añade una línea `- **Resuelto**: 2026-MM-DD en commit <hash>`.
 - **Estado**: resolved en código (`shell_rc.sh` helper `shell_rc_restore_meta` + Test 7,
   suite 19/19) — **pendiente de commit**.
 
-## installer-clone-leaves-root-owned-home-artifacts (open)
+## installer-clone-leaves-root-owned-home-artifacts (resolved)
 
 - **Descubierto**: 2026-05-27 por claude opus 4.7.
 - **Síntoma**: el cloner deja en el HOME del usuario `~/.laia-clone-stage/` y
@@ -102,10 +103,11 @@ añade una línea `- **Resuelto**: 2026-MM-DD en commit <hash>`.
   estos paths bajo sudo y no hace `chown`/cleanup al cerrar. Mismo patrón que el bug de
   `.bashrc`.
 - **Workaround**: `sudo rm -rf ~/.laia-clone-stage ~/LAIA-ARCH/.clone-state`.
-- **Owner**: sin asignar.
-- **Estado**: open.
+- **Owner**: Coder-Codex.
+- **Estado**: resolved.
+- **Resuelto**: 2026-05-29 en commit `f56fb832`.
 
-## backend-suite-laia-chat-test-leak (duplicate)
+## backend-suite-laia-chat-test-leak (resolved · duplicate)
 
 > **Duplicado de `agora-backend-test-pool-contamination`** (mismo síntoma y causa raíz, mejor
 > diagnosticada allí). Se trata como **slice A2** del plan de estabilización. No trabajar este
@@ -125,8 +127,9 @@ añade una línea `- **Resuelto**: 2026-MM-DD en commit <hash>`.
   `cd services/agora-backend && .venv/bin/python -m pytest tests/ -q`.
 - **Workaround**: ejecutar los ficheros afectados de forma aislada para diagnosis;
   la suite completa sigue siendo roja hasta resetear el estado compartido.
-- **Owner**: sin asignar.
-- **Estado**: open.
+- **Owner**: Coder-Codex (vía la entrada consolidada).
+- **Estado**: resolved — mismo fix que `agora-backend-test-pool-contamination`
+  (slice A2, PR #14, commit `9f7f7887`, mergeado el 2026-05-29).
 
 ## install-wizard-ui-tests-stale (resolved)
 

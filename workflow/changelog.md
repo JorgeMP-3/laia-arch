@@ -73,6 +73,40 @@ Slice **B1** del plan de estabilización (infra sobre el host de prod, branch `w
 
 ---
 
+## 2026-05-29 — Estabilización: arranca ejecución (A2 mergeado, B1 en curso) (claude opus 4.8, rol Lead)
+
+Multi-agente en marcha: Codex → A2, Coder-Opus → B1. El Lead revisa antes de mergear.
+
+- **A2 (tests) — DONE.** Fuga de estado del pool global entre tests de `agora-backend`
+  resuelta: el fixture `autouse` `_isolated_pool_with_stub_agent` ahora inyecta `_pool` vía
+  `monkeypatch` (teardown lo restaura y neutraliza el `set_pool` crudo de `test_session_id_
+  defaults_to_user_scoped`). 1 línea, cero cambios de producto. **Verificado por el Lead**:
+  RED en `main` (`2 failed`) → GREEN×2 con el fix (`363 passed`). PR #14 mergeado a `main`
+  (merge commit `43750014`). `problems.md`: entrada consolidada + duplicado marcados resolved.
+- **B1 (VM `laia-dev`) — EN CURSO.** VM LXD RUNNING (8 GiB/6 vCPU, nesting, disco `dir` en
+  `/mnt/data`, red aislada `laiadev0`), Tailscale documentado, prod intacto. Runbook nuevo:
+  `infra/dev/laia-dev-vm-runbook.md`. Branch `wip/claude/vm-laia-dev` (sin push aún).
+- **Hallazgos de la revisión del Lead sobre B1:**
+  - 🔴 El `auth.json` **real de prod** (tokens OpenAI, 644) se copió a la VM y quedó horneado
+    en el snapshot `b1-base`. A remediar (creds throwaway + re-snapshot) antes del PR de B1.
+  - 🟢 **UFW bloquea todo bridge LXD nuevo** en este host (drop terminal); requiere
+    `ufw allow/route allow`. Incorporado como requisito a las slices **C3** y **C4**.
+  - 🟡 Disco `dir` (no zfs): snapshots = copia de `root.img`, no instantáneos. UFW del host
+    modificado (aditivo, bridge aislado).
+- **Abierto:** cerrar B1 (remediar creds, §5 restore + §6 operación, verificar install+health);
+  confirmar con Jorge la decisión `dir`-pool.
+
+## 2026-05-29 — Fix ownership de artefactos de control en `laia-clone` (Coder-Codex)
+
+- `clone.sh` ahora restaura ownership al usuario admin para `.clone-state` y para staging
+  transitorio bajo `.laia-clone-stage`, incluso en fallos de stage/promote.
+- El staging remoto se limpia al terminar correctamente y el directorio raíz del staging se
+  elimina si queda vacío.
+- `test_clone_hardening.sh` cubre markers bajo `sudo -n` cuando está disponible y valida el
+  lifecycle user-owned/cleanup del staging.
+- Verificación: clone hardening/local/phase-H pasan; `tests/installer/run_all.sh` queda con
+  un fallo preexistente/no relacionado en `test_path_rewrite_cross_user.sh` (`state_db`).
+
 ## 2026-05-29 — Plan de estabilización + evolución del layout de datos a "v2" (claude opus 4.8)
 
 Sesión de planificación (FASE 1+2). NO toca código de producto; cambia docs y planes.
