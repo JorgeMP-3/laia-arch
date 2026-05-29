@@ -28,7 +28,9 @@ fi
 ORIG_HOME=$(getent passwd "$ORIG_USER" | cut -d: -f6)
 [[ -n "$ORIG_HOME" ]] || { echo "Cannot resolve home for user '$ORIG_USER'" >&2; exit 1; }
 CONTAINER="${CONTAINER:-laia-agora}"
-HOST_LAIA_DIR="${HOST_LAIA_DIR:-$ORIG_HOME/.laia}"
+# v2 layout (C2): los secretos viven en /srv/laia/arch/secrets (0700, file 0600).
+# Override para host v1 sin migrar: LAIA_ARCH_CREDS_DIR_OVERRIDE=$ORIG_HOME/.laia
+HOST_LAIA_DIR="${HOST_LAIA_DIR:-${LAIA_ARCH_CREDS_DIR_OVERRIDE:-/srv/laia/arch/secrets}}"
 CONTAINER_LAIA_PATH="${CONTAINER_LAIA_PATH:-/var/lib/laia-host}"
 ENV_AUTH_PATH="${CONTAINER_LAIA_PATH}/auth.json"
 
@@ -64,25 +66,17 @@ if lxc config device list "$CONTAINER" 2>/dev/null | grep -q '^arch-laia$'; then
   lxc config device remove "$CONTAINER" arch-laia >/dev/null
 fi
 
-# Permisos: el dir ~/.laia/ debe ser TRAVERSABLE por cualquier uid del
-# container (LXD unprivileged mapea root del container a uid 100000 host,
-# que no es el dueño del dir). Sin chmod 755, ls dentro del container da
-# Permission denied. El auth.json individual sigue siendo 644 (legible
-# pero no editable por otros); el resto de archivos mantienen sus
-# permisos.
-DIR_MODE=$(stat -c %a "$HOST_LAIA_DIR")
-if [[ "$DIR_MODE" != "755" ]]; then
-  warn "TRADE-OFF: chmod 755 $HOST_LAIA_DIR (era $DIR_MODE)"
-  warn "  Cualquier user del host podrá LISTAR el contenido de ~/.laia/."
-  warn "  Archivos individuales conservan sus permisos (auth.json 644, etc.)"
-  warn "  Si compartes el host con otros humanos, considera raw.idmap."
-  chmod 755 "$HOST_LAIA_DIR"
-  ok "$HOST_LAIA_DIR ahora 755 (traversable)"
+# C2: NADA de chmod 755/644. El dir de secretos es 0700 y el auth.json 0600,
+# owned por el admin (laia-arch). El raw.idmap fijado en rebuild-3 (host admin ↔
+# container agora) hace que el container traverse el dir y lea el file como su
+# dueño. Sin world-read. (Requiere que rebuild-3 haya fijado el raw.idmap.)
+if ! lxc config get "$CONTAINER" raw.idmap 2>/dev/null | grep -q .; then
+  warn "el container no tiene raw.idmap — rebuild-3 (C2) debe fijarlo primero o el"
+  warn "  container agora no podrá leer los secretos 0600. Continúo, pero verifica."
 fi
-
-if [[ "$(stat -c %a "$HOST_LAIA_DIR/auth.json")" != "644" ]]; then
-  log "chmod 644 $HOST_LAIA_DIR/auth.json"
-  chmod 644 "$HOST_LAIA_DIR/auth.json"
+if [[ "$(stat -c %a "$HOST_LAIA_DIR/auth.json" 2>/dev/null)" != "600" ]]; then
+  warn "auth.json no está en 0600 — endureciendo (debería venir así de 'laia auth')"
+  chmod 0600 "$HOST_LAIA_DIR/auth.json"
 fi
 
 log "lxc config device add $CONTAINER arch-laia disk source=$HOST_LAIA_DIR path=$CONTAINER_LAIA_PATH"

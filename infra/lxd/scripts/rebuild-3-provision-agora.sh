@@ -12,13 +12,13 @@
 # lee (read-only). El container ve EXACTAMENTE el mismo archivo, sin
 # divergencias.
 #
-# Permisos: ~/.laia/auth.json es 0600 por default (solo lectura para el
-# dueño). El uid del host (laia-hermes) mapea a un uid alto en el
-# container (LXD unprivileged), donde el `agora` user es uid bajo —
-# tendrá que ver el archivo como "other". Por eso hacemos chmod 644.
-#
-# Si esto te incomoda, una alternativa es montar el dir entero con shift
-# (raw.idmap) — más invasivo pero el file queda 0600. Lo dejo como TODO.
+# Permisos (C2 · T1): auth.json se queda 0600 (owned por el admin laia-arch).
+# Para que el container unprivileged lo lea SIN chmod world-readable, mapeamos
+# con raw.idmap el uid/gid del admin del host ↔ el uid/gid del user `agora` del
+# container. Consecuencia: como ese mapeo carva el uid de `agora` del rango base,
+# /srv/laia/agora (data) debe quedar host-owned por el MISMO uid del admin para
+# que el container lo siga viendo como `agora`. Ambos mounts (data + secretos)
+# los consume el mismo uid del container, así que comparten dueño host-side.
 
 set -uo pipefail
 
@@ -46,8 +46,21 @@ PROFILE="${PROFILE:-laia-agora}"
 HOST_PORT="${HOST_PORT:-8088}"           # cambiado a 8088 para no chocar con FastAPI default
 CONTAINER_PORT="${CONTAINER_PORT:-8000}"
 HOST_DATA_DIR="${HOST_DATA_DIR:-/srv/laia/agora}"
-AUTH_JSON_HOST="${AUTH_JSON_HOST:-$ORIG_HOME/.laia/auth.json}"
+# v2 layout (C2): los secretos viven en /srv/laia/arch/secrets (0700, files 0600),
+# owned por el admin (laia-arch). En un host v1 aún sin migrar, override:
+#   LAIA_ARCH_CREDS_DIR_OVERRIDE=$ORIG_HOME/.laia
+SECRETS_DIR="${LAIA_ARCH_CREDS_DIR_OVERRIDE:-/srv/laia/arch/secrets}"
+AUTH_JSON_HOST="${AUTH_JSON_HOST:-$SECRETS_DIR/auth.json}"
 AUTH_JSON_CONTAINER="${AUTH_JSON_CONTAINER:-/opt/agora/data/auth.json}"
+
+# raw.idmap (C2 · T1): mapeamos el uid/gid del admin del host (dueño de los
+# secretos) al uid/gid del user `agora` DENTRO del container, para que el bind
+# del auth.json 0600 sea legible SIN chmod world-readable. Los uids del host se
+# calculan; los del container vienen de la imagen (override si cambia).
+ARCH_UID="$(id -u "$ORIG_USER")"
+ARCH_GID="$(id -g "$ORIG_USER")"
+AGORA_UID="${AGORA_UID:-999}"     # user `agora` en la imagen orchestrator
+AGORA_GID="${AGORA_GID:-988}"
 
 if [[ -t 1 ]]; then
   GRN='\033[1;32m'; YEL='\033[1;33m'; RED='\033[1;31m'; CYN='\033[1;36m'; BLD='\033[1m'; RST='\033[0m'
@@ -103,50 +116,57 @@ if [[ ! -d "$HOST_DATA_DIR" ]]; then
   log "mkdir $HOST_DATA_DIR"
   mkdir -p "$HOST_DATA_DIR"
 fi
-# Default uid mapping para LXD unprivileged: container uid 0 → host uid 1000000.
-# Después chowneamos al uid del agora user dentro del container (post-mount).
-chown -R 1000000:1000000 "$HOST_DATA_DIR" 2>/dev/null || true
-ok "$HOST_DATA_DIR listo"
+# Con el raw.idmap de C2 (host admin ↔ container `agora`), /srv/laia/agora debe
+# quedar host-owned por el admin para que el container lo siga viendo como
+# `agora` (antes era 1000000 = container root vía rango base).
+chown -R "$ARCH_UID:$ARCH_GID" "$HOST_DATA_DIR" 2>/dev/null || true
+ok "$HOST_DATA_DIR listo (owned $ARCH_UID:$ARCH_GID para el shift de idmap)"
 
 # ────────────────────────────────────────────────────────────────────────────
-section "4/7 chmod 644 $AUTH_JSON_HOST (para que el container pueda leerlo)"
+section "4/7 Endurecer secretos (0700 dir / 0600 file) — sin world-read"
 # ────────────────────────────────────────────────────────────────────────────
-CURRENT_MODE=$(stat -c %a "$AUTH_JSON_HOST")
-if [[ "$CURRENT_MODE" != "644" ]]; then
-  warn "TRADE-OFF: este chmod hace el auth.json legible por TODOS los users del host."
-  warn "  Si compartes el host con otros humanos, considera usar un setup con raw.idmap."
-  warn "  Si tu host es single-user (laia-hermes), es aceptable."
-  log "chmod 644 $AUTH_JSON_HOST (era $CURRENT_MODE)"
-  chmod 644 "$AUTH_JSON_HOST"
-  ok "auth.json ahora 644"
-else
-  ok "auth.json ya está en 644"
-fi
+# C2: NO chmod 644. El auth.json se queda 0600; el raw.idmap (sección 5) hace
+# que el container `agora` lo lea. Aseguramos dir 0700, file 0600, dueño = admin.
+install -d -m 0700 -o "$ARCH_UID" -g "$ARCH_GID" "$SECRETS_DIR"
+chown "$ARCH_UID:$ARCH_GID" "$AUTH_JSON_HOST"
+chmod 0600 "$AUTH_JSON_HOST"
+ok "secretos: $SECRETS_DIR 0700, auth.json 0600 (owned $ORIG_USER) — sin world-read"
 
 # ────────────────────────────────────────────────────────────────────────────
-section "5/7 Lanzar container laia-agora"
+section "5/7 Crear container laia-agora con raw.idmap + montar"
 # ────────────────────────────────────────────────────────────────────────────
-log "lxc launch $IMAGE $CONTAINER -p default -p $PROFILE"
-lxc launch "$IMAGE" "$CONTAINER" -p default -p "$PROFILE" >/dev/null
-sleep 3
-ok "$CONTAINER lanzado"
+log "lxc init $IMAGE $CONTAINER -p default -p $PROFILE"
+lxc init "$IMAGE" "$CONTAINER" -p default -p "$PROFILE" >/dev/null
+ok "$CONTAINER creado (stopped)"
+
+# raw.idmap debe fijarse ANTES del primer arranque para que el shift aplique
+# limpio (sin reinicio). Mapea host admin (uid/gid) ↔ container agora (uid/gid).
+log "raw.idmap: host $ARCH_UID/$ARCH_GID ↔ container agora $AGORA_UID/$AGORA_GID"
+lxc config set "$CONTAINER" raw.idmap "uid $ARCH_UID $AGORA_UID
+gid $ARCH_GID $AGORA_GID"
+ok "raw.idmap fijado"
 
 log "bind mount: $HOST_DATA_DIR → /opt/agora/data"
 lxc config device add "$CONTAINER" agora-data disk \
     source="$HOST_DATA_DIR" path=/opt/agora/data >/dev/null
 ok "bind data añadido"
 
-log "bind mount FILE: $AUTH_JSON_HOST → $AUTH_JSON_CONTAINER (read-only)"
+log "bind mount FILE: $AUTH_JSON_HOST → $AUTH_JSON_CONTAINER (read-only, 0600)"
 lxc config device add "$CONTAINER" agora-auth disk \
     source="$AUTH_JSON_HOST" path="$AUTH_JSON_CONTAINER" \
     readonly=true >/dev/null
-ok "bind auth.json añadido (read-only)"
+ok "bind auth.json añadido (read-only; queda 0600, legible vía idmap)"
 
 log "proxy device: host :$HOST_PORT → container :$CONTAINER_PORT"
 lxc config device add "$CONTAINER" agora-api proxy \
     listen="tcp:0.0.0.0:${HOST_PORT}" \
     connect="tcp:127.0.0.1:${CONTAINER_PORT}" >/dev/null
 ok "proxy añadido"
+
+log "lxc start $CONTAINER (idmap aplicado al arrancar)"
+lxc start "$CONTAINER" >/dev/null
+sleep 3
+ok "$CONTAINER arrancado"
 
 # ────────────────────────────────────────────────────────────────────────────
 section "6/7 Fix ownership + arrancar systemd unit"
