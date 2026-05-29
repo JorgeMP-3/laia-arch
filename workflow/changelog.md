@@ -15,6 +15,35 @@ Formato:
 
 ---
 
+## 2026-05-29 — D2: suite de integridad end-to-end del ecosistema (gate final) (claude opus 4.8 · rol Lead)
+
+Slice **D2** (módulo M7) — AFK. Branch `wip/claude/d2-integrity`. **READ-ONLY**, no muta nada.
+Cierra el último slice AFK del plan de estabilización (quedaba solo B2, que es HITL/prod).
+
+- **`tests/integration/test_ecosystem_integrity.sh`** — verifica las **6 capas** del ecosistema:
+  (1) host & estructura `/srv/laia`, (2) containers LXD (`laia-agora` RUNNING), (3) AGORA
+  (`/api/health ok:true` + `agora.db` integrity_check), (4) executors por-usuario (`agent-<slug>`
+  RUNNING), (5) datos modelo 2 zonas (secrets ARCH 0700/0600 + zona usuarios), (6) Atlas
+  (`atlas doctor` sin refs rotas) + backups (artefactos presentes).
+- **Diseño honesto v1/v2:** cada check es `PASS`/`FAIL`/`PEND`/`SKIP`. El gate falla (exit 1)
+  **sólo** si hay `FAIL`. `PEND` = estado objetivo v2 aún no aplicado a este host (p.ej. prod
+  pre-migración C3) — informativo, no error. Verde total esperado en la VM `laia-dev` (ya v2)
+  y en prod **tras la migración C3**. Override-aware (CONTAINER, paths, AGORA_DB, BACKUP_DIR).
+- **`agora.db` integrity:** host-side cuando es legible (fixtures/VM/override); en prod los datos
+  van idmap-shifted (C2) y no son legibles por el ARCH user → check **dentro del container**
+  vía `lxc exec` **opt-in** (`D2_DB_VIA_EXEC=1`, = shell a prod, no automático). `/api/health
+  ok:true` ya confirma de por sí que el backend accede a su db.
+- **Verificado en el host vivo (v1 prod), read-only:** `PASS:10 FAIL:0 PEND:3 SKIP:1` → exit 0.
+  Capas vivas verdes (LXD, AGORA health, 3 executors, atlas doctor, zona usuarios). Los 3 `PEND`
+  son legítimos y esperan la migración C3 a prod: `/srv/laia/state`, secrets en
+  `/srv/laia/arch/secrets`, y el dir de backups (timer aún desactivado).
+- **Hallazgo (informativo):** en este host v1, `/srv/laia/state` no existe aunque el orquestador
+  corre (3 agentes RUNNING) → su state vive en otra ruta; `setup-prod-dirs`/migración lo
+  normaliza. No es regresión (el sistema funciona); D2 lo marca `PEND` en v1, `FAIL` sólo en v2.
+- **Abierto:** **B2** (reconvertir `~/LAIA` del host a checkout de `stable`) sigue **HITL/prod**;
+  correr D2 en **verde total** requiere aplicar antes la migración C3 a prod (HITL, ventana de
+  reinicio de `laia-agora`).
+
 ## 2026-05-29 — D1: sistema de backups permanente (layout v2) + timer nocturno (claude opus 4.8 · rol Lead)
 
 Slice **D1** (módulo M1 · D5) — AFK. Branch `wip/claude/d1-backups`. NO toca prod (tests con

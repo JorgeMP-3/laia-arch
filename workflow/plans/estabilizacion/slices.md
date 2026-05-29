@@ -83,7 +83,7 @@ Estado de cada slice: `[ ]` pendiente · `[~]` en curso · `[x]` hecho.
 
 ---
 
-## [~] B1 · Provisionar VM de desarrollo `laia-dev`  — HITL · prioridad
+## [x] B1 · Provisionar VM de desarrollo `laia-dev`  — HITL · prioridad
 
 **Bloqueado por:** ninguno. · **En curso** (Coder-Opus, branch `wip/claude/vm-laia-dev`, sin push aún).
 **Runbook:** [`infra/dev/laia-dev-vm-runbook.md`](../../../infra/dev/laia-dev-vm-runbook.md).
@@ -134,7 +134,7 @@ Tras mover el desarrollo a la VM, reconvertir el `~/LAIA` del host a un checkout
 - [ ] `~/LAIA` del host en `stable`, `git status` limpio.
 - [ ] `laia-release` funciona desde ese checkout.
 
-## [ ] C1 · Repuntar anclas de path a `/srv/laia/arch`  — AFK
+## [x] C1 · Repuntar anclas de path a `/srv/laia/arch`  — AFK
 
 **Bloqueado por:** B1 (se ensaya en la VM). **Módulo:** M2.
 
@@ -146,7 +146,7 @@ Cambiar los anclas (defaults de env) para que el runtime del ARCH lea/escriba en
 - [ ] `pathd` arranca leyendo de `/srv/laia/arch` y escribe `.env.paths`/socket ahí (owner `laia-arch`).
 - [ ] Tests del path-resolver verdes en la VM.
 
-## [ ] C2 · Mount de secretos con `raw.idmap` + `auth.json` 0600  — HITL (prod-risk)
+## [x] C2 · Mount de secretos con `raw.idmap` + `auth.json` 0600  — HITL (prod-risk)
 
 **Bloqueado por:** B1. **Módulo:** M3 · **núcleo T1.** *(Aquí se cierra el agujero del 644.)*
 
@@ -158,7 +158,7 @@ queda **0600** y el container lo lee **sin** `chmod` world-readable.
 - [ ] `laia-agora` lee credenciales y `/api/health` OK tras restart.
 - [ ] Ensayado en la VM antes de tocar prod.
 
-## [ ] C3 · Script de migración in-place idempotente  — AFK (build) / HITL (aplicar a prod)
+## [x] C3 · Script de migración in-place idempotente  — AFK (build) / HITL (aplicar a prod)
 
 **Bloqueado por:** C1, C2. **Módulo:** M6 · **T2.**
 
@@ -175,7 +175,7 @@ el estado viejo **crudo** de prod en la VM y correr ahí el script.
   cerebro se queda sin red tras el restart.)
 - [ ] Aplicado a prod con backup (paso HITL, ventana de reinicio planificada).
 
-## [ ] C4 · Instalador "nace en el layout nuevo" (install-native)  — AFK
+## [x] C4 · Instalador "nace en el layout nuevo" (install-native)  — AFK
 
 **Bloqueado por:** C1, C2. **Módulo:** M2/M3/M4 · **T3.**
 
@@ -190,7 +190,7 @@ instalación nueva nace ordenada — una sola configuración en todas las máqui
   añade `ufw allow in on <bridge>` + `ufw route allow in on <bridge>` (o equivalente), o el
   cerebro/agentes se quedan sin DHCP/DNS/egress. Hallazgo del runbook de B1.
 
-## [ ] D1 · Sistema de backups permanente  — AFK
+## [x] D1 · Sistema de backups permanente  — AFK
 
 **Bloqueado por:** C (sobre el layout ya definitivo). **Módulo:** M1 · **D5.**
 
@@ -202,7 +202,7 @@ alcance `agora.db` + `/srv/laia/users` + `/srv/laia/arch`, destino `/mnt/data/la
 - [ ] Timer nocturno activo; `clean` borra >14 días.
 - [ ] Test de backup verde.
 
-## [ ] D2 · Suite de integridad de arriba a abajo  — AFK · gate final
+## [x] D2 · Suite de integridad de arriba a abajo  — AFK · gate final
 
 **Bloqueado por:** B1, C1, C2, C3, C4, D1. **Módulo:** M7.
 
