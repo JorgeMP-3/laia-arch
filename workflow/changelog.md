@@ -15,6 +15,31 @@ Formato:
 
 ---
 
+## 2026-05-29 — D1: sistema de backups permanente (layout v2) + timer nocturno (claude opus 4.8 · rol Lead)
+
+Slice **D1** (módulo M1 · D5) — AFK. Branch `wip/claude/d1-backups`. NO toca prod (tests con
+overrides a tmpdir). Sobre el layout v2 ya definido (C1–C4).
+
+- **`infra/bin/laia-backup` reescrito al alcance v2:**
+  - Eliminado el `backup_db()` muerto (`pg_dump arete` — Postgres ya no existe).
+  - `all` = **`agora.db` + `/srv/laia/users` + `/srv/laia/arch`** (los 3 del slice). Deliberadamente
+    **NO** incluye `backup_agents` (que hace `lxc snapshot`) en `all`: corriendo en este host de
+    prod habría snapshoteado el `laia-agora` vivo. `agents`/`workspaces` quedan como subcomandos
+    **opt-in** explícitos.
+  - Destino por defecto → **`/mnt/data/laia-backups`** (otro disco físico). Override `LAIA_BACKUP_DIR`.
+  - `users`/`arch` se respaldan como `tar.gz` con el origen intacto; override-aware
+    (`LAIA_AGORA_DIR_OVERRIDE`/`LAIA_USERS_DIR_OVERRIDE`/`LAIA_ARCH_DIR_OVERRIDE`/`AGORA_DB`).
+  - Retención por defecto **14 días** (`clean`).
+- **Timer nocturno:** `laia-backup.service.tmpl` (oneshot: `all` + `clean 14`, Nice/idle) +
+  `laia-backup.timer.tmpl` (03:30 + jitter, `Persistent=true`). `systemd.sh` ahora instala
+  `*.tmpl` (no solo `*.service.tmpl`) → recoge también el `.timer`. Se instalan **desactivados**
+  (como el resto); activar con `systemctl enable --now laia-backup.timer`.
+- **Tests (verde):** `test_laia_backup.sh` activado (guard `LAIA_D1_READY` retirado, **11/11**);
+  `test_systemd_render.sh` **40/40** (renderiza el nuevo service). **Suite installer completa
+  33/33 verde.**
+- **Abierto:** D2 (suite de integridad end-to-end) pendiente; off-site del backup (USB `VM-USB`)
+  es paso posterior (D5b); aplicar migración C3 a prod sigue HITL.
+
 ## 2026-05-29 — C4: instalador install-native (layout v2) + reconciliación state-root (claude opus 4.8 · rol Lead)
 
 Slice **C4** (módulos M2/M3/M4 · T3) — AFK. Branch `wip/claude/c4-install-native`. NO toca prod
