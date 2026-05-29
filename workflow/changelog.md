@@ -15,7 +15,48 @@ Formato:
 
 ---
 
-## 2026-05-29 — B1: VM de desarrollo `laia-dev` CERRADO (pendiente revisión Lead + Jorge HITL) (claude opus 4.8 · Coder-Opus)
+## 2026-05-29 — C1: repuntar anclas de path del ARCH a `/srv/laia/arch` (pendiente revisión Lead) (claude opus 4.8 · Coder-Opus)
+
+Slice **C1** (módulo M2) del plan de estabilización. AFK, ensayado en la VM `laia-dev`.
+Branch `wip/claude/c1-anclas-arch`. NO toca prod.
+
+- **Ancla del config home del resolver → `/srv/laia/arch`** (era `~/.laia`). El path-resolver
+  (`laia_paths.py`), Atlas (`atlas.py`, `bin/atlas`) y el daemon (`infra/pathd/cli.py`) ahora
+  derivan config.yaml/.env.paths/pathd.sock/state/ del ancla **`LAIA_CONFIG_HOME`** (default
+  `/srv/laia/arch`, constante `ARCH_RUNTIME_HOME_DEFAULT`). **Corregida una deriva**: `cli.py`
+  usaba `LAIA_HOME` (la mesa viva `~/LAIA-ARCH`) para el config home → el daemon y el resolver
+  apuntaban a sitios distintos; ahora ambos usan `LAIA_CONFIG_HOME`, **separado** de
+  `LAIA_HOME`.
+- **Clone rewrite** (`rewrite_config_paths.py`): los anclas **operacionales** (`state_db`,
+  `response_store`) → `/srv/laia/arch`; los **interactivos** (`laia_home`, `workspaces`,
+  `memories`, `skills`, `plugins`) siguen en `${LAIA_HOME}`. Revierte la regla **T.14.1**
+  (todo→LAIA_HOME) que el lock v2 (2026-05-29) superó. **Pone verde** el assert
+  `state_db defaults to /srv/laia/arch` de `test_path_rewrite_cross_user.sh`.
+- **systemd** (`infra/installer/systemd/*.tmpl`): `EnvironmentFile` de las units →
+  `/srv/laia/arch/.env.paths`; `laia-pathd` recibe `Environment=LAIA_CONFIG_HOME=/srv/laia/arch`.
+- **orchestrator** (`infra/orchestrator/config.py`): default `LAIA_STATE_ROOT` →
+  `/srv/laia/arch/state`.
+- **Permisos** (diseño): `/srv/laia/arch` = `laia-arch:laia-arch` `0750`, `state/` `0700` →
+  el daemon (corre como `laia-arch`) escribe sin sudo. Documentado en `PATH_RESOLVER.md`.
+- **Ensayo en VM `laia-dev` (verificado):** creado `/srv/laia/arch` sintético (owner
+  laia-arch); `atlas get laia_home` → `/srv/laia/arch`, `pathd_socket` →
+  `/srv/laia/arch/pathd.sock`; `laia-pathd` arranca, escribe `.env.paths`+`pathd.sock`+
+  `state/path-cache.json`+`atlas/` en `/srv/laia/arch` (owner laia-arch); `atlas doctor`
+  resuelve los refs del runtime ARCH a `/srv/laia/arch`; `test_path_rewrite_cross_user.sh`
+  **12/12 verde** en la VM. Pytest `test_atlas.py`+`test_clone_config_rewrite.py` 82 verde.
+- **Abierto / para el Lead:**
+  - **Inconsistencia de state root** a decidir: `infra/orchestrator/config.py` default ahora
+    `/srv/laia/arch/state`, pero la unit `agora-backend.service` y `setup-prod-dirs.sh` siguen
+    en `/srv/laia/state`, y el ref `srv_state` de `atlas.yaml` también. C1 hizo solo el
+    touch-point pedido; reconciliar los tres es decisión del Lead (¿`/srv/laia/state` vs
+    `/srv/laia/arch/state`?).
+  - **Consumidores `~/.laia/state` no tocados** (fuera de los touch-points de C1, con su
+    propia env var): `infra/dev/preflight.sh`, `infra/dev/smoke-test.sh`,
+    `infra/scripts/audit-hardcoded-paths.py` (allowlist). Follow-up C3/C4.
+  - **`pytest-asyncio`/`watchdog` ausentes** en el venv del VM y del host dev → la suite async
+    de `infra/pathd/tests` no corre ahí (pathd cae a polling). Correrá en CI con deps. Los
+    tests no-async del resolver van verdes.
+  - PR contra `main` pendiente; **no** mergear (revisión Lead).
 
 Slice **B1** del plan de estabilización (infra sobre el host de prod, branch `wip/claude/vm-laia-dev`).
 
