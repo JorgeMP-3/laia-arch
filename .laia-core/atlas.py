@@ -57,11 +57,15 @@ class AtlasKeyError(AtlasError, KeyError):
 # ---------------------------------------------------------------------------
 
 def _atlas_config_path() -> Path:
-    # ATLAS_CONFIG is the explicit override.
-    # Default: ~/.laia/atlas.yaml — config dir, separate from LAIA_HOME
-    # (which is the interactive workspace ~/LAIA-ARCH since the migration).
+    # ATLAS_CONFIG is the explicit override (full path to atlas.yaml).
+    # Default: <config home>/atlas.yaml. Layout v2 (slice C1) the config home is
+    # /srv/laia/arch (anchor LAIA_CONFIG_HOME) — SEPARATE from LAIA_HOME (the
+    # interactive mesa viva ~/LAIA-ARCH). Pre-v2 this was ~/.laia.
     env = os.environ.get("ATLAS_CONFIG", "").strip()
-    return Path(env) if env else (Path.home() / ".laia" / "atlas.yaml")
+    if env:
+        return Path(env)
+    from laia_paths import laia_config_home
+    return laia_config_home() / "atlas.yaml"
 
 
 # ---------------------------------------------------------------------------

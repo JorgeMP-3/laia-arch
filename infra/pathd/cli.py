@@ -15,7 +15,13 @@ if str(_CORE) not in sys.path:
     sys.path.insert(0, str(_CORE))
 
 try:
-    from laia_paths import load_config, regenerate_env_file, resolve, render_env_file  # noqa: E402
+    from laia_paths import (  # noqa: E402
+        laia_config_home,
+        load_config,
+        regenerate_env_file,
+        resolve,
+        render_env_file,
+    )
 except ImportError as exc:  # pragma: no cover
     raise RuntimeError(
         f"laia-path: cannot import laia_paths from {_CORE}. "
@@ -34,8 +40,11 @@ from .validate import format_report, validate_paths
 
 
 def _laia_home() -> Path:
-    val = os.environ.get("LAIA_HOME", "").strip()
-    return Path(val) if val else Path.home() / ".laia"
+    # Path-resolver config/runtime home. Layout v2: /srv/laia/arch via
+    # LAIA_CONFIG_HOME (delegated to the canonical anchor in laia_paths). This
+    # is NOT LAIA_HOME (the mesa viva ~/LAIA-ARCH) — reading LAIA_HOME here was a
+    # drift bug that pointed the daemon at the wrong directory vs the resolver.
+    return laia_config_home()
 
 
 def _defaults() -> dict[str, Path]:

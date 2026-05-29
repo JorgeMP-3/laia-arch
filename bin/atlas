@@ -68,8 +68,11 @@ def _warn(msg: str) -> None:
 
 
 def _laia_config_home() -> Path:
-    val = os.environ.get("LAIA_CONFIG_HOME", "").strip()
-    return Path(val) if val else (Path.home() / ".laia")
+    # Single source of truth for the ARCH runtime/config home (layout v2:
+    # /srv/laia/arch, override LAIA_CONFIG_HOME). laia_paths is importable —
+    # .laia-core is on sys.path (see _CORE insert above).
+    from laia_paths import laia_config_home
+    return laia_config_home()
 
 
 def _confirm(prompt: str, assume_yes: bool = False) -> bool:
