@@ -15,6 +15,29 @@ Estado de cada slice: `[ ]` pendiente · `[~]` en curso · `[x]` hecho.
 
 ---
 
+## 📌 Estado al cierre 2026-05-29 — para retomar mañana
+
+**Hecho y mergeado a `main`:** A2 (tests, #14) · B1 (VM `laia-dev`, #18) · C1 (anclas → `/srv/laia/arch`, #19) · C2 (secretos vía `raw.idmap`, cierra el 644, #21). Más, fuera de A/B/C/D: fix del cloner `root-owned` (#16, de-riesga C3).
+
+**En vuelo:** **C3** (migración in-place, **PR #22**) — construido, **ensayado verde en la VM** (idmap + 0600 + rollback real), **revisado y aprobado por el Lead**. ⏳ **Falta:** que Jorge **mergee #22** (`! gh pr merge 22 --merge --delete-branch`).
+
+**El gran hito pendiente (HITL de Jorge):** **aplicar la migración a PROD** (C1+C2+C3) en una ventana planificada — backup one-shot + reinicio de `laia-agora` (segundos). Runbook: [`c3-migration-runbook.md`](c3-migration-runbook.md). Es lo que cierra el 644 **en producción**.
+
+**Acciones abiertas:**
+- 🔴 **Rotar/revocar la credencial `openai-codex`** (fragmento de token expuesto en logs durante B1 — ver `security.md`). El `auth.json` de prod sigue 644 hasta aplicar C3.
+- Checklist del run en prod: confirmar `SECRET_FILES` (`auth.json .env admin-session.json`) contra el `~/.laia` real; verificar el nombre del comando `laia-path reload` (hoy no-op inofensivo).
+
+**Siguiente trabajo de dev:**
+- **C4 (install-native) → Codex, slice completa de una** (impl + quitar el skip-guard de su test `tests/installer/test_install_native_layout.sh` #17). Que un `laia-install` nuevo nazca en v2.
+- Después: **D1** (backups, Codex) → **D2** (integridad, gate final, Codex).
+- **B2** (`~/LAIA` host → checkout `stable`, Coder-Opus): al final, cuando dev viva del todo en la VM y tras migrar prod. No antes (es donde operan Lead/Codex hoy).
+
+**Estado VM `laia-dev`:** migrada a v2 por el ensayo de C3 (artefactos: snapshots `pre-v2-migration-*`, backups en `/mnt/data`, `~/.laia.v1-migrated-*`). Restaurable con el snapshot `golden` si se quiere virgen — **OJO: el rollback en este host es ~16-19 min** (pool `dir` sobre HDD, sin CoW; ver runbook B1).
+
+**Modelo de operación:** Lead dirige + revisa + mergea bajo-riesgo; Jorge gatea prod-risk (HITL). Cada coder en su worktree (`wip/<agente>/<slice>`). Ver [[feedback-multi-ai-lead-merge-authority]] en memoria.
+
+---
+
 ## Roles de los agentes de IA (ejecución multi-agente)
 
 > Asignación por **capacidad + riesgo de la tarea**. Coordinación según
@@ -83,7 +106,7 @@ Estado de cada slice: `[ ]` pendiente · `[~]` en curso · `[x]` hecho.
 
 ---
 
-## [~] B1 · Provisionar VM de desarrollo `laia-dev`  — HITL · prioridad
+## [x] B1 · Provisionar VM de desarrollo `laia-dev`  — HITL · prioridad  ✅ #18
 
 **Bloqueado por:** ninguno. · **En curso** (Coder-Opus, branch `wip/claude/vm-laia-dev`, sin push aún).
 **Runbook:** [`infra/dev/laia-dev-vm-runbook.md`](../../../infra/dev/laia-dev-vm-runbook.md).
@@ -134,7 +157,7 @@ Tras mover el desarrollo a la VM, reconvertir el `~/LAIA` del host a un checkout
 - [ ] `~/LAIA` del host en `stable`, `git status` limpio.
 - [ ] `laia-release` funciona desde ese checkout.
 
-## [ ] C1 · Repuntar anclas de path a `/srv/laia/arch`  — AFK
+## [x] C1 · Repuntar anclas de path a `/srv/laia/arch`  — AFK  ✅ #19 (nuevo ancla `LAIA_CONFIG_HOME`)
 
 **Bloqueado por:** B1 (se ensaya en la VM). **Módulo:** M2.
 
@@ -146,7 +169,7 @@ Cambiar los anclas (defaults de env) para que el runtime del ARCH lea/escriba en
 - [ ] `pathd` arranca leyendo de `/srv/laia/arch` y escribe `.env.paths`/socket ahí (owner `laia-arch`).
 - [ ] Tests del path-resolver verdes en la VM.
 
-## [ ] C2 · Mount de secretos con `raw.idmap` + `auth.json` 0600  — HITL (prod-risk)
+## [x] C2 · Mount de secretos con `raw.idmap` + `auth.json` 0600  — HITL (prod-risk)  ✅ #21 (ensayo VM verde)
 
 **Bloqueado por:** B1. **Módulo:** M3 · **núcleo T1.** *(Aquí se cierra el agujero del 644.)*
 
@@ -158,7 +181,7 @@ queda **0600** y el container lo lee **sin** `chmod` world-readable.
 - [ ] `laia-agora` lee credenciales y `/api/health` OK tras restart.
 - [ ] Ensayado en la VM antes de tocar prod.
 
-## [ ] C3 · Script de migración in-place idempotente  — AFK (build) / HITL (aplicar a prod)
+## [~] C3 · Script de migración in-place idempotente  — AFK (build) / HITL (aplicar a prod)  🔵 PR #22 (build+ensayo OK; falta merge + aplicar a prod)
 
 **Bloqueado por:** C1, C2. **Módulo:** M6 · **T2.**
 
