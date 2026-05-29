@@ -725,7 +725,17 @@ def _oauth_trace(event: str, *, sequence_id: Optional[str] = None, **fields: Any
 # =============================================================================
 
 def _auth_file_path() -> Path:
-    path = get_laia_home() / "auth.json"
+    # C4 native layout (v2): secrets live in /srv/laia/arch/secrets, decoupled
+    # from LAIA_HOME (the operator's live desk). Honor an explicit ARCH creds
+    # dir — the _OVERRIDE form for hermetic tests, the plain form baked into the
+    # shell rc on installed hosts — before falling back to the LAIA_HOME default.
+    # Purely additive: when neither var is set the resolution is byte-identical
+    # to v1, so the live (un-migrated) host is unaffected.
+    creds_dir = (
+        os.environ.get("LAIA_ARCH_CREDS_DIR_OVERRIDE", "").strip()
+        or os.environ.get("LAIA_ARCH_CREDS_DIR", "").strip()
+    )
+    path = (Path(creds_dir) / "auth.json") if creds_dir else (get_laia_home() / "auth.json")
     # Seat belt: if pytest is running and LAIA_HOME resolves to the real
     # user's auth store, refuse rather than silently corrupt it. This catches
     # tests that forgot to monkeypatch LAIA_HOME, tests invoked without the

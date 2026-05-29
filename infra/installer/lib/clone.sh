@@ -38,6 +38,7 @@ readonly LAIA_LIB_CLONE_LOADED=1
 readonly LAIA_USERS_DIR_DEFAULT="/srv/laia/users"
 readonly LAIA_AGORA_DIR_DEFAULT="/srv/laia/agora"
 readonly LAIA_ARCH_DIR_DEFAULT="/srv/laia/arch"
+readonly LAIA_ARCH_CREDS_DIR_DEFAULT="/srv/laia/arch/secrets"
 readonly LAIA_AGORA_HEALTH_URL="http://127.0.0.1:8088/api/health"
 
 # Populated by clone_detect_paths.
@@ -61,7 +62,10 @@ clone_dest_arch_dir() {
   printf '%s\n' "${LAIA_ARCH_DIR_OVERRIDE:-$LAIA_ARCH_DIR_DEFAULT}"
 }
 clone_dest_arch_creds_dir() {
-  printf '%s\n' "${LAIA_ARCH_CREDS_DIR_OVERRIDE:-$LAIA_USER_HOME/.laia}"
+  # C4 native layout (v2): secrets land in /srv/laia/arch/secrets, not the
+  # legacy ~/.laia. The v1→v2 migration (migrate-v1-to-v2.sh) handles existing
+  # hosts; fresh clones target the v2 dir directly.
+  printf '%s\n' "${LAIA_ARCH_CREDS_DIR_OVERRIDE:-$LAIA_ARCH_CREDS_DIR_DEFAULT}"
 }
 clone_dest_tools_home() {
   printf '%s\n' "${LAIA_TOOLS_HOME_OVERRIDE:-$LAIA_USER_HOME}"

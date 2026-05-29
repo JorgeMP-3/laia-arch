@@ -48,23 +48,30 @@ shell_rc_restore_meta() {
   chmod "$mode" "$rc" 2>/dev/null || true
 }
 
-# shell_rc_render_block <data_dir> — prints the block to insert
+# shell_rc_render_block <data_dir> [creds_dir] — prints the block to insert
 shell_rc_render_block() {
   local data_dir="$1"
+  # C4 native layout (v2): bake the ARCH secrets dir so the installed `laia` CLI
+  # resolves auth.json there (see _auth_file_path() in laia_cli/auth.py), not in
+  # LAIA_HOME. Caller (bin/laia-install) passes INST_ARCH_CREDS_DIR; defaults to
+  # /srv/laia/arch/secrets.
+  local creds_dir="${2:-/srv/laia/arch/secrets}"
   cat <<EOF
 $LAIA_RC_MARKER_BEGIN
 # Managed by laia-install — do not edit between these markers.
 export LAIA_HOME="$data_dir"
+export LAIA_ARCH_CREDS_DIR="$creds_dir"
 $LAIA_RC_MARKER_END
 EOF
 }
 
-# shell_rc_apply <data_dir> — writes/updates the LAIA block in each rc file
+# shell_rc_apply <data_dir> [creds_dir] — writes/updates the LAIA block in each rc file
 shell_rc_apply() {
   local data_dir="$1"
+  local creds_dir="${2:-/srv/laia/arch/secrets}"
   local rc tmp new_block
 
-  new_block="$(shell_rc_render_block "$data_dir")"
+  new_block="$(shell_rc_render_block "$data_dir" "$creds_dir")"
 
   while IFS= read -r rc; do
     [[ -z "$rc" ]] && continue

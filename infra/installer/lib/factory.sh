@@ -40,13 +40,19 @@ fact_copy_once() {
 
 fact_seed_cli_config() {
   log_step "Factory: CLI config"
+  # cli-config.yaml is not a secret → stays in DATA_DIR (LAIA_HOME). .env holds
+  # API keys → C4 native layout puts it in the ARCH secrets dir (0600), never
+  # in LAIA_HOME. Falls back to DATA_DIR if INST_ARCH_CREDS_DIR is somehow unset.
   fact_copy_once "$LAIA_ROOT/.laia-core/cli-config.yaml.example" "$DATA_DIR/cli-config.yaml" 600
-  fact_copy_once "$LAIA_ROOT/.laia-core/.env.example" "$DATA_DIR/.env" 600
+  fact_copy_once "$LAIA_ROOT/.laia-core/.env.example" "${INST_ARCH_CREDS_DIR:-$DATA_DIR}/.env" 600
 }
 
 fact_seed_authjson() {
   log_step "Factory: auth.json"
-  local dst="$DATA_DIR/auth.json"
+  # C4 native layout (v2): the credential store lives in the ARCH secrets dir
+  # (0700, file 0600), decoupled from LAIA_HOME. Matches _auth_file_path() in
+  # laia_cli/auth.py, which resolves LAIA_ARCH_CREDS_DIR for the installed CLI.
+  local dst="${INST_ARCH_CREDS_DIR:-$DATA_DIR}/auth.json"
   if [[ -f "$dst" ]]; then
     log_info "Already exists: $dst"
     return 0

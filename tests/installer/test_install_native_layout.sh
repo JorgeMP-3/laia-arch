@@ -1,25 +1,17 @@
 #!/usr/bin/env bash
-# C4 install-native executable spec.
-#
-# This is intentionally a RED acceptance test for the v2 ARCH layout until C4
-# lands. Keep it included in run_all.sh, but skip by default so today's green
-# suite does not regress while B1/C1/C2 are still gating the implementation.
-#
-# Remove the LAIA_C4_READY guard when C4 is implemented; at that point this
-# becomes the installer gate for the locked v2 contract:
-#   - ARCH runtime state in /srv/laia/arch (override-backed here)
-#   - ARCH secrets in /srv/laia/arch/secrets, 0700, files 0600
+# C4 install-native executable spec — the installer gate for the locked v2
+# ARCH layout contract:
+#   - ARCH runtime dir /srv/laia/arch (0750), override-backed here
+#   - ARCH secrets in /srv/laia/arch/secrets (0700), files 0600
 #   - no ~/.laia in the admin HOME
 #   - laia auth writes to the secrets dir, not HOME
 #
-# TODO(C2): raw.idmap + container read access is validated in the LXD/mount
+# Implemented in C4 (2026-05-29) — the LAIA_C4_READY skip guard was removed once
+# the installer + `laia auth` dispatch landed and this went green.
+#
+# NOTE(C2): raw.idmap + container read access is validated in the LXD/mount
 # slice, not here. This test only specifies host-side install/auth artifacts.
 set -u
-
-if [[ "${LAIA_C4_READY:-}" != "1" ]]; then
-  echo "SKIP: pending C4 impl"
-  exit 0
-fi
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LAIA_ROOT="$(cd "$TEST_DIR/../.." && pwd)"

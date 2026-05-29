@@ -233,7 +233,8 @@ main() {
   inst_install_rollback_trap
   inst_install_wrappers
   inst_ensure_data_dir
-  shell_rc_apply "$DATA_DIR"
+  inst_ensure_arch_dirs
+  shell_rc_apply "$DATA_DIR" "$INST_ARCH_CREDS_DIR"
   systemd_install_all
   emit_json_event step_done install:lay-down "Host install complete"
 
