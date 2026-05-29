@@ -26,6 +26,23 @@ Bitácora de hallazgos y acciones de seguridad durante el trabajo diario en el r
 
 ---
 
+## 2026-05-29 — Creds de PROD en la VM de dev `laia-dev` + token expuesto en logs (claude opus 4.8 · Coder-Opus)
+
+- **Tipo**: secret-exposure / secret-location
+- **Severidad**: P2 (medio) — el `auth.json` real de prod (`openai-codex`, tokens OAuth) se
+  copió a la VM `laia-dev` y quedó **bakeado en el snapshot `b1-base`**. La VM es el sandbox
+  de romper cosas: no debe llevar creds de prod. Además, durante la inspección un **fragmento
+  del `access_token` real se volcó en los logs de la sesión** (bug de redacción).
+- **Sistema afectado**: VM `laia-dev` (`/home/laia-arch/.laia/auth.json`, bind-mount RO en el
+  `laia-agora` anidado), snapshot `b1-base`; credencial `openai-codex` de prod.
+- **Acción tomada**: sustituido el `auth.json` de la VM por un **placeholder estructural**
+  (tokens `DEV-PLACEHOLDER-NOT-REAL`, sin secretos), in-place (preserva inode del bind-mount).
+  Borrado el snapshot `b1-base` contaminado → recreado limpio (`golden`). Verificado que
+  `laia-agora` lee el placeholder y `/api/health` sigue verde. La VM queda sin creds de prod.
+- **Acción pendiente (Jorge)**: **rotar/revocar la credencial `openai-codex` de prod**
+  (expuesta en logs). El `auth.json` de prod en el host sigue **644** (world-readable) — su
+  endurecimiento a 0600 vía `raw.idmap` es el slice **C2**, no B1.
+
 ## 2026-05-27 — `.bashrc` root-owned por el instalador + creds en /root por `sudo laia` (claude opus 4.7)
 
 - **Tipo**: permisos

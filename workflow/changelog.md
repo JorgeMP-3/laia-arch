@@ -15,6 +15,66 @@ Formato:
 
 ---
 
+## 2026-05-29 — B1: VM de desarrollo `laia-dev` CERRADO (pendiente revisión Lead + Jorge HITL) (claude opus 4.8 · Coder-Opus)
+
+Slice **B1** del plan de estabilización (infra sobre el host de prod, branch `wip/claude/vm-laia-dev`).
+
+- **VM `laia-dev` provisionada (ADITIVA, no toca prod):** pool `dir` sobre `/mnt/data`
+  (`laia-dev`), bridge aislado `laiadev0` (10.123.0.1/24 NAT), perfil `laia-dev`
+  (8 GiB / 6 vCPU / `security.nesting=true`), imagen `ubuntu:26.04` (= OS de prod), disco 60 GiB.
+  IP estática `10.123.0.50` (netplan, cloud-init net disabled). `lxc list` → RUNNING.
+- **🔴 Hallazgo crítico (documentado en el runbook): UFW bloquea bridges LXD nuevos.**
+  La FORWARD/INPUT de UFW tiene `policy drop`; las reglas `accept` de la tabla `inet lxd`
+  no bastan (un `drop` de UFW gana). `lxdbr0` (prod) funciona por reglas UFW explícitas;
+  un bridge nuevo necesita `sudo ufw allow in on <br>` + `sudo ufw route allow in on <br>`.
+  **Implica a la migración (C3/C4) y a `laia-install`** si crean un bridge propio.
+- **`laia-install` (modo install, branch `stable`) OK dentro de la VM → `/api/health` responde**
+  (`auth_json_ready:true`). Owner `laia-arch` (fidelidad a prod). Tailscale 1.98.4 instalado.
+  Gotchas documentados: (1) `curl|sudo -E bash -s` anidado = no-op; (2) handoff reabre
+  `/dev/tty` → usar `script` (pty); (3) factory bootstrap exige `~/.laia/auth.json` antes de
+  provisionar `laia-agora` (copiado el real del host).
+- **🔐 Remediación de seguridad (creds throwaway):** el primer provisioning copió el
+  `auth.json` **real de prod** a la VM (desbloquear bootstrap) y contaminó el snapshot
+  `b1-base`. Sustituido por un **placeholder estructural** (tokens `DEV-PLACEHOLDER-NOT-REAL`),
+  in-place (preserva el inode del bind-mount), 644 (lo lee el uid mapeado de `laia-agora`; el
+  0600 vía `raw.idmap` es C2, no B1). Snapshot `b1-base` **borrado** → snapshot limpio
+  **`golden`** recreado. `laia-agora` lee el placeholder y `/api/health` verde con creds falsas
+  (health/pre-flight solo comprueban que `auth.json` exista, no que el token funcione).
+  **Pendiente Jorge:** rotar/revocar el token `openai-codex` de prod (un fragmento se expuso
+  en logs durante la inspección).
+- **§4.3 VERIFICADO:** `laia-agora` RUNNING (LXD anidado) + `/api/health` `ok:true,
+  auth_json_status:linked` (salida real en el runbook). `lxd_available:false` esperado (health
+  corre dentro del container, sin socket LXD).
+- **§5 snapshot crear+restaurar VERIFICADO:** ciclo real — crear `golden` → plantar marker →
+  `stop`+`restore`+`start` → marker AUSENTE + `laia-agora` autoarranca + health verde. ⏱️
+  Tiempos reales: crear **16m31s**, restaurar **18m35s** (pool `dir`+ext4 en HDD = copia
+  completa del `root.img` de 60 GiB, ~67 MB/s; **NO "en segundos"** como pedía el plan — es la
+  contrapartida de no tener CoW, ya aceptada en §0). Recomendación documentada: encoger root a
+  ~20 GiB o migrar a btrfs/zfs (requiere root) si se quiere rollback rápido.
+- **§6 operación + autostart:** documentado start/stop/restart/borrado+limpieza de recursos;
+  `boot.autostart=true` en la VM y en `laia-agora` (verificado `true`; el restore confirma que
+  el cerebro vuelve solo tras cold-boot).
+- **Runbook completo de provisión:** `infra/dev/laia-dev-vm-runbook.md` (§1-6 verificadas;
+  base para el ensayo de migración C3).
+- **Backup ad-hoc de prod a VM-USB (a petición de Jorge):** script one-shot
+  `/tmp/backup-prod-to-usb.sh` (NO commiteado — el sistema permanente es D1). Copia
+  consistente de `agora.db` (sqlite `.backup`) + tars de `/srv/laia/{agora,users}` + secretos
+  v1 (`~/.laia/{auth.json,.env}`) + manifiesto sha256. Lo ejecuta Jorge con `sudo` (todo es
+  root-only). Confirmado: **no había backups** y `/srv/laia/arch/secrets` aún no existe
+  (layout v1 vigente).
+- **Tailscale VERIFICADO:** Jorge autorizó la URL; VM en el tailnet como `laia-dev` =
+  `100.98.22.53`, `tailscale ping` VM→Mac `pong in 17ms`, `sshd` activo. **Los 5 criterios de
+  aceptación de B1 quedan en verde.** (Caveat: `golden` es anterior al auth de Tailscale → un
+  restore exige re-`tailscale up`; documentado en runbook §3.)
+- **Abierto:**
+  - **Ampliación pedida por Jorge (más allá de B1):** convertir la VM en **espejo completo** del
+    ecosistema — `laia-clone` prod→VM (datos reales: agora.db + users), estado+secretos del
+    ARCH, y harness multi-IA (cc1, cc2, Codex, OpenCode) **con secretos reales** (VM solo-tailnet).
+    Fase 2 (datos `/srv` root-only) requiere un paso root de Jorge. Solapa user story #11.
+  - PR contra `main` pendiente; **no** mergear (revisión Lead + Jorge HITL).
+
+---
+
 ## 2026-05-29 — Estabilización: arranca ejecución (A2 mergeado, B1 en curso) (claude opus 4.8, rol Lead)
 
 Multi-agente en marcha: Codex → A2, Coder-Opus → B1. El Lead revisa antes de mergear.
