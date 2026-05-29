@@ -30,9 +30,10 @@ añade una línea `- **Resuelto**: 2026-MM-DD en commit <hash>`.
 
 ---
 
-## agora-backend-test-pool-contamination (open)
+## agora-backend-test-pool-contamination (resolved)
 
 - **Descubierto**: 2026-05-28 por claude opus 4.7 durante PR-2 de atlas adoption.
+- **Resuelto**: 2026-05-29 en commit `9f7f7887`.
 - **Síntoma**: `tests/test_laia_coordinator.py::test_laia_chat_endpoint_employee_uses_base_toolset`
   y `test_laia_chat_endpoint_admin_streams` fallan SOLO cuando la suite completa
   corre desde el principio, con: `worker crashed: test_session_id_defaults_to_user_scoped.<locals>._capture()
@@ -52,8 +53,8 @@ añade una línea `- **Resuelto**: 2026-MM-DD en commit <hash>`.
 - **Fix propuesto**: aislar el `pool` global entre tests (reset/teardown del fixture que lo
   muta, o `set_pool` con cleanup) para que el mock obsoleto no se filtre. Causa raíz ya
   identificada → **ready-for-agent**.
-- **Owner**: sin asignar (ready-for-agent — repro y causa raíz completas, listo para coger).
-- **Estado**: open. **Pre-existente** a los cambios de atlas adoption.
+- **Owner**: Coder-Codex.
+- **Estado**: resolved.
 - **Plan**: slice **A2** de la estabilización — ver
   [`plans/estabilizacion/slices.md`](plans/estabilizacion/slices.md). Consolida también
   `backend-suite-laia-chat-test-leak` (mismo bug).
