@@ -23,54 +23,61 @@ Estado de cada slice: `[ ]` pendiente · `[~]` en curso · `[x]` hecho.
 > **Regla de oro multi-agente:** lo que toca **producción** lo revisa un **segundo agente
 > fuerte + Jorge (HITL)** antes de mergear. Nada prod-risk se mergea con un solo par de ojos.
 
-### Agentes y nivel de esfuerzo
+### Agentes, esfuerzo y si tocan código
 
-| Agente | Modelo | Esfuerzo | Por qué |
+| Agente | Modelo | Esfuerzo | ¿Escribe código? | Función |
+|---|---|---|---|---|
+| **Lead** (Claude Code, esta cuenta) | Opus | **`xhigh`** | **No** — dirige + revisa | Orquestador: planifica cada paso, escribe el **brief** para cada IA, **revisa TODO el código** antes de mergear, decide arquitectura. (Parche mínimo puntual solo si es más rápido que rebotarlo.) |
+| **Coder-Opus** (Claude Code, cuenta 2) | Opus | **`high`** (·`xhigh` en C2/C3) | **Sí** | Escribe el código **difícil / prod-risk**. |
+| **Coder-Codex** (Codex) | GPT-5.5 | **`high`** (reasoning) | **Sí** | Escribe el código **bien-especificado** (specs + criterios de aceptación). |
+| **Minimax** (OpenCode) | Minimax 2.7 | su máximo disponible | **No** — read-only | Entender, **documentar** y **encontrar errores** (scouting/auditoría). Nunca toca código de producto. |
+
+> **Regla de oro:** todo el código pasa por la **revisión del Lead** antes de mergear; lo
+> prod-risk, además, por **Jorge (HITL)**. Nada se mergea con un solo par de ojos.
+
+### Reparto del código entre los dos coders (por dificultad)
+
+- **Coder-Opus (Claude #2)** — lo que exige razonamiento Opus mientras codea: **B1** (VM),
+  **B2** (`~/LAIA`→stable), **C1** (anclas Atlas), **C2** (mount + `raw.idmap`), **C3**
+  (migración in-place). `xhigh` para C2/C3 (prod-risk).
+- **Coder-Codex (GPT-5.5)** — specs claros con criterios de aceptación: **A2** (tests),
+  **C4** (install-native), **D1** (backups), **D2** (implementación de la integridad).
+
+### Mapa slice → coder → revisor
+
+| Slice | Coder | Revisa | Notas |
 |---|---|---|---|
-| **Opus-Lead** (Claude Code, cuenta 1) | Opus | **`xhigh`** | El razonamiento más profundo para lo más caro de equivocar (migración prod, `raw.idmap`). |
-| **Opus-Infra** (Claude Code, cuenta 2) | Opus | **`high`** | Construcción + juicio sólidos iterando en el sandbox; `xhigh` sería lento sin ganancia (subir puntualmente si un slice se atasca). |
-| **Codex** (cuenta Codex) | GPT-5.5 | **`high`** (reasoning) | Fuerte implementando contra criterios de aceptación claros; `xhigh` solo si C4 se complica. |
-| **Minimax** (OpenCode) | Minimax 2.7 | su máximo disponible | El menos potente (se declara "limitado"); su salvaguarda es la **verificación por otro agente**, no el dial de esfuerzo. |
+| **A2** tests | Codex | Lead | independiente, puede ir ya |
+| **B1** VM | Coder-Opus | Lead + Jorge (HITL) | prioridad; habilita C |
+| **B2** `~/LAIA`→stable | Coder-Opus | Lead + Jorge (HITL) | tras B1 |
+| **C1** anclas Atlas | Coder-Opus | Lead | añade refs `/srv/laia/arch` a `atlas.yaml` |
+| **C2** mount + idmap | Coder-Opus (`xhigh`) | Lead + Jorge (HITL) | prod-risk; cierra el 644 |
+| **C3** migración in-place | Coder-Opus (`xhigh`) | Lead + Jorge (HITL) | ensaya en VM → prod con backup |
+| **C4** install-native | Codex | Lead | instalador + flujo auth |
+| **D1** backups | Codex | Lead | sobre layout final |
+| **D2** integridad | Codex (impl) | Lead (diseña + revisa) | gate final |
 
-### Roles
+### Minimax — apoyo read-only (a Jorge y al Lead)
 
-- **Opus-Lead — Tech lead de la migración (lo crítico).** Dueño de los slices prod-risk y de
-  más razonamiento: **C2** (mount + `raw.idmap`), **C3** (script de migración in-place). Diseña
-  la suite de integridad (**D2**). **Revisa todo lo que va a prod** antes del merge. Convierte
-  el ensayo en la VM en el runbook fino de producción.
-- **Opus-Infra — Constructor del taller.** Dueño de **B1** (VM `laia-dev`), **B2** (`~/LAIA` →
-  `stable`) y **C1** (repuntar anclas de Atlas). Monta el sandbox donde todo se ensaya. Hace de
-  **segundo par de ojos** sobre el trabajo prod-risk de Opus-Lead (cross-check Opus↔Opus).
-- **Codex — Implementador de slices AFK bien-especificados.** Dueño de **A2** (arreglar los 2
-  tests, causa raíz ya conocida), **C4** (install-native) y la **implementación** de **D2**
-  (sobre el diseño de Opus-Lead). Trabaja contra criterios de aceptación; sus PRs los revisa
-  Opus-Lead.
-- **Minimax — Tareas acotadas + reconocimiento, siempre verificado.** Dueño de **D1** (backups —
-  reutiliza `laia-backup`, muy acotado), limpieza de cruft, actualizaciones de docs menores y
-  **scouting** continuo (escanear el sistema buscando errores nuevos — ya hizo la auditoría).
-  **Todo su output lo verifica Codex u Opus antes de mergear.**
+- **Documentar** subsistemas y decisiones (docs, NO código de producto).
+- **Scouting** continuo: escanear el sistema buscando errores nuevos (como hizo la auditoría).
+- **Verificar** hallazgos y explicar zonas confusas. Sus docs/hallazgos los usan Lead/Jorge.
 
-### Mapa slice → agente
+### Flujo de cada paso (cómo opera el Lead)
 
-| Slice | Dueño | Revisa | Notas |
-|---|---|---|---|
-| **A2** tests | Codex | Opus-Lead | independiente, puede ir ya |
-| **B1** VM | Opus-Infra | Jorge (HITL) | prioridad; habilita C |
-| **B2** `~/LAIA`→stable | Opus-Infra | Jorge (HITL) | tras B1 |
-| **C1** anclas Atlas | Opus-Infra | Opus-Lead | añade refs `/srv/laia/arch` a `atlas.yaml` |
-| **C2** mount + idmap | **Opus-Lead** | Opus-Infra + Jorge | prod-risk; cierra el 644 |
-| **C3** migración in-place | **Opus-Lead** | Opus-Infra + Jorge | ensaya en VM → prod con backup |
-| **C4** install-native | Codex | Opus-Lead | toca instalador + flujo auth |
-| **D1** backups | Minimax | Codex/Opus | sobre layout final |
-| **D2** integridad | Codex (impl) | Opus-Lead (diseño + review) | gate final |
-| scouting / cruft / docs | Minimax | cualquiera | continuo |
+1. El **Lead** dice a Jorge la siguiente acción y a qué IA toca.
+2. El **Lead** escribe un **brief copiable** para esa IA: rol, slice, criterios de aceptación,
+   guardarraíles y branch (`wip/<agente>/<slice>`).
+3. El **coder** implementa y abre PR.
+4. El **Lead revisa el código**; si es prod-risk, además **Jorge (HITL)**.
+5. Merge. Siguiente paso.
 
-### Cómo aprovechar el paralelismo
+### Paralelismo
 
-- **Ya, en paralelo (sin bloqueos):** Codex → **A2** · Opus-Infra → **B1**.
-- Cuando **B1** esté: Opus-Infra → **B2/C1** · Opus-Lead → **C2** (ensayando en la VM).
+- **Ya, sin bloqueos:** Codex → **A2** · Coder-Opus → **B1**.
+- Tras **B1**: Coder-Opus → **B2/C1/C2** (ensayando en la VM), guiado y revisado por el Lead.
 - **C3/C4** tras C1+C2. **D1/D2** al final, sobre el layout ya migrado.
-- Minimax hace scouting + cruft **en cualquier momento** (no bloquea a nadie), siempre revisado.
+- **Minimax** hace scouting/docs **en cualquier momento** (no bloquea a nadie).
 
 ---
 
