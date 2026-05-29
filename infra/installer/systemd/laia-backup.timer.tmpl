@@ -1,0 +1,13 @@
+[Unit]
+Description=LAIA nightly backup timer (runs laia-backup.service)
+
+[Timer]
+# Nightly at 03:30 with up to 5 min jitter; Persistent catches missed runs
+# (host off overnight) on next boot.
+OnCalendar=*-*-* 03:30:00
+RandomizedDelaySec=300
+Persistent=true
+Unit=laia-backup.service
+
+[Install]
+WantedBy=timers.target

@@ -1,26 +1,16 @@
 #!/usr/bin/env bash
-# D1 backup executable spec.
-#
-# This is intentionally a RED acceptance test until D1 lands. Keep it included
-# in run_all.sh, but skip by default so today's green suite does not regress
-# while C1/C2/C4 still gate the final host layout.
-#
-# Remove the LAIA_D1_READY guard when D1 is implemented; at that point this
-# becomes the backup gate for the D5 contract:
+# D1 backup executable spec — the backup gate for the D5 contract:
 #   - laia-backup all writes artifacts to LAIA_BACKUP_DIR
 #   - covered sources are agora.db, /srv/laia/users, and /srv/laia/arch
 #   - clean N prunes artifacts older than N days
 #   - no dead PostgreSQL/arete backup path and no legacy Hermes coupling
 #
+# Implemented in D1 (2026-05-29) — the LAIA_D1_READY skip guard was removed once
+# laia-backup was rewritten to the v2 scope and this went green.
+#
 # The test uses tmpdir-backed source overrides instead of /srv/laia or
-# /mnt/data. D1 should keep the public interface simple while allowing these
-# overrides for installer tests.
+# /mnt/data, so it never touches the host.
 set -u
-
-if [[ "${LAIA_D1_READY:-}" != "1" ]]; then
-  echo "SKIP: pending D1 impl"
-  exit 0
-fi
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LAIA_ROOT="$(cd "$TEST_DIR/../.." && pwd)"

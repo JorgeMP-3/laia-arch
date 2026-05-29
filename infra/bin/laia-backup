@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
-# laia-backup: sistema de backups del servidor LAIA
+# laia-backup: sistema de backups del servidor LAIA (D1, layout v2).
+# Alcance del backup nocturno (`all`): agora.db + /srv/laia/users + /srv/laia/arch.
+# Destino por defecto: /mnt/data/laia-backups (otro disco físico).
 
 BOLD="\e[1m"; GREEN="\e[32m"; RED="\e[31m"; CYAN="\e[36m"; DIM="\e[2m"; RESET="\e[0m"
 if [[ -z "${LAIA_ROOT:-}" ]]; then
@@ -8,20 +10,22 @@ if [[ -z "${LAIA_ROOT:-}" ]]; then
   LAIA_ROOT="$(git -C "$_script_dir" rev-parse --show-toplevel 2>/dev/null || cd "$_script_dir/../.." && pwd)"
   unset _script_dir
 fi
-BACKUP_DIR="${LAIA_BACKUP_DIR:-/srv/laia/backups}"
+BACKUP_DIR="${LAIA_BACKUP_DIR:-/mnt/data/laia-backups}"
 TIMESTAMP=$(date +%Y%m%d-%H%M%S)
+RETENTION_DEFAULT_DAYS=14
 
 usage() {
     echo "uso: laia-backup <que>"
     echo ""
     echo "que:"
-    echo "  db          PostgreSQL (arete)"
-    echo "  workspaces  todos los workspaces (workspace.db)"
-    echo "  agents      snapshots LXD de todos los agentes"
     echo "  agora       datos de AGORA (agora.db)"
-    echo "  all         todo lo anterior"
+    echo "  users       datos de usuarios (/srv/laia/users)"
+    echo "  arch        runtime operacional del ARCH (/srv/laia/arch)"
+    echo "  all         agora + users + arch (alcance del backup nocturno)"
+    echo "  workspaces  todos los workspaces (workspace.db) — opt-in"
+    echo "  agents      snapshots LXD de todos los agentes — opt-in (toca LXD)"
     echo "  list        listar backups existentes"
-    echo "  clean N     borrar backups de hace mas de N dias"
+    echo "  clean N     borrar backups de hace mas de N dias (default $RETENTION_DEFAULT_DAYS)"
     exit 1
 }
 
@@ -30,18 +34,44 @@ usage() {
 what="$1"; shift
 mkdir -p "$BACKUP_DIR"
 
-backup_db() {
-    echo -e "${BOLD}PostgreSQL...${RESET}"
-    sudo -u postgres pg_dump arete > "$BACKUP_DIR/arete_${TIMESTAMP}.sql" 2>/dev/null && \
-        echo -e "  ${GREEN}OK${RESET} arete_${TIMESTAMP}.sql ($(du -h "$BACKUP_DIR/arete_${TIMESTAMP}.sql" | cut -f1))" || \
-        echo -e "  ${RED}FAIL${RESET}"
+backup_agora() {
+    echo -e "${BOLD}AGORA DB...${RESET}"
+    local agora_db="${AGORA_DB:-${LAIA_AGORA_DIR_OVERRIDE:-/srv/laia/agora}/agora.db}"
+    if [[ -f "$agora_db" ]]; then
+        cp "$agora_db" "$BACKUP_DIR/agora_${TIMESTAMP}.db" && \
+            echo -e "  ${GREEN}OK${RESET} agora_${TIMESTAMP}.db ($(du -h "$BACKUP_DIR/agora_${TIMESTAMP}.db" | cut -f1))" || \
+            echo -e "  ${RED}FAIL${RESET}"
+    else
+        echo -e "  ${DIM}no encontrado: $agora_db${RESET}"
+    fi
 }
+
+# _backup_tree <label> <src_dir> <prefix> — tar.gz a $prefix_<ts>.tar.gz (origen intacto).
+_backup_tree() {
+    local label="$1" src="$2" prefix="$3"
+    echo -e "${BOLD}${label}...${RESET}"
+    if [[ -d "$src" ]]; then
+        local out="$BACKUP_DIR/${prefix}_${TIMESTAMP}.tar.gz"
+        if tar -czf "$out" -C "$(dirname "$src")" "$(basename "$src")" 2>/dev/null; then
+            echo -e "  ${GREEN}OK${RESET} ${prefix}_${TIMESTAMP}.tar.gz ($(du -h "$out" | cut -f1))"
+        else
+            echo -e "  ${RED}FAIL${RESET} $src"
+        fi
+    else
+        echo -e "  ${DIM}no encontrado: $src${RESET}"
+    fi
+}
+
+backup_users() { _backup_tree "Usuarios"     "${LAIA_USERS_DIR_OVERRIDE:-/srv/laia/users}" "users"; }
+backup_arch()  { _backup_tree "ARCH runtime" "${LAIA_ARCH_DIR_OVERRIDE:-/srv/laia/arch}"   "arch";  }
 
 backup_workspaces() {
     echo -e "${BOLD}Workspaces...${RESET}"
     local ws_root="$LAIA_ROOT/workspaces"
+    [[ -d "$ws_root" ]] || { echo -e "  ${DIM}no encontrado: $ws_root${RESET}"; return 0; }
     for ws_dir in "$ws_root"/*/; do
-        local ws_name=$(basename "$ws_dir")
+        [[ -d "$ws_dir" ]] || continue
+        local ws_name; ws_name=$(basename "$ws_dir")
         local db="$ws_dir/workspace.db"
         if [[ -f "$db" ]]; then
             cp "$db" "$BACKUP_DIR/${ws_name}_${TIMESTAMP}.db" && \
@@ -54,26 +84,13 @@ backup_workspaces() {
 backup_agents() {
     echo -e "${BOLD}Agentes LXD...${RESET}"
     if ! command -v lxc &>/dev/null; then
-        echo "  ${RED}LXD no disponible${RESET}"; return
+        echo -e "  ${RED}LXD no disponible${RESET}"; return 0
     fi
     for name in $(lxc list --format csv 2>/dev/null | cut -d',' -f1 | grep '^laia-'); do
-        local slug="${name#laia-}"
         lxc snapshot "$name" "backup-${TIMESTAMP}" 2>/dev/null && \
             echo -e "  ${GREEN}OK${RESET} $name" || \
             echo -e "  ${RED}FAIL${RESET} $name"
     done
-}
-
-backup_agora() {
-    echo -e "${BOLD}AGORA DB...${RESET}"
-    local agora_db="${AGORA_DB:-/srv/laia/agora/agora.db}"
-    if [[ -f "$agora_db" ]]; then
-        cp "$agora_db" "$BACKUP_DIR/agora_${TIMESTAMP}.db" && \
-            echo -e "  ${GREEN}OK${RESET} agora_${TIMESTAMP}.db ($(du -h "$BACKUP_DIR/agora_${TIMESTAMP}.db" | cut -f1))" || \
-            echo -e "  ${RED}FAIL${RESET}"
-    else
-        echo "  ${DIM}no encontrado${RESET}"
-    fi
 }
 
 list_backups() {
@@ -81,12 +98,12 @@ list_backups() {
     if [[ -d "$BACKUP_DIR" ]]; then
         ls -lh "$BACKUP_DIR" | tail -n +2
     else
-        echo "  ${DIM}vacio${RESET}"
+        echo -e "  ${DIM}vacio${RESET}"
     fi
 }
 
 clean_backups() {
-    local days="${1:-30}"
+    local days="${1:-$RETENTION_DEFAULT_DAYS}"
     echo -e "${BOLD}Limpiando backups > $days dias...${RESET}"
     find "$BACKUP_DIR" -type f -mtime "+$days" -delete -print 2>/dev/null | while read -r f; do
         echo "  borrado: $(basename "$f")"
@@ -95,19 +112,19 @@ clean_backups() {
 }
 
 case "$what" in
-    db)         backup_db ;;
+    agora)      backup_agora ;;
+    users)      backup_users ;;
+    arch)       backup_arch ;;
     workspaces) backup_workspaces ;;
     agents)     backup_agents ;;
-    agora)      backup_agora ;;
     all)
-        echo -e "${BOLD}${CYAN}=== BACKUP COMPLETO ${TIMESTAMP} ===${RESET}"
-        backup_db
+        echo -e "${BOLD}${CYAN}=== BACKUP ${TIMESTAMP} ===${RESET}"
         backup_agora
-        backup_workspaces
-        backup_agents
+        backup_users
+        backup_arch
         echo -e "\n${GREEN}Backups en: $BACKUP_DIR${RESET}"
         ;;
     list)       list_backups ;;
-    clean)      clean_backups "${1:-30}" ;;
+    clean)      clean_backups "${1:-$RETENTION_DEFAULT_DAYS}" ;;
     *)          usage ;;
 esac

@@ -1,0 +1,23 @@
+[Unit]
+Description=LAIA backup (agora.db + /srv/laia/users + /srv/laia/arch → /mnt/data/laia-backups)
+Documentation=file://${LAIA_INSTALL_PREFIX}/infra/bin/laia-backup
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=${LAIA_USER}
+Group=${LAIA_USER}
+Environment=LAIA_ROOT=${LAIA_INSTALL_PREFIX}
+# Nightly full backup, then prune to the 14-day retention window.
+ExecStart=${LAIA_INSTALL_PREFIX}/infra/bin/laia-backup all
+ExecStart=${LAIA_INSTALL_PREFIX}/infra/bin/laia-backup clean 14
+Nice=10
+IOSchedulingClass=idle
+ProtectSystem=full
+NoNewPrivileges=true
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
