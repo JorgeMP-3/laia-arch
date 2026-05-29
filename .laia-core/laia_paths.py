@@ -24,15 +24,29 @@ logger = logging.getLogger(__name__)
 # Config location helpers
 # ---------------------------------------------------------------------------
 
-def _laia_config_home() -> Path:
-    """Directory where laia-pathd config files live.
+# Canonical default for the ARCH runtime/config home (layout v2, 2026-05-29).
+# Holds config.yaml, atlas.yaml, .env.paths, pathd.sock and state/; secrets
+# live under <home>/secrets/ (relocated there in slice C2). This is SEPARATE
+# from LAIA_HOME — the interactive mesa viva (~/LAIA-ARCH). Pre-v2 this lived in
+# ~/.laia; the C-block migration relocates the files to /srv/laia/arch, and this
+# anchor repoints in lockstep (slice C1). Override with LAIA_CONFIG_HOME.
+ARCH_RUNTIME_HOME_DEFAULT = "/srv/laia/arch"
 
-    Always ~/.laia/ — separate from LAIA_HOME (which is the interactive
-    workspace ~/LAIA-ARCH since the 2026-05 migration).
-    Override with LAIA_CONFIG_HOME for testing.
+
+def laia_config_home() -> Path:
+    """Directory where the path-resolver config/runtime files live.
+
+    Layout v2 (2026-05-29): defaults to ``/srv/laia/arch`` (the ARCH runtime
+    home) — config.yaml, .env.paths, pathd.sock, state/. SEPARATE from
+    ``LAIA_HOME`` (the interactive mesa viva ``~/LAIA-ARCH``); conflating the two
+    was a historical drift bug. Override with ``LAIA_CONFIG_HOME``.
     """
     val = os.environ.get("LAIA_CONFIG_HOME", "").strip()
-    return Path(val) if val else (Path.home() / ".laia")
+    return Path(val) if val else Path(ARCH_RUNTIME_HOME_DEFAULT)
+
+
+# Internal alias kept for the existing call sites below.
+_laia_config_home = laia_config_home
 
 
 def _default_config() -> Path:

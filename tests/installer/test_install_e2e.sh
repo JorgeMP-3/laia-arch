@@ -161,8 +161,8 @@ for unit in laia-gateway.service laia-pathd.service agora-backend.service laia-u
 done
 assert "laia-gateway substitutes INST_PREFIX path" \
   "$(grep -qF "$INST_PREFIX/.laia-core" "$SYSTEMD_DIR/laia-gateway.service" && echo 0 || echo 1)"
-assert "laia-gateway substitutes LAIA_HOME path" \
-  "$(grep -qF "EnvironmentFile=-$DATA_DIR/.env.paths" "$SYSTEMD_DIR/laia-gateway.service" && echo 0 || echo 1)"
+assert "laia-gateway sources .env.paths from v2 ARCH runtime home" \
+  "$(grep -qF "EnvironmentFile=-/srv/laia/arch/.env.paths" "$SYSTEMD_DIR/laia-gateway.service" && echo 0 || echo 1)"
 assert "no leftover \${LAIA_*} placeholders in any unit" \
   "$(! grep -RIq '\${LAIA_' "$SYSTEMD_DIR"/*.service && echo 0 || echo 1)"
 

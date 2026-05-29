@@ -11,7 +11,8 @@ Type=simple
 User=${LAIA_USER}
 Group=${LAIA_USER}
 # Path registry — defines LAIA_ROOT, LAIA_AGORA, LAIA_AGORA_VENV, LAIACTL, etc.
-EnvironmentFile=-${LAIA_HOME}/.env.paths
+# Layout v2: laia-pathd writes .env.paths to the ARCH runtime home, not LAIA_HOME.
+EnvironmentFile=-/srv/laia/arch/.env.paths
 WorkingDirectory=${LAIA_INSTALL_PREFIX}/services/agora-backend
 Environment=AGORA_ENV=prod
 Environment=AGORA_DATA_DIR=/srv/laia/agora

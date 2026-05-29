@@ -1,8 +1,10 @@
 # Atlas v2 — Registro Universal de Referencias LAIA  (PLANTILLA)
 #
-# Copia este fichero a ~/.laia/atlas.yaml y ajústalo a tu host:
+# Copia este fichero al home runtime de ARCH (layout v2: /srv/laia/arch) y
+# ajústalo a tu host. Ubicación overridable con LAIA_CONFIG_HOME:
 #
-#     mkdir -p ~/.laia && cp infra/pathd/atlas.yaml.example ~/.laia/atlas.yaml
+#     sudo install -d -o "$USER" -m750 /srv/laia/arch
+#     cp infra/pathd/atlas.yaml.example /srv/laia/arch/atlas.yaml
 #
 # Es la fuente de verdad de todas las conexiones del ecosistema.
 # Edita AQUÍ cuando algo cambie de sitio — el resto del código lo sigue.
@@ -24,8 +26,8 @@ refs:
 
   laia_home:
     type: path
-    value: ~/.laia
-    description: "Directorio de credenciales de LAIA-ARCH (auth.json, .env)"
+    value: /srv/laia/arch
+    description: "Home runtime de LAIA-ARCH (config.yaml, atlas.yaml, .env.paths, pathd.sock, state/; secrets en secrets/). Layout v2 — antes ~/.laia"
 
   laia_arch_home:
     type: path
