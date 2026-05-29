@@ -15,6 +15,38 @@ Formato:
 
 ---
 
+## 2026-05-29 — C3: script de migración in-place v1 → v2 (ensayado en VM; PROD = HITL pendiente) (claude opus 4.8 · Coder-Opus)
+
+Slice **C3** · módulo **M6** · decisión **T2**. AFK (build + ensayo en VM); aplicar a prod es
+HITL. Branch `wip/claude/c3-migration-inplace`. NO toca prod.
+
+- **`infra/lxd/scripts/migrate-v1-to-v2.sh`** — migración **in-place idempotente** de un host
+  ARCH v1 (secretos+runtime en `~/.laia`) a v2 (`/srv/laia/arch` + `/srv/laia/arch/secrets`):
+  preflight → **backup one-shot** (`lxc snapshot` + tar de `/srv/laia/agora`+`~/.laia`+
+  `~/LAIA-ARCH` → `/mnt/data/laia-migration-backups`) → `mkdirs` (0750 / secrets 0700) →
+  `rsync` runtime+secretos (**origen intacto**) → repuntar anclas (pathd) → **add-before-remove**
+  del mount (`raw.idmap` + restart container + swap a `/srv/laia/arch/secrets` vía `rebuild-3b`
+  + verify `/api/health`) → en verde: retira `~/.laia`. **Markers** en
+  `/srv/laia/.laia-migration-state/` (resume) + **rollback** (revierte idmap/owner/device,
+  `~/.laia` intacto hasta verde).
+- **Hallazgo del ensayo:** `raw.idmap` **sólo aplica al (re)arrancar el container**; `rebuild-3b`
+  sólo reinicia el servicio backend → la migración hace un `lxc restart laia-agora` **antes**
+  del swap del mount, o el container no lee los secretos 0600. (Bug encontrado y corregido en
+  el ensayo: la primera pasada falló ahí y el **auto-rollback** volvió a v1 verde limpiamente.)
+- **Runbook:** `workflow/plans/estabilizacion/c3-migration-runbook.md` (fases, flags, rollback,
+  pasos HITL para prod).
+- **Ensayo en VM `laia-dev` (verificado):** réplica **v1 cruda** (sin idmap, mount desde
+  `~/.laia` 0755/644, `/srv/laia/agora` con owner default-map; `/srv/laia/arch` ausente) →
+  línea base verde. **(1)** migración completa: `raw.idmap 1001↔999`, secretos en
+  `/srv/laia/arch/secrets` 0700/0600, `/api/health auth_json_ready:true`, `~/.laia` archivado.
+  **(2)** idempotencia: re-run detecta "host ya en v2 — nada que migrar". **(3)** rollback:
+  auto-rollback ante el fallo de swap revirtió a v1 verde con `~/.laia` intacto; el guard
+  post-cleanup rehúsa y apunta a backup/snapshot.
+- **Abierto:** aplicación a **PROD = paso HITL** (Jorge), con ventana de reinicio de
+  `laia-agora` + backup; **no** hecho en C3. La VM queda en estado v2 migrado (con artefactos
+  del ensayo: snapshots `pre-v2-migration-*`, backups en `/mnt/data`, `~/.laia.v1-migrated-*`).
+  PR contra `main` pendiente; **no** mergear (prod-risk → revisión Lead + Jorge HITL).
+
 ## 2026-05-29 — C2: secretos en `/srv/laia/arch/secrets` vía `raw.idmap` — cierra el 644 (claude opus 4.8 · rol Lead, implementado)
 
 Slice **C2** (módulo M3 · T1) — prod-risk. Lo implementó el Lead (Jorge lo asignó). Ensayado
