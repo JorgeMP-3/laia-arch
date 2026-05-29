@@ -15,6 +15,26 @@ Formato:
 
 ---
 
+## 2026-05-29 — C2: secretos en `/srv/laia/arch/secrets` vía `raw.idmap` — cierra el 644 (claude opus 4.8 · rol Lead, implementado)
+
+Slice **C2** (módulo M3 · T1) — prod-risk. Lo implementó el Lead (Jorge lo asignó). Ensayado
+en la VM `laia-dev`. **Pendiente revisión HITL de Jorge antes de aplicar a prod (C3).**
+
+- `rebuild-3-provision-agora.sh` / `rebuild-3b-fix-authjson.sh`: la fuente del bind de
+  secretos pasa de `~/.laia` → `/srv/laia/arch/secrets`; se fija `raw.idmap` (host admin
+  uid/gid ↔ container `agora` 999/988) y el `auth.json` se queda **0600** (owned admin),
+  legible por el container SIN `chmod 644`/`755`. Eliminados los hacks world-readable.
+- **Hallazgo de diseño:** mapear container-`agora` ↔ host-admin carva el uid de agora del
+  rango base, así que `/srv/laia/agora` (data) se re-chownea al admin host-side para que el
+  container lo siga viendo como `agora` (ambos mounts los consume el mismo uid). Resuelto y
+  verificado: `/opt/agora/data` se ve `agora:agora` dentro tras el cambio.
+- **Ensayo VM (verde):** `auth.json` host `600 laia-arch`; el user `agora` lee el 0600 ✓;
+  `/api/health` → `auth_json_ready:true, status:linked`.
+- **Verificado:** el MECANISMO (idmap + lectura 0600) de punta a punta en la VM. **No** se
+  corrió `rebuild-3` end-to-end (re-provisión completa, pesada) — el ensayo ejecutó a mano
+  exactamente los pasos que el script automatiza. Recomendado correr el script una vez en la
+  VM como parte del gate de merge/HITL.
+
 ## 2026-05-29 — C1: repuntar anclas de path del ARCH a `/srv/laia/arch` (pendiente revisión Lead) (claude opus 4.8 · Coder-Opus)
 
 Slice **C1** (módulo M2) del plan de estabilización. AFK, ensayado en la VM `laia-dev`.
