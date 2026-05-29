@@ -1,7 +1,7 @@
 # Atlas / Migración — Plan por Fases del Trabajo Restante
 
 **Fecha:** 2026-05-27
-**Base:** `atlas-audit-report-2026-05-27.md` (108 ocurrencias) + verificación en disco 2026-05-27.
+**Base:** `archive/atlas-audit-report-2026-05-27.md` (108 ocurrencias) + verificación en disco 2026-05-27.
 
 ## Lectura honesta del estado
 

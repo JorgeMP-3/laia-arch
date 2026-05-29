@@ -15,6 +15,33 @@ Formato:
 
 ---
 
+## 2026-05-29 — Plan de estabilización + evolución del layout de datos a "v2" (claude opus 4.8)
+
+Sesión de planificación (FASE 1+2). NO toca código de producto; cambia docs y planes.
+
+- **Plan técnico** de estabilización LAIA-ARCH + entorno de desarrollo en
+  `workflow/plans/estabilizacion/` (bundle: estrategia, plan técnico, auditoría, estado).
+  Bloques A (orden/seguridad/tests), B (VM de dev LXD), C (migración datos ARCH + eliminar
+  `~/.laia`), D (backups permanentes + suite de integridad). Estado: draft, pendiente OK
+  para `to-issues`.
+- **Evolución del canon a layout "v2"** (con consentimiento explícito de Jorge): secretos
+  pasan de `~/.laia/` → `/srv/laia/arch/secrets/` (0600), runtime ARCH → `/srv/laia/arch/`,
+  `SOUL.md` → `~/LAIA-ARCH/`, **`~/.laia/` eliminado**. Actualizados `LAIA_ECOSYSTEM.md §8`,
+  `arch-layout.md`, `arch-data-layout.md`, `AGENTS.md`/`CLAUDE.md` (tabla de paths),
+  `PATH_RESOLVER.md`, `01-canonical-sources.md`. Cada doc lleva banner "objetivo; disco/código
+  aún v1 hasta Bloque C".
+- **Decisiones técnicas (grill):** secretos legibles por `laia-agora` vía `raw.idmap` (cierra
+  el `644`, que era un hack deliberado), no chmod world-readable; migración prod = script
+  in-place idempotente (clone solo ensaya en VM); v2 **install-native** (instalador + `laia
+  auth` crean el layout nuevo).
+- **Reorg `workflow/plans/`:** mega-proyecto → `plans/estabilizacion/`; archivados los planes
+  de Atlas v2 (terminado) y `dev-stable-versioning` (superseded por `release-flow.md`).
+- **Fixes de doc:** `release-flow.md` → "VM dev en el host (LXD)" (no "VM en Mac") + paths
+  `/home/laia-arch`; corregida ruta de `workspace.db` (real: `~/LAIA-ARCH/workspaces/...`);
+  borrado `bin/atlas.py` (duplicado byte-idéntico).
+- **Abierto:** ejecutar bloques empezando por `to-issues`. El layout v2 está en docs pero NO
+  en disco/código aún (eso es el Bloque C).
+
 ## 2026-05-28 — Fix `atlas visualize`: reescritura UI + cero deps externas (claude opus 4.7)
 
 El comando `atlas visualize` (introducido el mismo día en commit `28a47d02`)
