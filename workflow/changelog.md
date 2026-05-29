@@ -15,6 +15,41 @@ Formato:
 
 ---
 
+## 2026-05-29 — C4: instalador install-native (layout v2) + reconciliación state-root (claude opus 4.8 · rol Lead)
+
+Slice **C4** (módulos M2/M3/M4 · T3) — AFK. Branch `wip/claude/c4-install-native`. NO toca prod
+(todo en override/sandbox en los tests). Incluye además la decisión del **state-root** que C1
+dejó abierta.
+
+- **State-root (decisión de Jorge, 2026-05-29):** `agents.json` (orquestador AGORA) se queda en
+  `/srv/laia/state` (top-level, como dice `arch-layout.md` §2.2), **no** bajo `/srv/laia/arch`
+  (ARCH-only). Revertido el default de `infra/orchestrator/config.py` que C1 dejó en
+  `/srv/laia/arch/state`. Queda alineado con `agora-backend.service`, atlas `srv_state` y
+  `setup-prod-dirs.sh` (que ya estaban en `/srv/laia/state`). El state del **resolver pathd**
+  (`state.db`/`path-cache.json`) sigue correctamente en `/srv/laia/arch`.
+- **C4 — toda instalación nueva nace en layout v2, sin `~/.laia`:**
+  - `install.sh`: nuevos globals `INST_ARCH_DIR` (0750) / `INST_ARCH_CREDS_DIR` (0700) +
+    `inst_ensure_arch_dirs`. En override/test sandboxea bajo `DATA_DIR` → un test nunca toca el
+    `/srv/laia/arch` real (importante: este host es prod).
+  - `factory.sh`: `auth.json` y `.env` se siembran en el **secrets dir** (0600), ya no en
+    `LAIA_HOME`; `cli-config.yaml` se queda en `LAIA_HOME` (no es secreto).
+  - `.laia-core/laia_cli/auth.py`: `_auth_file_path()` resuelve `LAIA_ARCH_CREDS_DIR(_OVERRIDE)`
+    **antes** del default `LAIA_HOME` — **aditivo**, cero impacto en el host v1 vivo (que sigue
+    leyendo `~/.laia/auth.json` hasta la migración C3).
+  - `bin/laia`: nuevo subcomando **`laia auth`** → despacha al CLI de laia-core bajo su venv,
+    persistiendo en el secrets dir.
+  - `shell_rc.sh`: hornea `LAIA_ARCH_CREDS_DIR` en el bloque rc del operador.
+  - `clone.sh`: default de arch creds → `/srv/laia/arch/secrets` (era `~/.laia`).
+  - `setup-prod-dirs.sh`: crea `/srv/laia/arch` + `/srv/laia/arch/secrets` (0700).
+  - `init-defaults.sh`: **reglas UFW** (`allow in` + `route allow in`) para el bridge LXD nuevo
+    cuando UFW está activo (cierra el hallazgo B1: UFW dropea bridges nuevos).
+- **Tests (verde):** `test_install_native_layout.sh` activado (guard `LAIA_C4_READY` retirado,
+  19/19); `test_install_factory.sh` actualizado a v2; `test_path_rewrite_cross_user.sh` arreglado
+  (colisión de nombre `ARCH_DIR` → `INST_ARCH_DIR`). **Suite installer completa 33/33 verde**
+  (D1 skip), **82 pytest** del ecosistema verde, `discover_paths()` → `/srv/laia/state`.
+- **Abierto:** D1 (backups) y D2 (integridad) pendientes; aplicar la migración C3 a prod sigue
+  siendo HITL.
+
 ## 2026-05-29 — C3: script de migración in-place v1 → v2 (ensayado en VM; PROD = HITL pendiente) (claude opus 4.8 · Coder-Opus)
 
 Slice **C3** · módulo **M6** · decisión **T2**. AFK (build + ensayo en VM); aplicar a prod es
