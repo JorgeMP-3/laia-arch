@@ -157,7 +157,7 @@ HTTP(S) salen a internet.
 
 ---
 
-## 3. Tailscale (acceso desde el Mac, sin IP en la LAN)
+## 3. Tailscale (acceso desde el Mac, sin IP en la LAN) — ✅ VERIFICADO 2026-05-29
 
 ```bash
 lxc exec laia-dev -- sh -c 'curl -fsSL https://tailscale.com/install.sh | sh'
@@ -169,8 +169,21 @@ lxc exec laia-dev -- tailscale up --hostname=laia-dev --accept-dns=false
 - `tailscale up` imprime una URL `https://login.tailscale.com/a/...` y **bloquea hasta que
   Jorge la autoriza** en el navegador (alternativa CI: `--auth-key tskey-...`).
 - Tras autorizar: la VM aparece como **`laia-dev`** en el tailnet; desde el Mac
-  `ssh laia-arch@laia-dev` o `lxc`/editor sobre esa IP `100.x`. (Para SSH, instalar
-  `openssh-server` y la clave pública del Mac — paso de conveniencia, no de B1.)
+  `ssh laia-arch@laia-dev` o `lxc`/editor sobre esa IP `100.x`.
+
+**Verificado (2026-05-29, Jorge autorizó la URL):**
+- `tailscale up` → `Success.` La VM entra al tailnet como **`laia-dev` = `100.98.22.53`**.
+- Ruta confirmada: `tailscale ping` VM → Mac (`jorges-macbook-pro`, 100.72.141.1) →
+  **`pong … in 17ms`**.
+- `openssh-server` ya presente en la imagen (`/usr/sbin/sshd` activo) → desde el Mac
+  `ssh laia-arch@100.98.22.53` funciona en cuanto la clave pública del Mac esté en
+  `~laia-arch/.ssh/authorized_keys` de la VM (paso de conveniencia, no de B1).
+
+> ⚠️ **El snapshot `golden` es ANTERIOR a esta autorización de Tailscale.** Si se restaura
+> `golden`, la VM vuelve a `Logged out` y hay que re-ejecutar `tailscale up` (un comando + un
+> clic de Jorge). No se re-snapshotea solo por esto (otra copia de 60 GiB / ~16 min); si se
+> quiere que `golden` lleve Tailscale ya autenticado, basta re-snapshotear una vez tras el
+> `up`.
 
 ## 4. `laia-install` dentro de la VM (LAIA fiel, como un cliente)
 

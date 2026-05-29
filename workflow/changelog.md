@@ -62,9 +62,11 @@ Slice **B1** del plan de estabilización (infra sobre el host de prod, branch `w
   v1 (`~/.laia/{auth.json,.env}`) + manifiesto sha256. Lo ejecuta Jorge con `sudo` (todo es
   root-only). Confirmado: **no había backups** y `/srv/laia/arch/secrets` aún no existe
   (layout v1 vigente).
+- **Tailscale VERIFICADO:** Jorge autorizó la URL; VM en el tailnet como `laia-dev` =
+  `100.98.22.53`, `tailscale ping` VM→Mac `pong in 17ms`, `sshd` activo. **Los 5 criterios de
+  aceptación de B1 quedan en verde.** (Caveat: `golden` es anterior al auth de Tailscale → un
+  restore exige re-`tailscale up`; documentado en runbook §3.)
 - **Abierto:**
-  - **Tailscale**: URL de login generada (`tailscale up`); pendiente que Jorge la autorice
-    para unir la VM al tailnet y verificar acceso desde el Mac.
   - **Ampliación pedida por Jorge (más allá de B1):** convertir la VM en **espejo completo** del
     ecosistema — `laia-clone` prod→VM (datos reales: agora.db + users), estado+secretos del
     ARCH, y harness multi-IA (cc1, cc2, Codex, OpenCode) **con secretos reales** (VM solo-tailnet).
