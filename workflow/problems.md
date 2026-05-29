@@ -93,7 +93,7 @@ añade una línea `- **Resuelto**: 2026-MM-DD en commit <hash>`.
 - **Estado**: resolved en código (`shell_rc.sh` helper `shell_rc_restore_meta` + Test 7,
   suite 19/19) — **pendiente de commit**.
 
-## installer-clone-leaves-root-owned-home-artifacts (open)
+## installer-clone-leaves-root-owned-home-artifacts (resolved)
 
 - **Descubierto**: 2026-05-27 por claude opus 4.7.
 - **Síntoma**: el cloner deja en el HOME del usuario `~/.laia-clone-stage/` y
@@ -103,8 +103,9 @@ añade una línea `- **Resuelto**: 2026-MM-DD en commit <hash>`.
   estos paths bajo sudo y no hace `chown`/cleanup al cerrar. Mismo patrón que el bug de
   `.bashrc`.
 - **Workaround**: `sudo rm -rf ~/.laia-clone-stage ~/LAIA-ARCH/.clone-state`.
-- **Owner**: sin asignar.
-- **Estado**: open.
+- **Owner**: Coder-Codex.
+- **Estado**: resolved.
+- **Resuelto**: 2026-05-29 en commit `f56fb832`.
 
 ## backend-suite-laia-chat-test-leak (resolved · duplicate)
 

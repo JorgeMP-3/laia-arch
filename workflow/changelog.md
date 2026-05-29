@@ -38,6 +38,17 @@ Multi-agente en marcha: Codex → A2, Coder-Opus → B1. El Lead revisa antes de
 - **Abierto:** cerrar B1 (remediar creds, §5 restore + §6 operación, verificar install+health);
   confirmar con Jorge la decisión `dir`-pool.
 
+## 2026-05-29 — Fix ownership de artefactos de control en `laia-clone` (Coder-Codex)
+
+- `clone.sh` ahora restaura ownership al usuario admin para `.clone-state` y para staging
+  transitorio bajo `.laia-clone-stage`, incluso en fallos de stage/promote.
+- El staging remoto se limpia al terminar correctamente y el directorio raíz del staging se
+  elimina si queda vacío.
+- `test_clone_hardening.sh` cubre markers bajo `sudo -n` cuando está disponible y valida el
+  lifecycle user-owned/cleanup del staging.
+- Verificación: clone hardening/local/phase-H pasan; `tests/installer/run_all.sh` queda con
+  un fallo preexistente/no relacionado en `test_path_rewrite_cross_user.sh` (`state_db`).
+
 ## 2026-05-29 — Plan de estabilización + evolución del layout de datos a "v2" (claude opus 4.8)
 
 Sesión de planificación (FASE 1+2). NO toca código de producto; cambia docs y planes.
