@@ -15,6 +15,37 @@ Formato:
 
 ---
 
+## 2026-05-29 — B1: VM de desarrollo `laia-dev` provisionada + espejo del ecosistema (en curso) (claude opus 4.8 · Coder-Opus)
+
+Slice **B1** del plan de estabilización (infra sobre el host de prod, branch `wip/claude/vm-laia-dev`).
+
+- **VM `laia-dev` provisionada (ADITIVA, no toca prod):** pool `dir` sobre `/mnt/data`
+  (`laia-dev`), bridge aislado `laiadev0` (10.123.0.1/24 NAT), perfil `laia-dev`
+  (8 GiB / 6 vCPU / `security.nesting=true`), imagen `ubuntu:26.04` (= OS de prod), disco 60 GiB.
+  IP estática `10.123.0.50` (netplan, cloud-init net disabled). `lxc list` → RUNNING.
+- **🔴 Hallazgo crítico (documentado en el runbook): UFW bloquea bridges LXD nuevos.**
+  La FORWARD/INPUT de UFW tiene `policy drop`; las reglas `accept` de la tabla `inet lxd`
+  no bastan (un `drop` de UFW gana). `lxdbr0` (prod) funciona por reglas UFW explícitas;
+  un bridge nuevo necesita `sudo ufw allow in on <br>` + `sudo ufw route allow in on <br>`.
+  **Implica a la migración (C3/C4) y a `laia-install`** si crean un bridge propio.
+- **`laia-install` (modo install, branch `stable`) OK dentro de la VM → `/api/health` responde**
+  (`auth_json_ready:true`). Owner `laia-arch` (fidelidad a prod). Tailscale 1.98.4 instalado.
+  Gotchas documentados: (1) `curl|sudo -E bash -s` anidado = no-op; (2) handoff reabre
+  `/dev/tty` → usar `script` (pty); (3) factory bootstrap exige `~/.laia/auth.json` antes de
+  provisionar `laia-agora` (copiado el real del host).
+- **Runbook completo de provisión:** `infra/dev/laia-dev-vm-runbook.md` (pasos exactos; base
+  para el ensayo de migración C3).
+- **Abierto:**
+  - **Tailscale**: pendiente que Jorge autorice la URL de login (unir VM al tailnet).
+  - **Snapshot** `b1-base` crear/restaurar: en curso (pool `dir` → copia completa, no instantáneo).
+  - **Ampliación pedida por Jorge (más allá de B1):** convertir la VM en **espejo completo** del
+    ecosistema — `laia-clone` prod→VM (datos reales: agora.db + users), estado+secretos del
+    ARCH, y harness multi-IA (cc1, cc2, Codex, OpenCode) **con secretos reales** (VM solo-tailnet).
+    Fase 2 (datos `/srv` root-only) requiere un paso root de Jorge. Solapa user story #11.
+  - PR contra `main` pendiente; **no** mergear (revisión Lead + Jorge HITL).
+
+---
+
 ## 2026-05-29 — Plan de estabilización + evolución del layout de datos a "v2" (claude opus 4.8)
 
 Sesión de planificación (FASE 1+2). NO toca código de producto; cambia docs y planes.
