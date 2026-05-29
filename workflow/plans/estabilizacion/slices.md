@@ -86,9 +86,14 @@ Estado de cada slice: `[ ]` pendiente · `[~]` en curso · `[x]` hecho.
 **Bloqueado por:** ninguno.
 
 VM de **LXD** (`lxc launch --vm`) dentro del host, con LXD anidado (`security.nesting=true`),
-~8 GiB RAM / 6–8 vCPU, disco en pool sobre `/mnt/data`, Tailscale unido al tailnet, repo
-clonado y `laia-install` corriendo **dentro** para un LAIA fiel (laia-agora + 1 agente).
-Layout idéntico a producción.
+~8 GiB RAM / 6–8 vCPU, **disco en pool LXD sobre `/mnt/data` (HDD `sda`, 3.4 T libres)**,
+Tailscale unido al tailnet, repo clonado y `laia-install` corriendo **dentro** para un LAIA
+fiel (laia-agora + 1 agente). Layout idéntico a producción.
+
+> **Disco — decidido (2026-05-29):** la VM va en el **HDD interno** (`/mnt/data`), **no** en el
+> USB `VM-USB` (`/dev/sdb1`). Un USB para una VM viva da riesgo de desconexión→corrupción y
+> desgaste de la flash por escrituras constantes. El NVMe root queda excluido (ahí vive prod).
+> El USB `VM-USB` se reserva como **destino de backup removible** (off-site, paso de D5).
 
 - [ ] `lxc list` muestra `laia-dev` RUNNING con nesting.
 - [ ] Accesible desde el Mac por Tailscale (terminal/editor), sin IP en la LAN.
