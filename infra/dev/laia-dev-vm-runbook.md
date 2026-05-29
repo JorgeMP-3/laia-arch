@@ -216,20 +216,198 @@ LXD (snap) + container `laia-agora` + auth/admin/skills base.
 > `rebuild-3-provision-agora.sh` aborta en pre-flight si no existe
 > `~/.laia/auth.json` (`corre 'laia auth' … primero`), y `bin/laia-install` entonces
 > **revierte `/opt/laia`**. Un install de fábrica necesita `laia auth` antes de provisionar
-> `laia-agora`. Aquí (espejo) copiamos el `auth.json` **real** del host a la VM
-> (`lxc file push … /home/laia-arch/.laia/auth.json`) antes de re-ejecutar. *(Implica a C4
-> install-native: el flujo limpio es install → `laia auth` → provision.)*
+> `laia-agora`. *(Implica a C4 install-native: el flujo limpio es install → `laia auth`
+> → provision.)*
+>
+> 🔐 **Enfoque CREDENCIALES en la VM = THROWAWAY (decisión Jorge, 2026-05-29).** El primer
+> provisioning copió el `auth.json` **real de prod** a la VM para desbloquear el bootstrap,
+> y eso **contaminó el snapshot `b1-base`** (creds de prod bakeadas). **La VM es el sandbox
+> de romper cosas y NO debe llevar credenciales de producción.** Remediación aplicada:
+>
+> 1. Se sustituyó `/home/laia-arch/.laia/auth.json` por un **placeholder estructural** —
+>    mismo esquema (`providers.openai-codex`, `credential_pool`, …) pero **tokens falsos**
+>    (`DEV-PLACEHOLDER-NOT-REAL-*`). Cero secretos reales en la VM ni en el snapshot.
+> 2. Se borró el snapshot contaminado `b1-base` y se creó uno limpio: **`golden`**.
+>
+> **Por qué un placeholder basta para B1:** tanto el pre-flight de `rebuild-3`
+> (`[[ -f "$AUTH_JSON_HOST" ]]`) como `/api/health` (`agent_pool` solo comprueba que el
+> fichero sea legible) **únicamente verifican que `auth.json` EXISTA y sea legible — no
+> validan el token contra OpenAI.** Por eso la VM levanta verde (`auth_json_status:linked`)
+> sin credenciales reales. La contrapartida: la VM **no puede chatear de verdad** con el LLM
+> — irrelevante para su misión (ensayar `install`/`clone`/migración del Bloque C).
+>
+> ⚠️ **El fichero queda en 644 (world-readable DENTRO de la VM), NO 0600.** Es deliberado:
+> `rebuild-3` lo deja 644 para que el uid mapeado del container `laia-agora` pueda leerlo
+> por el bind-mount (sin `raw.idmap` aún). Endurecer a 0600 vía `raw.idmap` es **trabajo de
+> C2**, no de B1. Un 644 sobre un token **falso** no tiene riesgo. Para reponer un
+> placeholder si hiciera falta: escribir el JSON **in-place** (`cat > …`, conserva el inode
+> del bind-mount file) y `chmod 0644`.
+>
+> 🚨 **Pendiente para Jorge (no de B1):** un fragmento del `access_token` real de prod
+> (`openai-codex`) se expuso en logs durante la inspección. **Rotar/revocar esa credencial.**
 
-### 4.3 — Verificación (criterio de B1)
+### 4.3 — Verificación (criterio de B1) — ✅ VERIFICADO 2026-05-29
 
 ```bash
-lxc exec laia-dev -- runuser -u laia-arch -- bash -lc 'lxc list'        # laia-agora RUNNING (LXD anidado)
-lxc exec laia-dev -- curl -fsS http://localhost:8088/api/health         # health del cerebro
+# laia-arch NO está en el grupo lxd dentro de la VM → el lxc anidado se invoca como root:
+lxc exec laia-dev -- lxc list                                    # laia-agora RUNNING (LXD anidado)
+lxc exec laia-dev -- curl -fsS http://localhost:8088/api/health  # health del cerebro
 ```
 
-## 5. Snapshot crear + restaurar  — PENDIENTE
+**Salida real capturada (2026-05-29, con el `auth.json` placeholder ya en su sitio):**
 
-## 6. Operación (arrancar/parar/borrar, autostart)  — PENDIENTE
+```text
+$ lxc exec laia-dev -- lxc list
++------------+---------+--------------------+------+-----------+-----------+
+|    NAME    |  STATE  |        IPV4        | IPV6 |   TYPE    | SNAPSHOTS |
++------------+---------+--------------------+------+-----------+-----------+
+| laia-agora | RUNNING | 10.99.0.188 (eth0) |      | CONTAINER | 0         |
++------------+---------+--------------------+------+-----------+-----------+
+
+$ lxc exec laia-dev -- curl -fsS http://localhost:8088/api/health
+{"ok":true,"service":"agora-backend","version":"0.2.0","env":"dev",
+ "data_dir":"/opt/agora/data","db":"sqlite","coordinator":true,
+ "lxd_available":false,"laiactl_available":false,
+ "auth_json_ready":true,"auth_json_status":"linked",
+ "auth_json_path":"/opt/agora/data/auth.json",
+ "default_llm_provider":"openai-codex","time":"2026-05-29T14:55:00Z"}
+```
+
+- ✅ `laia-agora` **RUNNING** en el LXD anidado (criterio "laia-install OK").
+- ✅ `/api/health` responde `ok:true` con `auth_json_status:linked` (placeholder leído).
+- ℹ️ `lxd_available:false` / `laiactl_available:false` son **esperados**: el health corre
+  `lxc version` / busca `laiactl` **dentro del container `laia-agora`**, que no tiene socket
+  LXD ni el binario del host. Informativo, no bloquea B1 (en prod la infra LXD la maneja el
+  host/ARCH, no el cerebro). El campo del criterio es "`/api/health` responde" → cumplido.
+
+## 5. Snapshot crear + restaurar — ✅ VERIFICADO 2026-05-29
+
+> Demostración real del ciclo "volver atrás": crear snapshot → cambiar algo → restaurar →
+> comprobar que el cambio desapareció y el cerebro vuelve solo. **El snapshot limpio se
+> llama `golden`** (sustituye al `b1-base` contaminado, borrado en la remediación de creds).
+
+### 5.1 — Crear el snapshot
+
+```bash
+lxc snapshot laia-dev golden        # snapshot NO stateful (solo disco)
+lxc info laia-dev | sed -n '/Snapshots/,$p'
+```
+
+### 5.2 — Restaurar (rollback)
+
+Un snapshot de VM **no stateful** exige la instancia **parada** para restaurar:
+
+```bash
+lxc stop laia-dev
+lxc restore laia-dev golden
+lxc start laia-dev
+```
+
+### 5.3 — Prueba real ejecutada (con resultados)
+
+```bash
+# 1) plantar un cambio que NO existe en golden
+lxc exec laia-dev -- runuser -u laia-arch -- \
+  bash -c 'echo cambio-post-golden > /home/laia-arch/SNAPSHOT-DEMO-MARKER.txt'
+# 2) stop → restore golden → start  (ver tiempos abajo)
+# 3) verificar
+lxc exec laia-dev -- test -f /home/laia-arch/SNAPSHOT-DEMO-MARKER.txt && echo EXISTE || echo AUSENTE
+lxc exec laia-dev -- lxc list laia-agora            # autostart lo levanta solo
+lxc exec laia-dev -- curl -fsS http://localhost:8088/api/health
+```
+
+**Resultados (verificado):**
+- ✅ `SNAPSHOT-DEMO-MARKER.txt` → **AUSENTE** tras el restore (disco revertido a `golden`).
+- ✅ `auth.json` → sigue siendo el **placeholder** (lo que `golden` tiene). Sin creds de prod.
+- ✅ `laia-agora` arrancó **solo** (boot: `STOPPED` → `RUNNING` en ~20 s por `boot.autostart`).
+- ✅ `/api/health` → `ok:true, auth_json_status:linked` de nuevo.
+
+### 5.4 — ⏱️ Tiempos reales medidos (importante — NO es "en segundos")
+
+| Operación | Tiempo real (2026-05-29) |
+|---|---|
+| `lxc delete` snapshot | **0.3 s** |
+| `lxc snapshot` (crear `golden`) | **16 m 31 s** |
+| `lxc stop` | 21.8 s |
+| `lxc restore golden` | **18 m 35 s** |
+| `lxc start` (+ autostart del cerebro) | 1.1 s (+~20 s agora) |
+
+> ⚠️ **El criterio del plan decía "volver atrás en segundos" — en este host son ~16-19 min,
+> no segundos.** Causa: el pool es driver **`dir` sobre ext4 en HDD**, que **no tiene CoW**;
+> cada snapshot/restore es una **copia byte-a-byte del `root.img` de 60 GiB** (~67 MB/s en el
+> disco mecánico). Es la contrapartida ya aceptada en §0 (zfs/btrfs CoW no era viable sin root
+> interactivo). **El mecanismo funciona y cumple "crear + restaurar OK"**, pero el rollback es
+> de *minutos*, no instantáneo.
+>
+> 🔧 **Si en el futuro se quiere rollback rápido:** (a) **encoger el `root` a ~20-25 GiB**
+> (la copia escala con el tamaño → ~5 min), o (b) migrar el pool a **btrfs/zfs** sobre
+> `/mnt/data` (snapshots instantáneos; requiere una sesión con root de Jorge para montarlo).
+
+## 6. Operación (arrancar/parar/borrar, autostart) — ✅ DOCUMENTADO 2026-05-29
+
+> Todos los `lxc` de esta sección se ejecutan **en el host** como `laia-arch` (sin sudo;
+> está en el grupo `lxd`). Los que operan el LXD **anidado** van prefijados con
+> `lxc exec laia-dev -- lxc …` (dentro de la VM `laia-arch` **no** está en el grupo `lxd`,
+> así que ahí el `lxc` anidado se invoca como root vía `lxc exec`).
+
+### 6.1 — Arrancar / parar / estado de la VM
+
+```bash
+lxc start laia-dev                 # arrancar la VM
+lxc stop  laia-dev                 # parada limpia (ACPI). --force si no responde
+lxc restart laia-dev               # reiniciar
+lxc list laia-dev                  # estado + IPs (IPV4 esperado: 10.123.0.50)
+lxc info laia-dev                  # detalle + snapshots + uso de recursos
+```
+
+### 6.2 — Operar el LAIA anidado (cerebro) dentro de la VM
+
+```bash
+lxc exec laia-dev -- lxc list                      # estado del LXD anidado (laia-agora)
+lxc exec laia-dev -- lxc start laia-agora           # arrancar el cerebro
+lxc exec laia-dev -- lxc stop  laia-agora           # parar el cerebro
+lxc exec laia-dev -- curl -fsS http://localhost:8088/api/health   # health del cerebro
+```
+
+### 6.3 — Autostart (sobrevivir a reinicios del host) — ✅ configurado
+
+Para que tras un reboot del host la VM y el cerebro vuelvan solos:
+
+```bash
+lxc config set laia-dev boot.autostart=true                  # la VM arranca con el host
+lxc exec laia-dev -- lxc config set laia-agora boot.autostart=true   # el cerebro arranca con la VM
+```
+
+Verificación (ambos devuelven `true`):
+
+```bash
+$ lxc config get laia-dev boot.autostart
+true
+$ lxc exec laia-dev -- lxc config get laia-agora boot.autostart
+true
+```
+
+> Con esto, `host reboot` → VM `laia-dev` arranca → LXD anidado arranca `laia-agora` →
+> `/api/health` verde sin intervención. (Verificado de forma equivalente por el ciclo de
+> restore de §5, que cold-bootea la VM y deja el cerebro arriba solo.)
+
+### 6.4 — Borrar la VM y limpiar TODOS los recursos del host
+
+Si se descarta el taller, esto deja el host como antes de B1 (orden inverso a la creación):
+
+```bash
+lxc delete laia-dev --force                  # borra la VM y sus snapshots (incl. golden)
+lxc profile delete laia-dev                  # perfil (recursos/nesting/disco/NIC)
+lxc network delete laiadev0                  # bridge aislado
+lxc storage delete laia-dev                  # storage pool (dir → /mnt/data/lxd-laia-dev)
+sudo ufw delete allow in on laiadev0         # reglas UFW del bridge
+sudo ufw route delete allow in on laiadev0
+# y, ya vacío:  rm -rf /mnt/data/lxd-laia-dev
+```
+
+> ⚠️ Los containers de **producción** (`laia-agora`, `agent-jorge-dev`, `agent-verify-bob`,
+> `agent-verify-carol`) y sus recursos (`default` pool, `lxdbr0`) **no se tocan** — la VM es
+> aditiva. Borrar `laia-dev` no los afecta.
 
 ---
 
