@@ -1,11 +1,13 @@
 # LAIA Path Resolver (Atlas)
 
-> 🛠️ **Layout v2 (2026-05-29):** el registro, el snapshot, el socket y el estado del
-> resolver se mueven de `~/.laia/` a `/srv/laia/arch/` (`config.yaml`, `atlas.yaml`,
-> `.env.paths`, `state/`, `pathd.sock`) como parte del **Bloque C** del plan
-> (`workflow/plans/estabilizacion/`). **Hasta ejecutar la migración, este doc describe el
-> layout v1 vigente** (`~/.laia/`). Las rutas `~/.laia/...` de abajo siguen siendo las reales
-> en disco hoy.
+> 🛠️ **Layout v2 (2026-05-29) — anclas repuntadas (slice C1).** El registro, el snapshot, el
+> socket y el estado del resolver viven en `/srv/laia/arch/` (`config.yaml`, `atlas.yaml`,
+> `.env.paths`, `state/`, `pathd.sock`). El **ancla** es `LAIA_CONFIG_HOME` (default
+> `/srv/laia/arch`), **separada de `LAIA_HOME`** (la mesa viva `~/LAIA-ARCH`). C1 repunta el
+> *default del código*; la **migración de los ficheros** en disco (`~/.laia` → `/srv/laia/arch`)
+> es el slice **C3**. Mientras C3 no corra en un host dado, exporta `LAIA_CONFIG_HOME=~/.laia`
+> ahí para seguir leyendo el layout v1. Las rutas `~/.laia/...` de abajo son el ejemplo v1
+> histórico; sustitúyelas mentalmente por `/srv/laia/arch/...`.
 
 Atlas is the live path resolver of the LAIA ecosystem — a single registry in
 `~/.laia/config.yaml` defines short aliases for every project directory, and
@@ -20,15 +22,36 @@ alias, always pointing to the current location.
 
 ## At a glance
 
-| Concept | Where it lives | What it does |
+Everything below lives under the **config home** — `LAIA_CONFIG_HOME` (layout v2
+default `/srv/laia/arch`; pre-v2 `~/.laia`). It is **separate** from `LAIA_HOME`
+(the interactive mesa viva `~/LAIA-ARCH`).
+
+| Concept | Where it lives (v2) | What it does |
 |---|---|---|
-| **Registry** | `~/.laia/config.yaml` (`paths:` block) | Source of truth — aliases with `${paths.X}` references |
+| **Registry** | `/srv/laia/arch/config.yaml` (`paths:` block) | Source of truth — aliases with `${paths.X}` references |
 | **Daemon** | `laia-pathd` | Resolves aliases, watches filesystem, regenerates snapshots |
-| **Snapshot** | `~/.laia/.env.paths` | `bash`-sourceable `export LAIA_X=…` lines (regenerated on every change) |
-| **Socket** | `~/.laia/pathd.sock` | Unix domain socket, JSON-RPC, used by Python clients |
-| **Atlas (symlinks)** | `~/.laia/atlas/<alias>` | One symlink per alias, always pointing to current target |
-| **State** | `~/.laia/state/path-cache.json` | Daemon state with inode tracking and change history |
-| **CLI** | `laia-path` | Talk to the daemon: `resolve`, `list`, `env`, `status`, `doctor`, `reload` |
+| **Snapshot** | `/srv/laia/arch/.env.paths` | `bash`-sourceable `export LAIA_X=…` lines (regenerated on every change) |
+| **Socket** | `/srv/laia/arch/pathd.sock` | Unix domain socket, JSON-RPC, used by Python clients |
+| **Atlas (symlinks)** | `/srv/laia/arch/atlas/<alias>` | One symlink per alias, always pointing to current target |
+| **State** | `/srv/laia/arch/state/path-cache.json` | Daemon state with inode tracking and change history |
+| **Anchor** | `LAIA_CONFIG_HOME` (default `/srv/laia/arch`) | Repoints all of the above; override per-host (e.g. v1 `~/.laia`) |
+| **CLI** | `laia-path` / `atlas` | Talk to the daemon: `resolve`, `list`, `env`, `status`, `doctor`, `reload` |
+
+### Permissions (`/srv/laia/arch` writable by `laia-arch`)
+
+`/srv/laia` is root-owned, but `laia-pathd` runs as **`laia-arch`** and must write
+`config.yaml` re-reads, `.env.paths`, `pathd.sock` and `state/`. So the runtime home is
+owned by the operator, not root:
+
+```bash
+sudo install -d -o laia-arch -g laia-arch -m 0750 /srv/laia/arch
+sudo install -d -o laia-arch -g laia-arch -m 0700 /srv/laia/arch/state
+# secrets/ (0700, files 0600) is provisioned by slice C2, not here.
+```
+
+`laia-install` (slice C4) creates this owned by the admin user; the migration (C3) chowns
+the relocated tree. With `0750` owner `laia-arch`, the daemon writes freely and the socket
+(`0600`) is reachable by `laia-arch` Python clients.
 
 ## Defining a new path
 
