@@ -17,11 +17,14 @@ class Paths:
 def discover_paths() -> Paths:
     infra_root = Path(__file__).resolve().parents[1]
     laia_root = infra_root.parent
-    # Layout v2 (slice C1): orchestrator state lives under the ARCH runtime home
-    # /srv/laia/arch (was the repo-relative <laia_root>/.laia/state). The agora
-    # backend passes LAIA_STATE_ROOT explicitly; this default covers standalone
-    # invocations.
-    state_root = Path(os.environ.get("LAIA_STATE_ROOT", "/srv/laia/arch/state"))
+    # Layout v2: agents.json is AGORA-platform orchestration state, not ARCH
+    # runtime — it lives at the top-level /srv/laia/state (see arch-layout.md
+    # §2.2), NOT under /srv/laia/arch (which is ARCH-only: config, secrets,
+    # resolver state). The agora backend passes LAIA_STATE_ROOT explicitly
+    # (its config.py → /srv/laia/state); this default covers standalone
+    # invocations and stays aligned with agora-backend.service, atlas srv_state
+    # and setup-prod-dirs.sh. (Decision 2026-05-29, reconciling the C1 touch-point.)
+    state_root = Path(os.environ.get("LAIA_STATE_ROOT", "/srv/laia/state"))
     return Paths(
         laia_root=laia_root,
         infra_root=infra_root,
