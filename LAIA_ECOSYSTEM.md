@@ -283,25 +283,36 @@ datos privados de usuarios sin permiso.
 
 ## 8. Dónde vive todo (resumen)
 
-El sistema separa **código**, **datos** y **secretos** en tres locations con propósitos
-no solapados:
+El sistema separa **código**, **datos+secretos operacionales** y **mesa viva** en
+locations con propósitos no solapados:
 
 - **`/opt/laia/`** — el código del producto instalado. Lo que se "vende" y se actualiza
   (`laia-install`, `laia-release`, `laia-rollback`). No se transfiere en una migración:
   el destino lo reinstala.
-- **`/srv/laia/`** — los datos operacionales vivos (la fuente de verdad: `agora.db`,
-  datos de usuarios, runtime de LAIA-ARCH). Es lo que `laia-clone` rsynchea íntegro.
-- **`~/.laia/`** — los secretos del operador (credenciales, tokens, registro Atlas).
-  Solo información sensible, mode 0600.
+- **`/srv/laia/`** — **toda** la verdad operacional y sensible, root-owned (la fuente de
+  verdad). Incluye `agora/` (`agora.db`), `users/` (datos de cada PA-AGORA), `arch/`
+  (runtime de LAIA-ARCH: `state.db`, `sessions`, `atlas`, `config.yaml`…) y
+  **`arch/secrets/`** (los **secretos** del operador: `auth.json`, `.env`, mode 0600). Es
+  lo que `laia-clone` rsynchea íntegro.
+- **`~/LAIA-ARCH/`** — la **mesa viva** interactiva del operador: `workspaces`, `memories`,
+  `skills`, `plugins` y `SOUL.md` (lo que Jorge crea y edita a diario).
 
-Más la **mesa viva** del operador en `~/LAIA-ARCH/` (workspaces, memorias y skills que
-Jorge edita a diario).
+Los **secretos viven en `/srv/laia/arch/secrets/`** (root-owned), no en el home: reduce la
+superficie de exposición accidental y deja todo el estado sensible bajo un único árbol
+respaldable y migrable. **`~/.laia/` queda eliminado.**
+
+> 🛠️ **Estado de migración (2026-05-29):** este layout es el **objetivo** decidido en
+> [`workflow/plans/estabilizacion/`](workflow/plans/estabilizacion/). Reemplazar el layout
+> anterior (secretos en `~/.laia/`, runtime mezclado en `~/LAIA-ARCH/`) es el **Bloque C**
+> del plan: se ensaya en la VM de desarrollo y se aplica en producción con backup. **Hasta
+> ejecutarlo, en disco aún rige el layout anterior** — foto real en
+> [`workflow/plans/estabilizacion/estado-ecosistema-servidor.md`](workflow/plans/estabilizacion/estado-ecosistema-servidor.md).
 
 > 📐 El **modelo** completo — árbol de directorios, permisos, idmaps LXD, contrato de
 > transferencia `laia-clone` y flujos `install`/`clone` — está en
 > [`workflow/arch-layout.md`](workflow/arch-layout.md). Para el **mapa real del sistema
-> entero** (todas las locations en disco — `/opt`, `/srv`, `~/.laia`, `~/LAIA-ARCH`,
-> containers — y el repo) ver [`workflow/project-map.md`](workflow/project-map.md).
+> entero** (todas las locations en disco — `/opt`, `/srv`, `~/LAIA-ARCH`, containers — y el
+> repo) ver [`workflow/project-map.md`](workflow/project-map.md).
 
 ---
 

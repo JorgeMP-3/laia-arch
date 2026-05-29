@@ -167,13 +167,14 @@ Esta sección es la config que las skills de ingeniería esperan encontrar:
 | Path | Qué contiene |
 |---|---|
 | `~/LAIA/` | Código del proyecto. |
-| `~/.laia/` | Runtime de LAIA-ARCH: credenciales (`auth.json`, `.env`), config, atlas. |
-| `/srv/laia/` | Datos factory: containers, workspaces de usuarios, agora.db. |
+| `/srv/laia/` | Datos operacionales + secretos (fuente de verdad): `agora/` (`agora.db`), `users/`, `arch/` (runtime ARCH), `arch/secrets/`. |
+| `/srv/laia/arch/secrets/` | Secretos del operador (`auth.json`, `.env`), `0700`. *(v2; v1 en `~/.laia/`, migración Bloque C.)* |
+| `~/LAIA-ARCH/` | Mesa viva del operador: `workspaces`, `memories`, `skills`, `plugins`, `SOUL.md`. |
 | `/opt/laia/` | Copia instalada de LAIA en producción (no se usa en dev). |
 | `~/LAIA/tests/` | Tests del ecosistema. **Tu trabajo nuevo va aquí.** |
 | `~/LAIA/workflow/` | Cooperación entre IAs: rules, changelog, problems, plans. |
 | `~/LAIA/docs/db-export/` | Export auto-generado de `workspace.db`. |
-| `~/.laia/workspaces/laia-ecosystem/workspace.db` | Base de conocimiento técnico exhaustivo. |
+| `~/LAIA-ARCH/workspaces/laia-ecosystem/workspace.db` | Base de conocimiento técnico exhaustivo. |
 
 ## Si encuentras una contradicción
 
