@@ -105,7 +105,7 @@ def _isolated_pool_with_stub_agent(monkeypatch):
         return session
 
     monkeypatch.setattr(pool, "get_or_create", _fake_get_or_create)
-    chat_engine.set_pool(pool)
+    monkeypatch.setattr(chat_engine, "_pool", pool)
     monkeypatch.setattr(chat_engine, "_forwarder_module", None)  # force re-discovery
     yield stub
 
