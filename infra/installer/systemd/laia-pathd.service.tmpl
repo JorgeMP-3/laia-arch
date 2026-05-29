@@ -8,6 +8,9 @@ User=${LAIA_USER}
 Group=${LAIA_USER}
 Environment=HOME=${LAIA_USER_HOME}
 Environment=LAIA_HOME=${LAIA_HOME}
+# Path-resolver config/runtime home (layout v2): config.yaml, .env.paths,
+# pathd.sock and state/ live here — SEPARATE from LAIA_HOME (the mesa viva).
+Environment=LAIA_CONFIG_HOME=/srv/laia/arch
 # Use the .laia-core venv: it has `watchdog` installed for inotify support.
 # Without watchdog the daemon still works but falls back to polling-only mode.
 ExecStart=${LAIA_INSTALL_PREFIX}/.laia-core/venv/bin/python ${LAIA_INSTALL_PREFIX}/infra/bin/laia-pathd --log-level INFO

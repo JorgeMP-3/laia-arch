@@ -23,6 +23,14 @@ import sys
 
 def rewrite(text: str, live: str) -> str:
     """Return *text* with path anchors rewritten. Pure; no I/O."""
+    # Layout v2 (slice C1) split — the eje is volatility + sensitivity:
+    #   - INTERACTIVE mesa viva (laia_home, workspaces, memories, skills,
+    #     plugins) → the live LAIA_HOME (~/LAIA-ARCH).
+    #   - OPERATIONAL runtime state (state_db, response_store) → /srv/laia/arch,
+    #     the ARCH runtime home, alongside config.yaml/.env.paths/state.
+    # This reverses the earlier T.14.1 decision (everything → LAIA_HOME), which
+    # the 2026-05-29 v2 lock superseded — see workflow/arch-data-layout.md.
+    arch = "/srv/laia/arch"
     key_value = {
         "laia_root":         "/opt/laia",
         "agora_data":        "/srv/laia/agora/agora.db",
@@ -31,9 +39,9 @@ def rewrite(text: str, live: str) -> str:
         "memories":          f"{live}/memories",
         "skills":            f"{live}/skills",
         "plugins":           f"{live}/plugins",
-        "state_db":          f"{live}/state.db",
-        "response_store":    f"{live}/response_store.db",
-        "response_store_db": f"{live}/response_store.db",
+        "state_db":          f"{arch}/state.db",
+        "response_store":    f"{arch}/response_store.db",
+        "response_store_db": f"{arch}/response_store.db",
     }
 
     def sweep(line: str) -> str:

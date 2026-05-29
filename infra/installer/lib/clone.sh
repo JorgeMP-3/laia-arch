@@ -825,9 +825,13 @@ clone_phase_h_rewrite_config_paths() {
   #   - laia_root   → /opt/laia        (installed product tree)
   #   - laia_home   → ${LAIA_HOME:-$LAIA_USER_HOME/LAIA-ARCH} (live admin area)
   #   - agora_data  → /srv/laia/agora/agora.db      (real bind-mounted DB)
-  #   - workspaces/memories/skills/plugins → ${LAIA_HOME:-...}/<name>
-  # Post-T.14.1: legacy ~/.laia/ literals are swept to ${LAIA_HOME}/ (NOT
-  # /srv/laia/arch/, which is deprecated — see workflow/arch-data-layout.md).
+  #   - workspaces/memories/skills/plugins → ${LAIA_HOME:-...}/<name>  (mesa viva)
+  #   - state_db/response_store → /srv/laia/arch    (operational runtime, v2)
+  # Layout v2 (slice C1, 2026-05-29) reversed the earlier T.14.1 rule: the
+  # OPERATIONAL runtime anchors (state_db, response_store) now land in the ARCH
+  # runtime home /srv/laia/arch, while the INTERACTIVE mesa viva anchors stay in
+  # ${LAIA_HOME}. Other unhandled ~/.laia/ literals still sweep to ${LAIA_HOME}
+  # (line-level fallback in rewrite_config_paths.py). See arch-data-layout.md.
   #
   # The rewrite is delegated to rewrite_config_paths.py: the previous line-based
   # `sed` anchored key rules to `^[[:space:]]*<key>:` and so also clobbered

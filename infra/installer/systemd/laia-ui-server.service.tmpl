@@ -9,7 +9,8 @@ Type=simple
 User=${LAIA_USER}
 Group=${LAIA_USER}
 # Path registry — defines LAIA_UI_SERVER, LAIA_UI_BACKEND, LAIA_VENV, etc.
-EnvironmentFile=-${LAIA_HOME}/.env.paths
+# Layout v2: laia-pathd writes .env.paths to the ARCH runtime home, not LAIA_HOME.
+EnvironmentFile=-/srv/laia/arch/.env.paths
 WorkingDirectory=${LAIA_INSTALL_PREFIX}/.laia-core/laia-ui-server/backend
 Environment=HOME=${LAIA_USER_HOME}
 Environment=LAIA_HOME=${LAIA_HOME}

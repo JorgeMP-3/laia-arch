@@ -17,7 +17,11 @@ class Paths:
 def discover_paths() -> Paths:
     infra_root = Path(__file__).resolve().parents[1]
     laia_root = infra_root.parent
-    state_root = Path(os.environ.get("LAIA_STATE_ROOT", laia_root / ".laia" / "state"))
+    # Layout v2 (slice C1): orchestrator state lives under the ARCH runtime home
+    # /srv/laia/arch (was the repo-relative <laia_root>/.laia/state). The agora
+    # backend passes LAIA_STATE_ROOT explicitly; this default covers standalone
+    # invocations.
+    state_root = Path(os.environ.get("LAIA_STATE_ROOT", "/srv/laia/arch/state"))
     return Paths(
         laia_root=laia_root,
         infra_root=infra_root,
