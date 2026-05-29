@@ -16,6 +16,7 @@ fi
 dirs=(
   /srv/laia
   /srv/laia/state
+  /srv/laia/arch
   /srv/laia/agora
   /srv/laia/agora/frontend
   /srv/laia/agents
@@ -29,6 +30,11 @@ for d in "${dirs[@]}"; do
   install -d -m 0750 -o "$LAIA_USER" -g "$LAIA_USER" "$d"
   echo "  ok  $d"
 done
+
+# C4 native layout (v2): ARCH secrets dir is stricter (0700) — secrets inside
+# are 0600 and read by laia-agora via the C2 raw.idmap mount, never world-read.
+install -d -m 0700 -o "$LAIA_USER" -g "$LAIA_USER" /srv/laia/arch/secrets
+echo "  ok  /srv/laia/arch/secrets (0700)"
 
 # Copy existing dev state if present and prod state is empty
 DEV_STATE="/home/${LAIA_USER}/LAIA/.laia/state/agents.json"

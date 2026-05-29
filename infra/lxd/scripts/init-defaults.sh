@@ -32,5 +32,20 @@ else
   echo "Created network: $NETWORK_NAME ($NETWORK_IPV4)"
 fi
 
+# B1 finding: UFW with a default-drop FORWARD/INPUT policy silently blocks every
+# LXD bridge — the bridge's own nftables accept rules lose to UFW's terminal
+# drop, so the container gets no DHCP/DNS/egress. A bridge needs an explicit
+# `ufw allow in on <br>` (host-bound traffic: DHCP/DNS) AND `ufw route allow in
+# on <br>` (forwarded egress). Idempotent; only when ufw is installed + active.
+if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -qi '^Status: active'; then
+  if ufw allow in on "$NETWORK_NAME" >/dev/null 2>&1 \
+     && ufw route allow in on "$NETWORK_NAME" >/dev/null 2>&1; then
+    echo "UFW: allowed in/route-in on $NETWORK_NAME (bridge DHCP/DNS/egress)"
+  else
+    echo "WARN: could not apply UFW rules for $NETWORK_NAME — if containers have no" >&2
+    echo "      network, run: sudo ufw allow in on $NETWORK_NAME && sudo ufw route allow in on $NETWORK_NAME" >&2
+  fi
+fi
+
 echo "LXD defaults ready."
 

@@ -49,6 +49,7 @@ SUBCOMMANDS
     rollback    Switch /opt/laia symlink back to a previous version
     init        Bootstrap LAIA-AGORA (LXD images + AGORA backend + first user)
     status      Show host-side LAIA status (services, version, paths)
+    auth        Manage pooled LLM provider credentials (writes /srv/laia/arch/secrets)
 
 OPTIONS
     --help, -h        Show this help
@@ -91,6 +92,24 @@ main() {
       local target="$SCRIPT_DIR/laia-$sub"
       [[ -x "$target" ]] || die "Subcommand binary not found or not executable: $target"
       exec "$target" "$@"
+      ;;
+    auth)
+      # `laia auth` manages pooled LLM provider credentials. It dispatches to
+      # the laia-core CLI (laia_cli.main), which persists auth.json (0600) to
+      # the ARCH secrets dir via _auth_file_path()/LAIA_ARCH_CREDS_DIR — never
+      # LAIA_HOME, never world-read. Runs under the laia-core venv (where its
+      # deps live); mirrors the python-resolution of the wizard case below.
+      shift
+      local core_dir="$LAIA_ROOT/.laia-core"
+      [[ -d "$core_dir/laia_cli" ]] || die "laia_cli package not found at $core_dir/laia_cli"
+      local py="python3"
+      if [[ -x "$core_dir/venv/bin/python" ]]; then
+        py="$core_dir/venv/bin/python"
+      elif [[ -x "/opt/laia/.laia-core/venv/bin/python" ]]; then
+        py="/opt/laia/.laia-core/venv/bin/python"
+      fi
+      export PYTHONPATH="$core_dir${PYTHONPATH:+:$PYTHONPATH}"
+      exec "$py" -m laia_cli.main auth "$@"
       ;;
     init)
       # init lives in infra/dev/laia-init.sh — that wizard handles AGORA bootstrap.

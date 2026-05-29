@@ -34,6 +34,8 @@ INST_DEST=""
 INST_PREFIX=""
 INST_BIN_DIR=""
 DATA_DIR=""
+INST_ARCH_DIR=""
+INST_ARCH_CREDS_DIR=""
 SYSTEMD_DIR=""
 LAIA_HOST_ARCH=""
 
@@ -48,6 +50,19 @@ inst_compute_paths() {
 
   INST_BIN_DIR="${LAIA_BIN_DIR_OVERRIDE:-$LAIA_USR_LOCAL_BIN}"
   DATA_DIR="${LAIA_HOME_OVERRIDE:-$LAIA_USER_HOME/$LAIA_DATA_DIR_NAME}"
+  # C4 native layout (v2): ARCH runtime + secrets live under /srv/laia/arch,
+  # separate from DATA_DIR (the operator's LAIA_HOME / live desk). Secrets are
+  # 0700/0600 and read by laia-agora via the C2 raw.idmap mount — never world-read.
+  # Safety: in override/test mode without an explicit ARCH override, sandbox the
+  # ARCH dirs UNDER DATA_DIR so a test never touches the real /srv/laia/arch.
+  if [[ -n "${LAIA_ARCH_DIR_OVERRIDE:-}" ]]; then
+    INST_ARCH_DIR="$LAIA_ARCH_DIR_OVERRIDE"
+  elif inst_is_override_mode; then
+    INST_ARCH_DIR="$DATA_DIR/arch"
+  else
+    INST_ARCH_DIR="/srv/laia/arch"
+  fi
+  INST_ARCH_CREDS_DIR="${LAIA_ARCH_CREDS_DIR_OVERRIDE:-$INST_ARCH_DIR/secrets}"
   SYSTEMD_DIR="${LAIA_SYSTEMD_DIR_OVERRIDE:-/etc/systemd/system}"
 }
 
@@ -57,6 +72,8 @@ inst_is_override_mode() {
   [[ -n "${LAIA_INSTALL_ROOT_OVERRIDE:-}" \
      || -n "${LAIA_BIN_DIR_OVERRIDE:-}" \
      || -n "${LAIA_HOME_OVERRIDE:-}" \
+     || -n "${LAIA_ARCH_DIR_OVERRIDE:-}" \
+     || -n "${LAIA_ARCH_CREDS_DIR_OVERRIDE:-}" \
      || -n "${LAIA_SYSTEMD_DIR_OVERRIDE:-}" \
      || -n "${LAIA_USERS_DIR_OVERRIDE:-}" \
      || -n "${LAIA_TOOLS_HOME_OVERRIDE:-}" ]]
@@ -581,6 +598,22 @@ inst_ensure_data_dir() {
     fi
     log_success "Created $DATA_DIR (mode 700, owner $LAIA_USER)"
   fi
+}
+
+# ─── B.7b: ARCH dirs (C4 native layout) ─────────────────────────────────────
+# Create /srv/laia/arch (0750) and /srv/laia/arch/secrets (0700), owned by the
+# LAIA admin user. Secrets are seeded here by the factory step (auth.json/.env,
+# 0600) and read by laia-agora via the C2 raw.idmap mount — never world-read.
+inst_ensure_arch_dirs() {
+  log_step "Ensuring ARCH dirs $INST_ARCH_DIR (0750) · $INST_ARCH_CREDS_DIR (0700)"
+  if inst_is_override_mode; then
+    install -d -m 0750 "$INST_ARCH_DIR"
+    install -d -m 0700 "$INST_ARCH_CREDS_DIR"
+  else
+    sudo install -d -m 0750 -o "$LAIA_USER" -g "$(id -gn "$LAIA_USER")" "$INST_ARCH_DIR"
+    sudo install -d -m 0700 -o "$LAIA_USER" -g "$(id -gn "$LAIA_USER")" "$INST_ARCH_CREDS_DIR"
+  fi
+  log_success "ARCH dirs ready (owner $(inst_is_override_mode && id -un || echo "$LAIA_USER"))"
 }
 
 # ─── B.9: Systemd units ────────────────────────────────────────────────────
