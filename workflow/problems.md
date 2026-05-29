@@ -93,7 +93,7 @@ añade una línea `- **Resuelto**: 2026-MM-DD en commit <hash>`.
 - **Estado**: resolved en código (`shell_rc.sh` helper `shell_rc_restore_meta` + Test 7,
   suite 19/19) — **pendiente de commit**.
 
-## installer-clone-leaves-root-owned-home-artifacts (in-progress)
+## installer-clone-leaves-root-owned-home-artifacts (resolved)
 
 - **Descubierto**: 2026-05-27 por claude opus 4.7.
 - **Síntoma**: el cloner deja en el HOME del usuario `~/.laia-clone-stage/` y
@@ -104,7 +104,8 @@ añade una línea `- **Resuelto**: 2026-MM-DD en commit <hash>`.
   `.bashrc`.
 - **Workaround**: `sudo rm -rf ~/.laia-clone-stage ~/LAIA-ARCH/.clone-state`.
 - **Owner**: Coder-Codex.
-- **Estado**: in-progress.
+- **Estado**: resolved.
+- **Resuelto**: 2026-05-29 en commit `f56fb832`.
 
 ## backend-suite-laia-chat-test-leak (duplicate)
 
