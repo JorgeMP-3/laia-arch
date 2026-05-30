@@ -37,11 +37,29 @@ REL_ACTIVE_UNITS=()
 REL_PREV_VERSION=""
 
 # ─── C.1: dev-tree pre-flight ──────────────────────────────────────────────
+rel_ensure_safe_directory() {
+  if ! is_root && [[ "${LAIA_TEST_FORCE_ROOT_SAFE_DIRECTORY:-}" != "1" ]]; then
+    return 0
+  fi
+
+  local repo
+  repo="$(readlink -f "$OPT_SRC")"
+  if git config --global --get-all safe.directory 2>/dev/null | grep -Fxq "$repo"; then
+    log_info "Git safe.directory already registered: $repo"
+    return 0
+  fi
+
+  git config --global --add safe.directory "$repo" \
+    || die "Could not register git safe.directory: $repo"
+  log_info "Registered git safe.directory: $repo"
+}
+
 rel_preflight_src_tree() {
   log_step "Pre-flight: dev tree"
 
   [[ -d "$OPT_SRC" ]] || die "Source tree does not exist: $OPT_SRC"
-  [[ -d "$OPT_SRC/.git" ]] \
+  rel_ensure_safe_directory
+  git -C "$OPT_SRC" rev-parse --is-inside-work-tree >/dev/null 2>&1 \
     || die "Source tree is not a git repo: $OPT_SRC (release requires a git tree)"
 
   log_info "Source tree: $OPT_SRC"

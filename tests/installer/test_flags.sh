@@ -62,6 +62,26 @@ assert_contains() {
   fi
 }
 
+installed_version_count() {
+  local root="${LAIA_INSTALL_ROOT_OVERRIDE:-/opt}" d count=0
+  for d in "$root"/laia-v*/; do
+    [[ -d "$d" ]] || continue
+    count=$((count + 1))
+  done
+  printf '%d\n' "$count"
+}
+
+assert_rollback_dry_run_or_skip() {
+  local count
+  count="$(installed_version_count)"
+  if [[ "$count" -lt 2 ]]; then
+    PASS=$((PASS + 1))
+    printf '  ✓ laia-rollback --dry-run skipped (<2 installed versions: %s)\n' "$count"
+    return 0
+  fi
+  assert_zero "laia-rollback --dry-run" "$BIN/laia-rollback" --dry-run
+}
+
 # ── Tests ───────────────────────────────────────────────────────────────────
 
 echo "→ Sanity: scripts exist and are executable"
@@ -98,11 +118,43 @@ for script in laia-install laia-clone laia-release laia-rollback; do
       assert_zero "$script --dry-run" \
         "$BIN/$script" --dry-run --version v0.0.0-test --allow-dirty --skip-tests "$LAIA_ROOT"
       ;;
+    laia-rollback)
+      assert_rollback_dry_run_or_skip
+      ;;
     *)
       assert_zero "$script --dry-run" "$BIN/$script" --dry-run
       ;;
   esac
 done
+
+echo
+echo "→ laia-rollback --dry-run is optional with <2 installed versions"
+single_version_root="$(mktemp -d)"
+mkdir -p "$single_version_root/laia-v0.0.1"
+ln -s "laia-v0.0.1" "$single_version_root/laia"
+LAIA_INSTALL_ROOT_OVERRIDE="$single_version_root" assert_rollback_dry_run_or_skip
+rm -rf "$single_version_root"
+
+echo
+echo "→ laia-release git safe.directory registration is idempotent"
+safe_config="$(mktemp)"
+repo_path="$(readlink -f "$LAIA_ROOT")"
+GIT_CONFIG_GLOBAL="$safe_config" LAIA_TEST_FORCE_ROOT_SAFE_DIRECTORY=1 \
+  "$BIN/laia-release" --dry-run --version v0.0.0-test --allow-dirty --skip-tests "$LAIA_ROOT" \
+  >/dev/null 2>&1 || true
+GIT_CONFIG_GLOBAL="$safe_config" LAIA_TEST_FORCE_ROOT_SAFE_DIRECTORY=1 \
+  "$BIN/laia-release" --dry-run --version v0.0.0-test --allow-dirty --skip-tests "$LAIA_ROOT" \
+  >/dev/null 2>&1 || true
+safe_count="$(git config --file "$safe_config" --get-all safe.directory 2>/dev/null | grep -Fx "$repo_path" | wc -l)"
+if [[ "$safe_count" == "1" ]]; then
+  PASS=$((PASS + 1))
+  printf '  ✓ laia-release adds safe.directory once\n'
+else
+  FAIL=$((FAIL + 1))
+  FAILURES+=("laia-release adds safe.directory once (got $safe_count entries)")
+  printf '  ✗ laia-release adds safe.directory once\n'
+fi
+rm -f "$safe_config"
 
 echo
 echo "→ Bad arguments must fail with exit 2"

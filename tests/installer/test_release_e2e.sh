@@ -90,9 +90,29 @@ assert "no .previous file after first install (no previous yet)" \
 SYSTEMD_DIR="$TMPDIR_TEST/systemd"
 gateway_unit_a_md5="$(md5sum "$SYSTEMD_DIR/laia-gateway.service" | awk '{print $1}')"
 
-# ── Step 2: release v_b ────────────────────────────────────────────────────
+# ── Step 2: frontend artifact gate ─────────────────────────────────────────
 echo
-echo "→ Step 2: laia-release $VER_B"
+echo "→ Step 2: laia-release requires frontend dist unless --skip-frontend"
+set +e
+"$BIN/laia-release" \
+    --version v0.0.0-frontend-missing \
+    --allow-dirty \
+    --skip-tests --skip-pip \
+    --yes \
+    "$LAIA_ROOT" \
+    >"$TMPDIR_TEST/release_frontend_missing.log" 2>&1
+frontend_rc=$?
+set -e
+assert "release without dist and without --skip-frontend fails" \
+  "$([[ "$frontend_rc" -ne 0 ]] && echo 0 || echo 1)"
+assert "failed frontend release did not move symlink" \
+  "$([[ "$(readlink "$SYMLINK")" == "laia-$VER_A" ]] && echo 0 || echo 1)"
+assert "frontend failure mentions --skip-frontend" \
+  "$(grep -q -- '--skip-frontend' "$TMPDIR_TEST/release_frontend_missing.log" && echo 0 || echo 1)"
+
+# ── Step 3: release v_b ────────────────────────────────────────────────────
+echo
+echo "→ Step 3: laia-release $VER_B with --skip-frontend"
 if ! "$BIN/laia-release" \
     --version "$VER_B" \
     --allow-dirty \
