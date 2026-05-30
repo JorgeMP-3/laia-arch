@@ -72,13 +72,23 @@ section "Capa 1/6 — Host & estructura /srv/laia"
 # ─────────────────────────────────────────────────────────────────────────────
 if [[ -d /srv/laia ]]; then
   pass "/srv/laia existe"
-  for d in "$AGORA_DATA_DIR" "$USERS_DIR" /srv/laia/state; do
+  # /srv/laia/agora es el dir operacional núcleo — debe existir en cualquier
+  # host instalado (lo crea el install/clone).
+  if [[ -d "$AGORA_DATA_DIR" ]]; then
+    pass "dir operacional $AGORA_DATA_DIR presente"
+  elif [[ "$LAYOUT" == "v2" ]]; then
+    fail "falta dir operacional $AGORA_DATA_DIR"
+  else
+    pend "dir operacional $AGORA_DATA_DIR" "host v1 — lo crea setup-prod-dirs/migración"
+  fi
+  # users/ y state/ se pueblan al provisionar el primer usuario/agente; en un
+  # install fresco sin usuarios son legítimamente ausentes → PEND, no FAIL. El
+  # caso roto (agentes vivos pero su dir ausente) lo detecta la capa 4.
+  for d in "$USERS_DIR" /srv/laia/state; do
     if [[ -d "$d" ]]; then
       pass "dir operacional $d presente"
-    elif [[ "$LAYOUT" == "v2" ]]; then
-      fail "falta dir operacional $d"
     else
-      pend "dir operacional $d" "host v1 — lo crea setup-prod-dirs/migración"
+      pend "dir operacional $d" "se crea al provisionar el primer usuario/agente"
     fi
   done
 else
