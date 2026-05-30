@@ -26,6 +26,17 @@ Bitácora de hallazgos y acciones de seguridad durante el trabajo diario en el r
 
 ---
 
+## 2026-05-30 — Tarball con secretos world-readable en el home → 0600 (claude opus 4.8 · rol Lead)
+
+- **Tipo**: secret-exposure + permisos
+- **Severidad**: P2 (medio) — exposición local en host solo-Jorge, no remota.
+- **Sistema afectado**: `~/srv-laia-mirror.tgz` (mirror ad-hoc de `/srv/laia`, 4 MB) — contenía
+  `auth.json` (tokens LLM), `agora.db` y `.env` en claro, en modo **644 (world-readable)**.
+- **Acción tomada**: durante el declutter del home se movió a `~/archive` (→ `/mnt/data/home-archive`)
+  y se aplicó **`chmod 600`**. Verificado `-rw------- laia-arch laia-arch`.
+- **Acción pendiente**: evaluar si conserva valor (era safety-mirror pre-migración) o se elimina;
+  si se conserva como backup, llevarlo al destino de backups con perms. Relacionado: `~/.laia/auth.json`
+  sigue en **644** (agujero v1 conocido) — lo cierra C2 al migrar prod a v2 (`/srv/laia/arch/secrets`, 0600).
 ## 2026-05-30 — auth.json de prod: ahora COPIA en el data dir (no bind-mount) tras recuperar el outage del cutover (claude opus 4.8 · Lead)
 
 - **Tipo**: secret-location / permisos
