@@ -15,6 +15,21 @@ Formato:
 
 ---
 
+## 2026-05-30 — Track T1: runner y taxonomía de integridad (Coder-Codex)
+
+- Añadido `tests/integration/run_integrity.sh` con motor Python (`lib/integrity_runner.py`) para
+  descubrir tests `test_*.sh`, seleccionar por perfil (`ci`/`host`/`vm`/`auto`), nivel y capa, y
+  emitir JSON consumible por Track B con exit code estable (`0` verde, `1` fallos, `2` error de runner).
+- D2 (`tests/integration/test_ecosystem_integrity.sh`) queda migrado a la taxonomía mediante metadata
+  `integrity:*` sin perder cobertura ni romper la invocación directa histórica.
+- Documentado en `tests/integration/README.md` el contrato de perfiles, niveles, capas, metadata y
+  formato JSON.
+- Validación: `tests/installer/test_integrity_runner.sh`, `tests/installer/run_all.sh` (**34/34**),
+  `tests/integration/run_integrity.sh --list --profile ci --json /tmp/laia-integrity-list.json`, y
+  en VM `laia-dev` `run_integrity.sh --profile vm --json /tmp/laia-integrity-vm.json`
+  (`passed=1 failed=0 skipped=0`). Prod no tocado.
+- Abierto: T2 separará invariantes núcleo por capa en módulos dedicados.
+
 ## 2026-05-30 — B1 · CI greenfield: la suite corre en cada PR a main (claude opus 4.8 · rol Coder-Opus)
 
 Track B (Robustez/Ops), slice B1. Antes no había `.github/workflows` y la suite solo se
