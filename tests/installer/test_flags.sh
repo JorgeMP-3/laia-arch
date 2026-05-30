@@ -105,6 +105,27 @@ for script in laia-install laia-clone laia-release laia-rollback; do
 done
 
 echo
+echo "→ laia-release git safe.directory registration is idempotent"
+safe_config="$(mktemp)"
+repo_path="$(readlink -f "$LAIA_ROOT")"
+GIT_CONFIG_GLOBAL="$safe_config" LAIA_TEST_FORCE_ROOT_SAFE_DIRECTORY=1 \
+  "$BIN/laia-release" --dry-run --version v0.0.0-test --allow-dirty --skip-tests "$LAIA_ROOT" \
+  >/dev/null 2>&1 || true
+GIT_CONFIG_GLOBAL="$safe_config" LAIA_TEST_FORCE_ROOT_SAFE_DIRECTORY=1 \
+  "$BIN/laia-release" --dry-run --version v0.0.0-test --allow-dirty --skip-tests "$LAIA_ROOT" \
+  >/dev/null 2>&1 || true
+safe_count="$(git config --file "$safe_config" --get-all safe.directory 2>/dev/null | grep -Fx "$repo_path" | wc -l)"
+if [[ "$safe_count" == "1" ]]; then
+  PASS=$((PASS + 1))
+  printf '  ✓ laia-release adds safe.directory once\n'
+else
+  FAIL=$((FAIL + 1))
+  FAILURES+=("laia-release adds safe.directory once (got $safe_count entries)")
+  printf '  ✗ laia-release adds safe.directory once\n'
+fi
+rm -f "$safe_config"
+
+echo
 echo "→ Bad arguments must fail with exit 2"
 assert_nonzero "laia <unknown-subcommand>"   "$BIN/laia" foobar
 assert_nonzero "laia-install --bogus"        "$BIN/laia-install" --bogus
