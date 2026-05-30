@@ -1,8 +1,8 @@
 # LAIA integrity regression suite
 
 Track T turns the old D2 integrity gate into a runner-driven regression suite.
-T1 defines the taxonomy and report contract; later slices add the per-layer
-invariants and heavy e2e cases.
+T1 defines the taxonomy and report contract; T2 adds dedicated per-layer
+invariant modules while keeping D2 as the cross-layer gate.
 
 ## Runner
 
@@ -42,6 +42,19 @@ for example `tests/integration/integration/agora/test_health_contract.sh`.
 The runner discovers every `test_*.sh` under `tests/integration/`; metadata is
 the source of truth for selection.
 
+T2 currently provides one module per core layer:
+
+- `integration/host`: `/srv/laia` operational layout.
+- `integration/lxd`: `laia-agora` container and data mount.
+- `integration/agora`: health endpoint and `agora.db` integrity.
+- `integration/executor`: provisioned `agent-*` containers and workspaces.
+- `integration/data`: two-zone data/secrets permissions.
+- `integration/atlas`: Atlas reference resolution via `doctor`.
+- `unit/backup`: fixture-backed backup contract for CI.
+
+`test_ecosystem_integrity.sh` remains the D2 cross-layer gate; these modules do
+not replace or weaken it.
+
 ## Metadata
 
 Each test script declares its contract in comments:
@@ -76,6 +89,7 @@ Track B consumes the report emitted by `--json FILE` or `--json -`.
     "curl_available": true,
     "sqlite3_available": true,
     "jq_available": false,
+    "python3_available": true,
     "atlas_available": true
   },
   "filters": {
@@ -88,6 +102,7 @@ Track B consumes the report emitted by `--json FILE` or `--json -`.
     "passed": 1,
     "failed": 0,
     "skipped": 0,
+    "runtime_skipped": 0,
     "duration_ms": 123
   },
   "tests": [
@@ -115,6 +130,10 @@ Exit codes:
 - `0`: every selected test passed.
 - `1`: at least one selected test failed.
 - `2`: runner/configuration error, including no selected tests.
+
+Individual test scripts may exit `77` to request an explicit skip after doing
+their own applicability checks. The runner records that as `status:"skip"` with
+`reason:"test requested skip"`; it is not counted as a pass.
 
 ## D2 Migration Status
 
