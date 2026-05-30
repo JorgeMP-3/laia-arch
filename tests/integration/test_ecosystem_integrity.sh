@@ -19,6 +19,14 @@
 # Overrides (env): CONTAINER, LAIA_ARCH_DIR_OVERRIDE, LAIA_ARCH_CREDS_DIR_OVERRIDE,
 #   LAIA_AGORA_DIR_OVERRIDE, AGORA_DB, LAIA_USERS_DIR_OVERRIDE, LAIA_BACKUP_DIR,
 #   AGORA_HEALTH_PORT.
+#
+# integrity:id=ecosystem_integrity_d2
+# integrity:name=D2 ecosystem integrity gate
+# integrity:level=integration
+# integrity:layers=host,lxd,agora,executor,data,atlas,backups
+# integrity:profiles=ci,host,vm
+# integrity:requires=optional_lxd,optional_curl,optional_sqlite3,optional_jq,optional_atlas
+# integrity:timeout=180
 set -u
 
 # ── Config (overridable) ─────────────────────────────────────────────────────

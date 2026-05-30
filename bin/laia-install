@@ -243,6 +243,7 @@ main() {
     emit_json_event step_done install:factory "Factory bootstrap skipped (--minimal)"
   else
     emit_json_event step_start install:factory "Factory bootstrap (LXD + agora + admin)"
+    fact_ensure_operational_dirs
     fact_seed_cli_config
     fact_seed_authjson
     fact_persist_env_to_container

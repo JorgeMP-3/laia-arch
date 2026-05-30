@@ -36,6 +36,9 @@ INST_BIN_DIR=""
 DATA_DIR=""
 INST_ARCH_DIR=""
 INST_ARCH_CREDS_DIR=""
+INST_SRV_DIR=""
+INST_STATE_DIR=""
+INST_USERS_DIR=""
 SYSTEMD_DIR=""
 LAIA_HOST_ARCH=""
 
@@ -63,6 +66,22 @@ inst_compute_paths() {
     INST_ARCH_DIR="/srv/laia/arch"
   fi
   INST_ARCH_CREDS_DIR="${LAIA_ARCH_CREDS_DIR_OVERRIDE:-$INST_ARCH_DIR/secrets}"
+
+  if [[ -n "${LAIA_SRV_DIR_OVERRIDE:-}" ]]; then
+    INST_SRV_DIR="$LAIA_SRV_DIR_OVERRIDE"
+  elif [[ -n "${LAIA_STATE_ROOT:-}" ]]; then
+    INST_SRV_DIR="$(dirname "$LAIA_STATE_ROOT")"
+  elif [[ -n "${LAIA_USERS_DIR_OVERRIDE:-}" ]]; then
+    INST_SRV_DIR="$(dirname "$LAIA_USERS_DIR_OVERRIDE")"
+  elif [[ -n "${LAIA_ARCH_DIR_OVERRIDE:-}" ]]; then
+    INST_SRV_DIR="$(dirname "$LAIA_ARCH_DIR_OVERRIDE")"
+  elif inst_is_override_mode; then
+    INST_SRV_DIR="$DATA_DIR/srv/laia"
+  else
+    INST_SRV_DIR="/srv/laia"
+  fi
+  INST_STATE_DIR="${LAIA_STATE_ROOT:-$INST_SRV_DIR/state}"
+  INST_USERS_DIR="${LAIA_USERS_DIR_OVERRIDE:-$INST_SRV_DIR/users}"
   SYSTEMD_DIR="${LAIA_SYSTEMD_DIR_OVERRIDE:-/etc/systemd/system}"
 }
 
@@ -74,6 +93,8 @@ inst_is_override_mode() {
      || -n "${LAIA_HOME_OVERRIDE:-}" \
      || -n "${LAIA_ARCH_DIR_OVERRIDE:-}" \
      || -n "${LAIA_ARCH_CREDS_DIR_OVERRIDE:-}" \
+     || -n "${LAIA_SRV_DIR_OVERRIDE:-}" \
+     || -n "${LAIA_STATE_ROOT:-}" \
      || -n "${LAIA_SYSTEMD_DIR_OVERRIDE:-}" \
      || -n "${LAIA_USERS_DIR_OVERRIDE:-}" \
      || -n "${LAIA_TOOLS_HOME_OVERRIDE:-}" ]]
@@ -420,8 +441,9 @@ _inst_run_pip() {
 }
 
 # ─── B.4 (continued): Frontend build ────────────────────────────────────────
-# Strategy: if laia-ui/ ships pre-built dist/, accept it as-is. Otherwise warn
-# and continue — laia-release should produce the build before promoting.
+# Strategy: if laia-ui/ ships pre-built dist/, accept it as-is. Otherwise fail
+# before promoting. Host-only/API releases can opt out explicitly with
+# --skip-frontend.
 inst_check_frontend() {
   if [[ "$OPT_SKIP_FRONTEND" == true ]]; then
     log_step "Frontend (SKIPPED — --skip-frontend)"
@@ -444,9 +466,7 @@ inst_check_frontend() {
   if [[ "$has_dist" == true ]]; then
     log_success "Pre-built dist/ directories detected — leaving as-is"
   else
-    log_warn "No frontend build artifacts found."
-    log_warn "Run pnpm build in the source tree before laia-release, or pass --skip-frontend."
-    log_warn "Continuing — services depending on laia-ui will fail until this is fixed."
+    die "No frontend build artifacts found. Run pnpm build before laia-release, or pass --skip-frontend for host/API-only releases."
   fi
 }
 
