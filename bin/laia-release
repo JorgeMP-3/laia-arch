@@ -65,7 +65,7 @@ OPTIONS
     --version VER         Force release version (default: git describe HEAD tag)
     --skip-tests          Skip pre-release smoke tests
     --skip-pip            Skip venv creation / pip install (build phase)
-    --skip-frontend       Skip frontend artifact check
+    --skip-frontend       Skip required laia-ui dist/ artifact check for host/API-only releases
     --no-systemd          Don't re-render or install systemd units
     --allow-dirty         Release even if the working tree has uncommitted changes
     --force               Allow re-building over an existing /opt/laia-vX.Y.Z dir

@@ -420,8 +420,9 @@ _inst_run_pip() {
 }
 
 # ─── B.4 (continued): Frontend build ────────────────────────────────────────
-# Strategy: if laia-ui/ ships pre-built dist/, accept it as-is. Otherwise warn
-# and continue — laia-release should produce the build before promoting.
+# Strategy: if laia-ui/ ships pre-built dist/, accept it as-is. Otherwise fail
+# before promoting. Host-only/API releases can opt out explicitly with
+# --skip-frontend.
 inst_check_frontend() {
   if [[ "$OPT_SKIP_FRONTEND" == true ]]; then
     log_step "Frontend (SKIPPED — --skip-frontend)"
@@ -444,9 +445,7 @@ inst_check_frontend() {
   if [[ "$has_dist" == true ]]; then
     log_success "Pre-built dist/ directories detected — leaving as-is"
   else
-    log_warn "No frontend build artifacts found."
-    log_warn "Run pnpm build in the source tree before laia-release, or pass --skip-frontend."
-    log_warn "Continuing — services depending on laia-ui will fail until this is fixed."
+    die "No frontend build artifacts found. Run pnpm build before laia-release, or pass --skip-frontend for host/API-only releases."
   fi
 }
 
