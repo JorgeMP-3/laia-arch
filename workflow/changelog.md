@@ -33,12 +33,24 @@ corría a mano. Ahora cada PR a `main` la ejecuta GitHub Actions.
 - **Test guard** `tests/test_ci_workflow.sh` — anti-drift: verifica que el CI sigue alineado
   (paths existen, floor de Python del CI == floor real del installer, SKIP de D2 documentado).
   17/17 ✓.
-- **Verificado en local antes de declarar hecho:** backend 355 passed / 8 skipped en py3.11 y
-  py3.14; installer 33/33 (exit 0) sobre checkout limpio; YAML válido (3 jobs). Nota: en un
-  *git worktree* 4 installer tests fallan por el artefacto `.git`-como-fichero (release.sh exige
-  `.git` directorio) — no aplica en CI, que usa `actions/checkout`.
-- **Abierto:** falta que el workflow pase en un PR real (criterio de aceptación B1) → se verá al
-  abrir este PR. Siguientes slices: B2 (monitor→dashboard), B3 (backup off-site, prod-risk).
+- **El primer run de CI (PR #30) destapó 2 falsos positivos locales** (el valor del CICD):
+  1. Backend: `app/storage.py` hace `sys.path.insert(0, laia_root)` para importar `workspace_store`;
+     `laia_root` defaultea a `$HOME/LAIA` → en el runner no existe → `ModuleNotFoundError`. En local
+     "pasaba" porque `$HOME/LAIA` existe. **Fix:** `LAIA_ROOT=${{ github.workspace }}` en el job.
+  2. Installer: 2 tests NO son host-free pese a lo que dice `tests/installer/README.md`:
+     `test_install_native_layout.sh` (su `laia auth` necesita deps de laia-core —dotenv/pyyaml—
+     que en local toma de `/opt/laia/.laia-core/venv`) y `test_clone_hardening.sh` (bloque sudo-clone
+     + preflight de disco que lee 0 GB sobre ruta inexistente). **Fix:** `INSTALLER_SKIP` en
+     `run_all.sh` (nuevo, retrocompatible, imprime los skips → no silent cap), excluidos en CI con
+     razón; cubiertos por VM E2E.
+- **Problemas registrados** (`workflow/problems.md`): `ensure-disk-free-gb-nonexistent-path-reads-0`
+  y `installer-tests-readme-overclaims-host-free` (ambos `open`).
+- **Verificado:** backend 355 passed / 8 skipped en py3.11 y py3.14 con HOME vacío + LAIA_ROOT=checkout
+  (réplica fiel del runner); `INSTALLER_SKIP` salta los 2 y deja 31 ok / exit 0; YAML válido; guard
+  `test_ci_workflow.sh` 23/23. (En *worktree* fallan además 4 release tests por `.git`-fichero — no
+  aplica en CI, que usa `actions/checkout`.)
+- **Abierto:** confirmar el run verde de CI sobre el PR (criterio de aceptación B1). Siguientes
+  slices: B2 (monitor→dashboard), B3 (backup off-site, prod-risk).
 
 ## 2026-05-30 — Validación del deploy v0.2.0 en la VM laia-dev + D2 fresh-install-aware (claude opus 4.8 · rol Lead)
 

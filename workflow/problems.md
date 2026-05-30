@@ -30,6 +30,40 @@ añade una línea `- **Resuelto**: 2026-MM-DD en commit <hash>`.
 
 ---
 
+## ensure-disk-free-gb-nonexistent-path-reads-0 (open)
+
+- **Descubierto**: 2026-05-30 por claude opus 4.8 (Coder-Opus) durante B1 (CI greenfield).
+- **Síntoma**: en CI (runner con sudo passwordless), `test_clone_hardening.sh` falla con
+  `✗ Not enough disk space at /tmp/laia-marker-test.XXX/sudo-clone/dest/opt: 0 GB free,
+  5 GB required`, aunque el runner tiene >10 GB libres.
+- **Causa raíz sospechada**: `infra/installer/lib/system.sh:82` →
+  `df -BG --output=avail "$path" 2>/dev/null | tail -1 | tr -dc '0-9'`. Si `$path` aún
+  **no existe** (aquí el override `LAIA_INSTALL_ROOT_OVERRIDE=.../dest/opt` que el install
+  todavía no creó), `df` falla, el `2>/dev/null` se traga el error y `tr` deja cadena vacía
+  → se interpreta como **0 GB** → `die`. Debería medir el ancestro existente más cercano
+  (o crear el dir antes de medir).
+- **Reproducción**: en un host con sudo passwordless, `bash tests/installer/test_clone_hardening.sh`
+  (entra en el bloque `sudo -n true`). En un host sin sudo passwordless el bloque se salta y
+  no se ve.
+- **Workaround**: en CI se excluye el test vía `INSTALLER_SKIP` (ver `.github/workflows/ci.yml`);
+  cubierto por VM E2E. No bloquea B1.
+- **Owner**: sin asignar (candidato a fix en el flujo de install/clone, prod-risk → revisar con Jorge).
+- **Estado**: open.
+
+## installer-tests-readme-overclaims-host-free (open)
+
+- **Descubierto**: 2026-05-30 por claude opus 4.8 (Coder-Opus) durante B1 (CI greenfield).
+- **Síntoma**: `tests/installer/README.md` afirma que **todos** los `test_*.sh` corren "without
+  root, without LXD, without GitHub". En un runner limpio fallan 2: `test_install_native_layout.sh`
+  (su `laia auth` necesita las deps de laia-core: `python-dotenv`, `pyyaml`, … que en un host real
+  trae `/opt/laia/.laia-core/venv`) y `test_clone_hardening.sh` (ver problema anterior).
+- **Causa raíz sospechada**: docu desactualizada / falso positivo enmascarado por artefactos del
+  host de dev (`$HOME/LAIA`, `/opt/laia/.laia-core/venv`). Solo el CI limpio lo destapa.
+- **Reproducción**: correr esos 2 tests con `env -i` (sin `/opt/laia` ni `$HOME/LAIA`).
+- **Workaround**: excluidos en CI vía `INSTALLER_SKIP`, documentado en `.github/workflows/README.md`.
+- **Owner**: sin asignar.
+- **Estado**: open.
+
 ## agora-backend-test-pool-contamination (resolved)
 
 - **Descubierto**: 2026-05-28 por claude opus 4.7 durante PR-2 de atlas adoption.
