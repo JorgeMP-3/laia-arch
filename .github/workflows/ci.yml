@@ -1,0 +1,113 @@
+name: CI
+
+# Track B · slice B1 — la suite de LAIA corre en cada PR a `main`.
+# Qué corre y qué se skipea (y por qué) está documentado en
+# .github/workflows/README.md (matriz "no silent cap"). El job
+# `skip-matrix` reimprime esa matriz como anotaciones en el PR para
+# que el SKIP de D2/LXD sea visible sin abrir el README.
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch: {}
+
+# Solo necesitamos leer el repo. Sin secrets, sin escritura.
+permissions:
+  contents: read
+
+# Un PR que recibe varios pushes seguidos cancela los runs viejos.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ── Backend (agora-backend) ────────────────────────────────────────────────
+  # pytest de services/agora-backend. Matriz: 3.11 = floor del proyecto
+  # (infra/installer/lib/install.sh → require_python_min 3.11) y 3.14 = la
+  # versión que corre el dev. Probar el floor evita "funciona en mi 3.14 pero
+  # no en la mínima soportada". Verificado en local: 355 passed, 8 skipped en
+  # ambas. fail-fast off para ver las dos aunque una rompa.
+  backend:
+    name: Backend pytest (py${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.11', '3.14']
+    defaults:
+      run:
+        working-directory: services/agora-backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: services/agora-backend/requirements.txt
+
+      - name: Install deps (requirements.txt + pytest)
+        run: |
+          python -m pip install --upgrade pip
+          # pytest no está en requirements.txt (sólo runtime) → se añade aquí.
+          pip install -r requirements.txt pytest
+
+      - name: Run pytest
+        # conftest.py aísla datos en un tmpdir y desactiva el scheduler, así que
+        # no hace falta DB ni servicios vivos. -q para log compacto.
+        #
+        # LAIA_ROOT: app/storage.py hace `sys.path.insert(0, settings.laia_root)`
+        # para importar el módulo `workspace_store` (vive en la raíz del repo).
+        # Sin esto, laia_root defaultea a $HOME/LAIA (inexistente en el runner) →
+        # ModuleNotFoundError: workspace_store. Apuntarlo al checkout lo resuelve.
+        env:
+          LAIA_ROOT: ${{ github.workspace }}
+        run: python -m pytest tests/ -q
+
+  # ── Installer / cloner (shell, host-free) ───────────────────────────────────
+  # tests/installer/run_all.sh corre los test_*.sh diseñados para ejercitar
+  # parsing de flags, helpers de lib/, render de systemd y dry-runs SIN root,
+  # SIN LXD y SIN GitHub (ver tests/installer/README.md). Stubs en
+  # tests/installer/_stubs/ (lxc, lxd, snap, curl). Verificado: 33/33, exit 0
+  # sobre un checkout normal (.git como directorio, que es lo que da
+  # actions/checkout).
+  installer:
+    name: Installer shell tests (host-free)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run host-free installer suite
+        # INSTALLER_SKIP excluye 2 tests que NO son host-free en un runner pelado
+        # (pasan en local sólo por artefactos del host de dev). Se imprimen como
+        # SKIP en el log de run_all.sh → no silent cap. Razón de cada uno:
+        #  - test_install_native_layout.sh: su `laia auth add` dispatcha a
+        #    laia_cli.main, que necesita las deps de laia-core (python-dotenv,
+        #    pyyaml, …). En un host real las trae /opt/laia/.laia-core/venv; en el
+        #    runner no existe → cae a python3 de sistema sin esas deps → falla.
+        #  - test_clone_hardening.sh: su bloque sudo-clone sólo corre con sudo
+        #    passwordless (presente en runners GitHub) y ejercita un install cuyo
+        #    preflight de disco (ensure_disk_free_gb, 5 GB) lee 0 GB sobre una ruta
+        #    override aún no creada bajo TMPDIR. Quirk latente (ver problems.md).
+        # Ambos quedan cubiertos por el E2E en VM (tests/installer/README.md).
+        env:
+          INSTALLER_SKIP: "test_install_native_layout.sh test_clone_hardening.sh"
+        run: bash tests/installer/run_all.sh
+
+  # ── Matriz de SKIP (no silent cap) ──────────────────────────────────────────
+  # No corre tests: documenta en el propio run de CI qué suites quedan FUERA y
+  # por qué. Así el límite de cobertura es explícito en cada PR, no silencioso.
+  skip-matrix:
+    name: Coverage matrix (documented skips)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Print run/skip matrix
+        run: |
+          echo "::notice title=CI corre::backend pytest (services/agora-backend, py3.11 + py3.14, LAIA_ROOT=checkout) + tests/installer/run_all.sh (host-free, menos 2 excluidos)"
+          echo "::notice title=SKIP por diseño — D2::tests/integration/test_ecosystem_integrity.sh requiere LXD + container laia-agora vivo + /api/health → no ejecutable en runner sin host. Se corre a mano / en VM laia-dev y (B2) vía monitor."
+          echo "::notice title=SKIP por diseño — tests de plugin del backend::6 tests cargan plugins de .laia-core/plugins (gitignored, provistos por la instalación). En el checkout no existen → pytest.skip limpio (helper tests/_laia_core.py). Corren en host/VM con laia-core."
+          echo "::notice title=SKIP por diseño — 2 installer tests::test_install_native_layout.sh (laia auth necesita deps de laia-core: dotenv/pyyaml) y test_clone_hardening.sh (bloque sudo-clone + preflight de disco) NO son host-free en un runner pelado → INSTALLER_SKIP. Cubiertos por VM E2E."
+          echo "::notice title=SKIP por diseño — host tests::tests/*.sh top-level y tests/wizard/*.py quedan fuera del alcance de B1 (algunos requieren host/servicios). Candidatos a ampliación futura del CI."
+          echo "::notice title=SKIP por diseño — VM E2E::tests/installer/vm-*.sh (Multipass/VM) no son test_*.sh → run_all.sh no los toca; necesitan VM."
+          echo "Detalle completo y razones: .github/workflows/README.md"

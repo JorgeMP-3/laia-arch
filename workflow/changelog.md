@@ -15,6 +15,51 @@ Formato:
 
 ---
 
+## 2026-05-30 — B1 · CI greenfield: la suite corre en cada PR a main (claude opus 4.8 · rol Coder-Opus)
+
+Track B (Robustez/Ops), slice B1. Antes no había `.github/workflows` y la suite solo se
+corría a mano. Ahora cada PR a `main` la ejecuta GitHub Actions.
+
+- **`.github/workflows/ci.yml`** (greenfield). 3 jobs, `permissions: contents: read`,
+  concurrencia con `cancel-in-progress`:
+  - `backend` — `pytest tests/` en `services/agora-backend`, matriz Python **3.11 + 3.14**
+    (3.11 = floor real del installer `require_python_min`; 3.14 = versión del dev).
+  - `installer` — `tests/installer/run_all.sh` (host-free: stubs de lxc/lxd/snap/curl).
+  - `skip-matrix` — imprime como anotaciones del PR qué queda fuera y por qué (no silent cap).
+- **`.github/workflows/README.md`** — matriz "qué corre / qué se skipea" + cómo reproducir
+  en local + candidatos de ampliación futura (tests/wizard, tests/*.py top-level).
+- **SKIP documentado:** D2 (`tests/integration/test_ecosystem_integrity.sh`) requiere LXD +
+  container vivo → no ejecutable en runner; se cubrirá en caliente con el monitor B2.
+- **Test guard** `tests/test_ci_workflow.sh` — anti-drift: verifica que el CI sigue alineado
+  (paths existen, floor de Python del CI == floor real del installer, SKIP de D2 documentado).
+  17/17 ✓.
+- **El primer run de CI (PR #30) destapó 2 falsos positivos locales** (el valor del CICD):
+  1. Backend: `app/storage.py` hace `sys.path.insert(0, laia_root)` para importar `workspace_store`;
+     `laia_root` defaultea a `$HOME/LAIA` → en el runner no existe → `ModuleNotFoundError`. En local
+     "pasaba" porque `$HOME/LAIA` existe. **Fix:** `LAIA_ROOT=${{ github.workspace }}` en el job.
+  2. Installer: 2 tests NO son host-free pese a lo que dice `tests/installer/README.md`:
+     `test_install_native_layout.sh` (su `laia auth` necesita deps de laia-core —dotenv/pyyaml—
+     que en local toma de `/opt/laia/.laia-core/venv`) y `test_clone_hardening.sh` (bloque sudo-clone
+     + preflight de disco que lee 0 GB sobre ruta inexistente). **Fix:** `INSTALLER_SKIP` en
+     `run_all.sh` (nuevo, retrocompatible, imprime los skips → no silent cap), excluidos en CI con
+     razón; cubiertos por VM E2E.
+- **2º run de CI destapó un 3er falso positivo (rutas hardcodeadas):** 6 tests del backend
+  cargaban su plugin desde la ruta absoluta del host de dev (`.laia-core/` está en .gitignore →
+  los plugins no están en el checkout). **Fix:** helper `tests/_laia_core.py` que resuelve vía
+  `LAIA_ROOT`/raíz del repo y hace `pytest.skip` limpio si el plugin no está. Los 6 tests corren
+  en host/VM con laia-core (63 passed) y skipean en CI (38 skip). Suite backend en réplica-CI:
+  317 passed / 46 skipped / exit 0.
+- **Problemas registrados** (`workflow/problems.md`): `ensure-disk-free-gb-nonexistent-path-reads-0`
+  (open), `installer-tests-readme-overclaims-host-free` (open) y
+  `backend-tests-hardcodean-ruta-de-plugins-del-host-de-dev` (resolved en este PR).
+- **Verificado:** backend 355 passed / 8 skipped en py3.11 y py3.14 con HOME vacío + LAIA_ROOT=checkout
+  (réplica fiel del runner); `INSTALLER_SKIP` salta los 2 y deja 31 ok / exit 0; YAML válido; guard
+  `test_ci_workflow.sh` 23/23. (En *worktree* fallan además 4 release tests por `.git`-fichero — no
+  aplica en CI, que usa `actions/checkout`.)
+- **CI verde sobre el PR #30** (merge commit): los 4 checks SUCCESS (backend py3.11/py3.14,
+  installer, skip-matrix) → criterio de aceptación B1 cumplido. Pendiente sólo revisión del Lead.
+  Siguientes slices: B2 (monitor→dashboard), B3 (backup off-site, prod-risk).
+
 ## 2026-05-30 — Track A pre-prod hardening para deploy v2 (Coder-Codex)
 
 - Resueltos los 5 follow-ups bloqueantes de la ventana pre-prod:
