@@ -30,6 +30,24 @@ añade una línea `- **Resuelto**: 2026-MM-DD en commit <hash>`.
 
 ---
 
+## backend-tests-hardcodean-ruta-de-plugins-del-host-de-dev (resolved)
+
+- **Descubierto**: 2026-05-30 por claude opus 4.8 (Coder-Opus) durante B1 (CI greenfield).
+- **Resuelto**: 2026-05-30 en este PR (branch `wip/claude/robustez-ops`).
+- **Síntoma**: 6 tests del backend (`test_agent_delegation`, `test_agent_self_edit`,
+  `test_agent_learnings`, `test_scheduler`, `test_auto_import`, `test_secondary_workspaces`)
+  cargaban su plugin desde la ruta absoluta hardcodeada del host de dev
+  (`.../LAIA/.laia-core/plugins/<X>/__init__.py`). En CI (checkout limpio) →
+  `FileNotFoundError`. En local "pasaban" porque esa ruta existe en la máquina de Jorge.
+- **Causa raíz**: `.laia-core/` está en `.gitignore` (lo provee la instalación de laia-core,
+  no el repo) → esos plugins **no están en el checkout**. El path absoluto enmascaraba la
+  dependencia. (Es justo lo que detecta `scripts/check-hardcoded-paths.py`.)
+- **Fix**: nuevo helper `services/agora-backend/tests/_laia_core.py` que resuelve el plugin
+  vía `LAIA_ROOT`/raíz del repo y hace `pytest.skip` limpio si no está presente. Los 6 tests
+  lo usan. Resultado: corren en host/VM con laia-core (63 passed), skipean en CI (38 skip).
+- **Owner**: Coder-Opus.
+- **Estado**: resolved.
+
 ## ensure-disk-free-gb-nonexistent-path-reads-0 (open)
 
 - **Descubierto**: 2026-05-30 por claude opus 4.8 (Coder-Opus) durante B1 (CI greenfield).

@@ -43,8 +43,15 @@ corría a mano. Ahora cada PR a `main` la ejecuta GitHub Actions.
      + preflight de disco que lee 0 GB sobre ruta inexistente). **Fix:** `INSTALLER_SKIP` en
      `run_all.sh` (nuevo, retrocompatible, imprime los skips → no silent cap), excluidos en CI con
      razón; cubiertos por VM E2E.
+- **2º run de CI destapó un 3er falso positivo (rutas hardcodeadas):** 6 tests del backend
+  cargaban su plugin desde la ruta absoluta del host de dev (`.laia-core/` está en .gitignore →
+  los plugins no están en el checkout). **Fix:** helper `tests/_laia_core.py` que resuelve vía
+  `LAIA_ROOT`/raíz del repo y hace `pytest.skip` limpio si el plugin no está. Los 6 tests corren
+  en host/VM con laia-core (63 passed) y skipean en CI (38 skip). Suite backend en réplica-CI:
+  317 passed / 46 skipped / exit 0.
 - **Problemas registrados** (`workflow/problems.md`): `ensure-disk-free-gb-nonexistent-path-reads-0`
-  y `installer-tests-readme-overclaims-host-free` (ambos `open`).
+  (open), `installer-tests-readme-overclaims-host-free` (open) y
+  `backend-tests-hardcodean-ruta-de-plugins-del-host-de-dev` (resolved en este PR).
 - **Verificado:** backend 355 passed / 8 skipped en py3.11 y py3.14 con HOME vacío + LAIA_ROOT=checkout
   (réplica fiel del runner); `INSTALLER_SKIP` salta los 2 y deja 31 ok / exit 0; YAML válido; guard
   `test_ci_workflow.sh` 23/23. (En *worktree* fallan además 4 release tests por `.git`-fichero — no

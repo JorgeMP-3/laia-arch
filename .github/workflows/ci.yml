@@ -106,6 +106,7 @@ jobs:
         run: |
           echo "::notice title=CI corre::backend pytest (services/agora-backend, py3.11 + py3.14, LAIA_ROOT=checkout) + tests/installer/run_all.sh (host-free, menos 2 excluidos)"
           echo "::notice title=SKIP por diseño — D2::tests/integration/test_ecosystem_integrity.sh requiere LXD + container laia-agora vivo + /api/health → no ejecutable en runner sin host. Se corre a mano / en VM laia-dev y (B2) vía monitor."
+          echo "::notice title=SKIP por diseño — tests de plugin del backend::6 tests cargan plugins de .laia-core/plugins (gitignored, provistos por la instalación). En el checkout no existen → pytest.skip limpio (helper tests/_laia_core.py). Corren en host/VM con laia-core."
           echo "::notice title=SKIP por diseño — 2 installer tests::test_install_native_layout.sh (laia auth necesita deps de laia-core: dotenv/pyyaml) y test_clone_hardening.sh (bloque sudo-clone + preflight de disco) NO son host-free en un runner pelado → INSTALLER_SKIP. Cubiertos por VM E2E."
           echo "::notice title=SKIP por diseño — host tests::tests/*.sh top-level y tests/wizard/*.py quedan fuera del alcance de B1 (algunos requieren host/servicios). Candidatos a ampliación futura del CI."
           echo "::notice title=SKIP por diseño — VM E2E::tests/installer/vm-*.sh (Multipass/VM) no son test_*.sh → run_all.sh no los toca; necesitan VM."
