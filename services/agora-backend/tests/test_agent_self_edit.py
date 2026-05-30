@@ -18,26 +18,9 @@ import pytest
 
 @pytest.fixture(scope="module")
 def plugin_mod():
-    init_py = Path(
-        "/home/laia-arch/LAIA/.laia-core/plugins/agent-self-edit/__init__.py"
-    )
-    if not init_py.exists():
-        # Fallback for repo layouts that put the package elsewhere.
-        here = Path(__file__).resolve()
-        for parent in here.parents:
-            cand = parent / ".laia-core" / "plugins" / "agent-self-edit" / "__init__.py"
-            if cand.exists():
-                init_py = cand
-                break
-    assert init_py.exists()
-    spec = importlib.util.spec_from_file_location(
-        "_agent_self_edit_test", init_py
-    )
-    mod = importlib.util.module_from_spec(spec)
-    sys.modules["_agent_self_edit_test"] = mod
-    assert spec.loader is not None
-    spec.loader.exec_module(mod)
-    return mod
+    from tests._laia_core import load_plugin_or_skip
+
+    return load_plugin_or_skip("agent-self-edit/__init__.py", "_agent_self_edit_test")
 
 
 @pytest.fixture
