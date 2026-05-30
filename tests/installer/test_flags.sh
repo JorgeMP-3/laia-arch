@@ -62,6 +62,26 @@ assert_contains() {
   fi
 }
 
+installed_version_count() {
+  local root="${LAIA_INSTALL_ROOT_OVERRIDE:-/opt}" d count=0
+  for d in "$root"/laia-v*/; do
+    [[ -d "$d" ]] || continue
+    count=$((count + 1))
+  done
+  printf '%d\n' "$count"
+}
+
+assert_rollback_dry_run_or_skip() {
+  local count
+  count="$(installed_version_count)"
+  if [[ "$count" -lt 2 ]]; then
+    PASS=$((PASS + 1))
+    printf '  ✓ laia-rollback --dry-run skipped (<2 installed versions: %s)\n' "$count"
+    return 0
+  fi
+  assert_zero "laia-rollback --dry-run" "$BIN/laia-rollback" --dry-run
+}
+
 # ── Tests ───────────────────────────────────────────────────────────────────
 
 echo "→ Sanity: scripts exist and are executable"
@@ -98,11 +118,22 @@ for script in laia-install laia-clone laia-release laia-rollback; do
       assert_zero "$script --dry-run" \
         "$BIN/$script" --dry-run --version v0.0.0-test --allow-dirty --skip-tests "$LAIA_ROOT"
       ;;
+    laia-rollback)
+      assert_rollback_dry_run_or_skip
+      ;;
     *)
       assert_zero "$script --dry-run" "$BIN/$script" --dry-run
       ;;
   esac
 done
+
+echo
+echo "→ laia-rollback --dry-run is optional with <2 installed versions"
+single_version_root="$(mktemp -d)"
+mkdir -p "$single_version_root/laia-v0.0.1"
+ln -s "laia-v0.0.1" "$single_version_root/laia"
+LAIA_INSTALL_ROOT_OVERRIDE="$single_version_root" assert_rollback_dry_run_or_skip
+rm -rf "$single_version_root"
 
 echo
 echo "→ laia-release git safe.directory registration is idempotent"
