@@ -1,0 +1,25 @@
+[Unit]
+Description=LAIA health monitor (corre el runner de integridad T1 y publica estado a /srv/laia/state/health)
+Documentation=file://${LAIA_INSTALL_PREFIX}/infra/bin/laia-health-monitor
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=${LAIA_USER}
+Group=${LAIA_USER}
+Environment=LAIA_ROOT=${LAIA_INSTALL_PREFIX}
+# Corre el runner (profile host) y escribe el veredicto a /srv/laia/state/health.
+# No manda email (decisión de Jorge): el estado se consulta en disco / vía `laia
+# status`. Sale 0 aunque la salud esté roja — la salud se lee del estado, no del
+# exit del unit. ProtectSystem=full deja /srv y /var escribibles (estado + socket LXD).
+ExecStart=${LAIA_INSTALL_PREFIX}/infra/bin/laia-health-monitor run
+Nice=10
+IOSchedulingClass=idle
+ProtectSystem=full
+NoNewPrivileges=true
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

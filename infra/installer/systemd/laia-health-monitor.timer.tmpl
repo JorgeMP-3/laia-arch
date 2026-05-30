@@ -1,0 +1,15 @@
+[Unit]
+Description=LAIA health monitor timer (dispara laia-health-monitor.service cada ~10 min)
+
+[Timer]
+# Primer chequeo 2 min tras el arranque; luego cada 10 min. Jitter pequeño para
+# no clavar siempre el mismo segundo. Persistent recupera un run perdido (host
+# apagado) en el siguiente boot.
+OnBootSec=2min
+OnUnitActiveSec=10min
+RandomizedDelaySec=30
+Persistent=true
+Unit=laia-health-monitor.service
+
+[Install]
+WantedBy=timers.target
