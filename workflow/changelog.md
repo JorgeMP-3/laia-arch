@@ -15,6 +15,25 @@ Formato:
 
 ---
 
+## 2026-05-30 — Declutter del `$HOME` de laia-arch → `/mnt/data` (HDD 4 TB) (claude opus 4.8 · rol Lead)
+
+Limpieza del home del operador (host prod), **sin borrar nada** (decisión de Jorge): el clutter
+se movió a un archive físico en el HDD de 4 TB. NO toca el código del producto.
+
+- **`~/archive` es ahora un symlink → `/mnt/data/home-archive`** (`/dev/sda1`, 3.3 T libres). 113 M archivados.
+- **Movido al archive:** los 2 worktrees mergeados `LAIA-wt-c3` (PR #22) y `LAIA-wt-d1-tests`
+  (PR #25) vía `cp -a` + `git worktree repair` (cross-device → `git worktree move` falla;
+  siguen siendo worktrees válidos apuntando al HDD); `srv-laia-mirror.tgz` (mirror de `/srv/laia`);
+  `audio-models/` (venv py3.14); `workspaces/` (duplicado stale de `~/LAIA-ARCH/workspaces`, no
+  referenciado por atlas/config); `backup-prod-to-usb.sh` (one-shot, superseded por D1).
+- **Seguridad:** `srv-laia-mirror.tgz` contenía `auth.json`/`agora.db`/`.env` y estaba
+  **world-readable (644)** → ahora **0600** (ver `security.md`).
+- **NO tocado:** `~/.laia` (secretos v1 vivos hasta la migración a prod; destino =
+  `/srv/laia/arch/{,secrets}`, Bloque C), `~/LAIA`, `~/LAIA-ARCH`, dotfiles del sistema.
+- **Abierto:** `/mnt/data` es el **mismo disco físico** que la VM `laia-dev` → es declutter, **no**
+  backup off-site (eso es D5b → USB `VM-USB`). Si se desmonta `/mnt/data`, los worktrees
+  archivados aparecen ausentes en `git worktree list` (inofensivo; `git worktree prune` los limpia).
+
 ## 2026-05-30 — Validación del deploy v0.2.0 en la VM laia-dev + D2 fresh-install-aware (claude opus 4.8 · rol Lead)
 
 Tras cortar el release **v0.2.0** (main→stable + tag, ver abajo), se validó el deploy en la VM
