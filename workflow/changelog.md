@@ -15,6 +15,22 @@ Formato:
 
 ---
 
+## 2026-05-30 — Track A pre-prod hardening para deploy v2 (Coder-Codex)
+
+- Resueltos los 5 follow-ups bloqueantes de la ventana pre-prod:
+  `laia-release` registra idempotentemente el repo como `git safe.directory` cuando corre como root;
+  `test_flags.sh` ya no falla `laia-rollback --dry-run` con menos de 2 versiones instaladas;
+  `laia-release` exige artefactos `laia-ui` salvo `--skip-frontend` explícito;
+  `laia-install` crea en factory `/srv/laia/state` y `/srv/laia/users`;
+  `setup-prod-dirs.sh` deja de crear `/srv/laia/agents` y usa el canónico `/srv/laia/users`.
+- Tests añadidos/ajustados en `tests/installer/`: cobertura de `safe.directory`, rollback de primer deploy,
+  gate de frontend, layout factory state/users y `setup-prod-dirs` con override sandbox.
+- Docs operativas reconciliadas para no propagar `/srv/laia/agents`.
+- Validación: `tests/installer/run_all.sh` verde (**33/33 scripts**). Ensayo en VM `laia-dev`
+  de `setup-prod-dirs.sh` con `LAIA_SRV_DIR_OVERRIDE` bajo `/tmp`: crea `users` 0750, no crea
+  `agents`, y mantiene `arch/secrets` 0700. Prod no tocado.
+- Pendiente de cierre: PR único contra `main`.
+
 ## 2026-05-30 — Validación del deploy v0.2.0 en la VM laia-dev + D2 fresh-install-aware (claude opus 4.8 · rol Lead)
 
 Tras cortar el release **v0.2.0** (main→stable + tag, ver abajo), se validó el deploy en la VM
