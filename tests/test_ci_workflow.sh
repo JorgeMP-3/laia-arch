@@ -61,9 +61,25 @@ assert_true "el dir agora-backend existe" test -d "$LAIA_ROOT/services/agora-bac
 assert_true "requirements.txt existe" test -f "$LAIA_ROOT/services/agora-backend/requirements.txt"
 
 echo
+echo "→ Job backend resuelve workspace_store vía LAIA_ROOT"
+assert_true "backend exporta LAIA_ROOT" grep -q 'LAIA_ROOT:' "$CI"
+
+echo
 echo "→ Job installer coherente con el repo"
 assert_true "llama a tests/installer/run_all.sh" grep -q 'tests/installer/run_all.sh' "$CI"
 assert_true "run_all.sh existe y es ejecutable por bash" test -f "$LAIA_ROOT/tests/installer/run_all.sh"
+
+echo
+echo "→ Exclusión de tests no-host-free documentada (no silent cap)"
+assert_true "ci.yml usa INSTALLER_SKIP" grep -q 'INSTALLER_SKIP:' "$CI"
+assert_true "run_all.sh soporta INSTALLER_SKIP" \
+  grep -q 'INSTALLER_SKIP' "$LAIA_ROOT/tests/installer/run_all.sh"
+assert_true "ci.yml nombra los 2 tests excluidos (native_layout)" \
+  grep -q 'test_install_native_layout.sh' "$CI"
+assert_true "ci.yml nombra los 2 tests excluidos (clone_hardening)" \
+  grep -q 'test_clone_hardening.sh' "$CI"
+assert_true "README documenta la exclusión" \
+  grep -q 'INSTALLER_SKIP' "$README"
 
 echo
 echo "→ Floor de Python del CI == floor real del installer (anti-drift)"

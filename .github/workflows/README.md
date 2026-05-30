@@ -14,10 +14,26 @@ PR con varios pushes seguidos cancela los runs anteriores.
 
 | Job | Qué ejecuta | Entorno | Estado verificado en local |
 |---|---|---|---|
-| `backend` (py3.11) | `pytest tests/` en `services/agora-backend` | `requirements.txt` + `pytest`, sin DB ni servicios (los aísla `conftest.py`) | 355 passed, 8 skipped |
+| `backend` (py3.11) | `pytest tests/` en `services/agora-backend`, `LAIA_ROOT=$GITHUB_WORKSPACE` | `requirements.txt` + `pytest`, sin DB ni servicios (los aísla `conftest.py`) | 355 passed, 8 skipped |
 | `backend` (py3.14) | idem, en la versión del dev | idem | 355 passed, 8 skipped |
-| `installer` | `tests/installer/run_all.sh` | host-free (stubs de `lxc`/`lxd`/`snap`/`curl`) | 33/33, exit 0 |
+| `installer` | `tests/installer/run_all.sh` con `INSTALLER_SKIP` (2 tests) | host-free (stubs de `lxc`/`lxd`/`snap`/`curl`) | 31 corren + 2 skip documentados |
 | `skip-matrix` | imprime esta matriz como anotaciones del PR | — | informativo |
+
+**Por qué `LAIA_ROOT=$GITHUB_WORKSPACE` en backend:** `app/storage.py` hace
+`sys.path.insert(0, settings.laia_root)` para importar el módulo `workspace_store`
+(vive en la raíz del repo). Sin la env var, `laia_root` defaultea a `$HOME/LAIA`,
+que no existe en el runner → `ModuleNotFoundError: workspace_store`. (En local los
+tests "pasaban" sólo porque `$HOME/LAIA` existe en la máquina de dev — un falso
+positivo que el CICD limpio destapó.)
+
+**Por qué `INSTALLER_SKIP` excluye 2 tests:** son tests que en local pasan sólo por
+**artefactos del host de dev**, no porque sean host-free. `run_all.sh` los imprime
+como `SKIPPED (INSTALLER_SKIP)` (nunca silenciosos):
+
+| Test excluido | Por qué no es host-free | Cubierto en |
+|---|---|---|
+| `test_install_native_layout.sh` | Su `laia auth add` dispatcha a `laia_cli.main`, que importa las deps de **laia-core** (`python-dotenv`, `pyyaml`, …). En un host real las trae `/opt/laia/.laia-core/venv`; en el runner no existe → cae a `python3` de sistema sin esas deps → falla. | VM E2E / host con laia-core instalado. |
+| `test_clone_hardening.sh` | Su bloque `sudo`-clone corre **sólo con sudo passwordless** (presente en runners GitHub) y ejercita un install cuyo preflight de disco (`ensure_disk_free_gb`, 5 GB) lee **0 GB** sobre una ruta override aún no creada bajo `TMPDIR`. Quirk latente (ver `workflow/problems.md`). | VM E2E. |
 
 **Por qué la matriz de Python `3.11` + `3.14`:** `3.11` es el *floor* del proyecto
 (`infra/installer/lib/install.sh` → `require_python_min 3.11`); `3.14` es la que
@@ -47,14 +63,20 @@ anotaciones en cada PR, y aquí queda la razón.
 ### Cómo reproducir el CI en local
 
 ```bash
-# Backend (igual que el job, en el floor):
+# Backend (igual que el job, en el floor). LAIA_ROOT apunta a la raíz del repo
+# para que se importe el módulo workspace_store:
 cd services/agora-backend
 python3.11 -m venv .venv && .venv/bin/pip install -r requirements.txt pytest
-.venv/bin/python -m pytest tests/ -q
+LAIA_ROOT="$(git rev-parse --show-toplevel)" .venv/bin/python -m pytest tests/ -q
 
-# Installer host-free (igual que el job):
-bash tests/installer/run_all.sh
+# Installer host-free (igual que el job, excluyendo los 2 no-host-free):
+INSTALLER_SKIP="test_install_native_layout.sh test_clone_hardening.sh" \
+  bash tests/installer/run_all.sh
 ```
+
+> En un host de dev con LAIA instalado (`/opt/laia/.laia-core/venv`, `$HOME/LAIA`)
+> esos skips/overrides son innecesarios y los tests pasan igualmente — por eso el
+> CI limpio es la única señal fiable.
 
 ### Ampliar el CI más adelante
 
