@@ -15,6 +15,30 @@ Formato:
 
 ---
 
+## 2026-05-30 — POST-MORTEM: el cutover v1→v2 en PROD falló → outage ~50 min de laia-agora (claude opus 4.8 · rol Lead + Jorge)
+
+Se ejecutó `migrate-v1-to-v2.sh --yes` en PROD. El verify falló y el **auto-rollback dejó
+`laia-agora` (cerebro AGORA) CAÍDO ~50 min**. Recuperado a mano. **CERO datos perdidos.**
+
+- **Qué falló (4 bugs):** (1) la migración borró el mountpoint `/srv/laia/agora/auth.json`;
+  (2) el mecanismo de auth nuevo (`AGORA_ARCH_AUTH_JSON` + mount `arch-laia`) no surtió efecto
+  → el backend siguió leyendo `/opt/agora/data/auth.json` → `auth_json_ready:false` → verify rojo;
+  (3) el auto-rollback grabó mal el owner (`PRE_AGORA_DATA_OWNER=0:0`; el real era el agora user
+  `1000999:1000988`) → dejó `/srv/laia/agora` root:root 700 → el agora user del container
+  unprivileged no podía entrar → Permission denied, y su restart falló (`forkstart` "Failed to
+  setup mount entries"); (4) el bind-mount anidado `agora-auth` es frágil. Detalle en
+  `problems.md` (`migrate-v1-to-v2-prod-outage`).
+- **Recuperación (en orden):** `lxc restore` del snapshot pre-migración (no bastó) → quitar device
+  `agora-auth` (el container arrancó) → `chown -R 1000999:1000988 /srv/laia/agora` (el agora user
+  recupera acceso a su data dir) → colocar `auth.json` real (644) en el data dir → restart limpio →
+  `ok:true`, `auth_json_ready:true`, agora.db intacto.
+- **Estado:** prod estable en v0.2.0. ⚠️ `auth.json` quedó como COPIA en `/srv/laia/agora` (no
+  bind-mount de `~/.laia`) → riesgo de drift, ver `security.md`. Red de seguridad intacta
+  (snapshot `pre-v2-migration-20260530T182010Z` + tar en `/mnt/data/laia-migration-backups/` + `~/.laia`).
+- **Causa raíz de proceso:** la migración se validó contra un install FRESCO v0.2.0 en la VM, **no**
+  contra la migración de un container EXISTENTE en marcha (que es lo que es prod). **CUTOVER EN PAUSA.**
+- **Responsabilidad:** el Lead aprobó el cutover dándolo por validado; la validación era insuficiente.
+
 ## 2026-05-30 — Track T1: runner y taxonomía de integridad (Coder-Codex)
 
 - Añadido `tests/integration/run_integrity.sh` con motor Python (`lib/integrity_runner.py`) para

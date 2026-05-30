@@ -30,6 +30,28 @@ añade una línea `- **Resuelto**: 2026-MM-DD en commit <hash>`.
 
 ---
 
+## migrate-v1-to-v2-prod-outage (open)
+
+- **Descubierto**: 2026-05-30 por claude opus 4.8 (Lead) + Jorge, al ejecutar el cutover en prod.
+- **Síntoma**: `migrate-v1-to-v2.sh --yes` en prod → verify rojo (`auth_json_ready:false`) →
+  auto-rollback → `laia-agora` no arranca (`forkstart exit 1`, "Failed to setup mount entries").
+  **Outage ~50 min del cerebro AGORA.** Recuperado a mano (post-mortem en `changelog.md`). Sin pérdida de datos.
+- **Causa raíz (4 bugs del script)**:
+  1. Borra el mountpoint `/srv/laia/agora/auth.json` al quitar el device `agora-auth` (rebuild-3b).
+  2. El swap de auth (`AGORA_ARCH_AUTH_JSON` + mount `arch-laia` en `/var/lib/laia-host`) NO surte
+     efecto: el backend v0.2.0 sigue leyendo `/opt/agora/data/auth.json`.
+  3. **Auto-rollback buggy**: graba `PRE_AGORA_DATA_OWNER=0:0` (el real era el agora user
+     `1000999:1000988`) → deja `/srv/laia/agora` root:root 700 → el agora user del container
+     unprivileged no puede entrar (Permission denied) y su restart falla. Un rollback que rompe es lo peor.
+  4. Bind-mount anidado `agora-auth` (un fichero dentro de un mount idmapped) es frágil.
+- **Causa raíz de fondo**: validado contra install FRESCO v0.2.0 en VM, NO contra la migración de un
+  container EXISTENTE en marcha (lo que es prod) → los bugs in-place no se cazaron.
+- **Reproducción**: replicar el estado v1 CRUDO de un container EN MARCHA en la VM y correr el script.
+- **Workaround (recuperación aplicada)**: ver post-mortem en `changelog.md`.
+- **Owner**: sin asignar (rediseño del cutover, en frío).
+- **Estado**: open — **NO re-ejecutar `migrate-v1-to-v2.sh` en prod** hasta arreglar los 4 bugs +
+  el auto-rollback y re-testear contra una réplica cruda de container en marcha.
+
 ## backend-tests-hardcodean-ruta-de-plugins-del-host-de-dev (resolved)
 
 - **Descubierto**: 2026-05-30 por claude opus 4.8 (Coder-Opus) durante B1 (CI greenfield).
