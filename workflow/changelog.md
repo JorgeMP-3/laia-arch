@@ -56,8 +56,9 @@ corría a mano. Ahora cada PR a `main` la ejecuta GitHub Actions.
   (réplica fiel del runner); `INSTALLER_SKIP` salta los 2 y deja 31 ok / exit 0; YAML válido; guard
   `test_ci_workflow.sh` 23/23. (En *worktree* fallan además 4 release tests por `.git`-fichero — no
   aplica en CI, que usa `actions/checkout`.)
-- **Abierto:** confirmar el run verde de CI sobre el PR (criterio de aceptación B1). Siguientes
-  slices: B2 (monitor→dashboard), B3 (backup off-site, prod-risk).
+- **CI verde sobre el PR #30** (merge commit): los 4 checks SUCCESS (backend py3.11/py3.14,
+  installer, skip-matrix) → criterio de aceptación B1 cumplido. Pendiente sólo revisión del Lead.
+  Siguientes slices: B2 (monitor→dashboard), B3 (backup off-site, prod-risk).
 
 ## 2026-05-30 — Track A pre-prod hardening para deploy v2 (Coder-Codex)
 
