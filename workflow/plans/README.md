@@ -31,13 +31,20 @@ Cómo se sabe que está hecho. Tests, comandos, observaciones.
 Lo que puede salir mal y cómo mitigarlo.
 ```
 
+## Estado actual del ecosistema
+
+- [`2026-05-30-estado-roadmap-integraciones.md`](2026-05-30-estado-roadmap-integraciones.md)
+  — **Snapshot consolidado**: estado tras la estabilización + release `v0.2.0`, siguientes
+  pasos (ventana de prod: migrar v1→v2 → deploy → B2) y posibles integraciones (canales,
+  MCP, skills). **Empieza por aquí** para saber dónde está el proyecto. Owner: claude-code / Jorge.
+
 ## Mega-proyecto activo
 
 - [`estabilizacion/`](estabilizacion/) — **Estabilización de LAIA-ARCH + entorno de
-  desarrollo (VM)**. Bundle del proyecto en una carpeta: idea/estrategia, plan técnico
-  (FASE 2), auditoría profunda y snapshot verificado del servidor. Estado: plan técnico
-  en `draft` (pendiente de OK para desglose en slices con `to-issues`).
-  Owner: claude-code / Jorge.
+  desarrollo (VM)**. ✅ **Completada** (slices B1–D2 mergeados, release `v0.2.0` en `stable`,
+  D2 verde validado en la VM). Bundle: idea/estrategia, plan técnico, auditoría, snapshot del
+  servidor, runbook de migración C3 y checklist [`slices.md`](estabilizacion/slices.md).
+  Pendiente: **ventana de prod** (HITL) — ver el snapshot de estado de arriba. Owner: claude-code / Jorge.
 
 ## Planes activos
 
