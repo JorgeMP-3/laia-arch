@@ -26,6 +26,19 @@ Bitácora de hallazgos y acciones de seguridad durante el trabajo diario en el r
 
 ---
 
+## 2026-05-30 — auth.json de prod: ahora COPIA en el data dir (no bind-mount) tras recuperar el outage del cutover (claude opus 4.8 · Lead)
+
+- **Tipo**: secret-location / permisos
+- **Severidad**: P3 (bajo) — funcional y aislado, pero con riesgo de drift.
+- **Sistema afectado**: `/srv/laia/agora/auth.json` (= `/opt/agora/data/auth.json` dentro de `laia-agora`).
+- **Acción tomada**: durante la recuperación del outage del cutover (ver `changelog.md` post-mortem),
+  se quitó el device frágil `agora-auth` (bind-mount RO de `~/.laia/auth.json`) y se colocó una
+  **copia real** de `auth.json` (644, owner agora `1000999:1000988`) directamente en el data dir.
+  `/srv/laia/agora` es 700 → no alcanzable por otros users del host. `auth_json_ready:true`.
+- **Acción pendiente**: ⚠️ **DRIFT** — `~/.laia/auth.json` ya NO es la fuente viva del container; si
+  Jorge re-autentica hay que re-copiar a `/srv/laia/agora/auth.json`. Resolver en el rediseño del
+  cutover (mecanismo de auth robusto, sin bind-mount anidado). `~/.laia/auth.json` sigue en 644.
+
 ## 2026-05-29 — Creds de PROD en la VM de dev `laia-dev` + token expuesto en logs (claude opus 4.8 · Coder-Opus)
 
 - **Tipo**: secret-exposure / secret-location
