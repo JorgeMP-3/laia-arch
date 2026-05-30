@@ -15,6 +15,31 @@ Formato:
 
 ---
 
+## 2026-05-30 — B1 · CI greenfield: la suite corre en cada PR a main (claude opus 4.8 · rol Coder-Opus)
+
+Track B (Robustez/Ops), slice B1. Antes no había `.github/workflows` y la suite solo se
+corría a mano. Ahora cada PR a `main` la ejecuta GitHub Actions.
+
+- **`.github/workflows/ci.yml`** (greenfield). 3 jobs, `permissions: contents: read`,
+  concurrencia con `cancel-in-progress`:
+  - `backend` — `pytest tests/` en `services/agora-backend`, matriz Python **3.11 + 3.14**
+    (3.11 = floor real del installer `require_python_min`; 3.14 = versión del dev).
+  - `installer` — `tests/installer/run_all.sh` (host-free: stubs de lxc/lxd/snap/curl).
+  - `skip-matrix` — imprime como anotaciones del PR qué queda fuera y por qué (no silent cap).
+- **`.github/workflows/README.md`** — matriz "qué corre / qué se skipea" + cómo reproducir
+  en local + candidatos de ampliación futura (tests/wizard, tests/*.py top-level).
+- **SKIP documentado:** D2 (`tests/integration/test_ecosystem_integrity.sh`) requiere LXD +
+  container vivo → no ejecutable en runner; se cubrirá en caliente con el monitor B2.
+- **Test guard** `tests/test_ci_workflow.sh` — anti-drift: verifica que el CI sigue alineado
+  (paths existen, floor de Python del CI == floor real del installer, SKIP de D2 documentado).
+  17/17 ✓.
+- **Verificado en local antes de declarar hecho:** backend 355 passed / 8 skipped en py3.11 y
+  py3.14; installer 33/33 (exit 0) sobre checkout limpio; YAML válido (3 jobs). Nota: en un
+  *git worktree* 4 installer tests fallan por el artefacto `.git`-como-fichero (release.sh exige
+  `.git` directorio) — no aplica en CI, que usa `actions/checkout`.
+- **Abierto:** falta que el workflow pase en un PR real (criterio de aceptación B1) → se verá al
+  abrir este PR. Siguientes slices: B2 (monitor→dashboard), B3 (backup off-site, prod-risk).
+
 ## 2026-05-30 — Validación del deploy v0.2.0 en la VM laia-dev + D2 fresh-install-aware (claude opus 4.8 · rol Lead)
 
 Tras cortar el release **v0.2.0** (main→stable + tag, ver abajo), se validó el deploy en la VM
