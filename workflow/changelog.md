@@ -15,6 +15,38 @@ Formato:
 
 ---
 
+## 2026-05-30 — Validación del deploy v0.2.0 en la VM laia-dev + D2 fresh-install-aware (claude opus 4.8 · rol Lead)
+
+Tras cortar el release **v0.2.0** (main→stable + tag, ver abajo), se validó el deploy en la VM
+`laia-dev` **antes de tocar prod** (decisión de Jorge). NO toca prod.
+
+- **Hallazgo bloqueante para prod (clave):** el host de prod sigue en **layout v1** (`~/.laia`,
+  `/srv/laia/arch` ausente) y el código v0.2.0 **asume v2**. `laia-release` re-renderiza la unit
+  de `laia-pathd` apuntando `LAIA_CONFIG_HOME=/srv/laia/arch` → desplegar v0.2.0 sobre v1 **rompe
+  la resolución de paths**. **El deploy a prod está bloqueado por la migración C3** (orden correcto:
+  migrar a v2 primero, desplegar después). `laia-release` **no** toca el AGORA del container (vive
+  en LXD); sólo `/opt` del host + reinicia servicios activos.
+- **Validación en la VM (v2):** `laia-install --from-local v0.2.0` factory limpio (tras limpiar el
+  estado de ensayo) → **D2 VERDE: 9 PASS / 0 FAIL / 3 PEND / 1 SKIP**. atlas doctor **sin refs
+  rotas**, secrets 0700 / auth.json 0600 (644 cerrado), `/api/health ok`, `agora.db integrity ok`.
+  Confirmado que las "13 refs DEAD" vistas antes eran **suciedad del ensayo**, NO un bug de v0.2.0.
+- **D2 refinado (fix de correctitud):** Capa 1 — `/srv/laia/users` y `/srv/laia/state` ausentes en
+  un install fresco (0 usuarios) = **PEND**, no FAIL (se pueblan al provisionar el primer
+  usuario/agente). Alinea Capa 1 con Capa 5. `/srv/laia/agora` ausente sí es FAIL (núcleo).
+- **Hallazgos/follow-ups para el runbook de deploy v2** (no resueltos aquí):
+  1. `laia-release` corre como root → git "dubious ownership" si el repo es de otro user;
+     necesita `git config --global --add safe.directory <repo>` (prod probablemente ya lo tiene).
+  2. El smoke `test_flags.sh` falla en `laia-rollback --dry-run` si hay **<2 versiones** en `/opt`
+     (benigno en el primer deploy; prod tiene ≥2). Posible mejora: relajar ese assert.
+  3. `laia-release` exige **artefactos de frontend** (`laia-ui` dist) o `--skip-frontend`, si no
+     `laia-ui-server` no arranca → en prod hacer `pnpm build` antes o pasar `--skip-frontend`.
+  4. `laia-install` **no crea** los dirs operacionales `/srv/laia/{state,users,...}` — los crea
+     `setup-prod-dirs.sh` (paso separado). Un factory install "completo" = install + setup-prod-dirs.
+  5. `setup-prod-dirs.sh` crea `/srv/laia/agents` (nombre viejo) en vez de `/srv/laia/users`
+     (canónico, `arch-layout.md` §2.2). Inconsistencia a reconciliar.
+- **Estado VM:** queda con un install limpio v0.2.0 (sandbox); los cambios de ensayo previos están
+  en `git stash`. **Prod sin tocar.**
+
 ## 2026-05-29 — D2: suite de integridad end-to-end del ecosistema (gate final) (claude opus 4.8 · rol Lead)
 
 Slice **D2** (módulo M7) — AFK. Branch `wip/claude/d2-integrity`. **READ-ONLY**, no muta nada.
