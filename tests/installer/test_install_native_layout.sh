@@ -88,6 +88,15 @@ assert "/srv/laia/arch/secrets override owner is admin user" \
 assert "/srv/laia/arch/secrets override mode is 0700" \
   "$([[ "$(mode_of "$LAIA_ARCH_CREDS_DIR_OVERRIDE")" == "700" ]] && echo 0 || echo 1)"
 
+assert "/srv/laia/state created by factory install" \
+  "$([[ -d "$TMPDIR_TEST/srv/laia/state" ]] && echo 0 || echo 1)"
+assert "/srv/laia/users created by factory install" \
+  "$([[ -d "$TMPDIR_TEST/srv/laia/users" ]] && echo 0 || echo 1)"
+assert "/srv/laia/state mode is 0750" \
+  "$([[ "$(mode_of "$TMPDIR_TEST/srv/laia/state")" == "750" ]] && echo 0 || echo 1)"
+assert "/srv/laia/users mode is 0750" \
+  "$([[ "$(mode_of "$TMPDIR_TEST/srv/laia/users")" == "750" ]] && echo 0 || echo 1)"
+
 for secret in auth.json .env; do
   assert "$secret seeded in /srv/laia/arch/secrets" \
     "$([[ -f "$LAIA_ARCH_CREDS_DIR_OVERRIDE/$secret" ]] && echo 0 || echo 1)"

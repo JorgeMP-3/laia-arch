@@ -38,6 +38,31 @@ fact_copy_once() {
   log_success "Seeded $(basename "$dst")"
 }
 
+fact_ensure_operational_dirs() {
+  log_step "Factory: operational dirs"
+  local dirs=(
+    "${INST_SRV_DIR:-/srv/laia}"
+    "${INST_STATE_DIR:-/srv/laia/state}"
+    "${INST_USERS_DIR:-/srv/laia/users}"
+  )
+
+  local d
+  if inst_is_override_mode; then
+    for d in "${dirs[@]}"; do
+      install -d -m 0750 "$d"
+      log_info "  $d"
+    done
+  else
+    local group
+    group="$(id -gn "$LAIA_USER")"
+    for d in "${dirs[@]}"; do
+      sudo install -d -m 0750 -o "$LAIA_USER" -g "$group" "$d"
+      log_info "  $d"
+    done
+  fi
+  log_success "Operational dirs ready"
+}
+
 fact_seed_cli_config() {
   log_step "Factory: CLI config"
   # cli-config.yaml is not a secret → stays in DATA_DIR (LAIA_HOME). .env holds

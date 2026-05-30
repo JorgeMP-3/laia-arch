@@ -40,8 +40,8 @@ sudo LAIA_USER=laia-hermes bash infra/scripts/setup-prod-dirs.sh
 Esto crea:
 - `/srv/laia/state/`       — estado LXD (agents.json)
 - `/srv/laia/agora/`       — datos AGORA backend (users, tasks, events)
+- `/srv/laia/users/`       — datos persistentes de cada PA-AGORA
 - `/srv/laia/backups/`     — backups automáticos
-- `/srv/laia/agents/`      — reservado para datos de agentes
 
 ## Paso 4: Configurar LXD
 

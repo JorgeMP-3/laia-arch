@@ -225,10 +225,10 @@ lxc config set laia-jorge security.nesting true
 
 ## Integracion con ARCH y AGORA
 
-ARCH mantiene el registro global:
+ARCH mantiene los datos persistentes de cada PA-AGORA bajo el layout canonico v2:
 
 ```text
-/srv/laia/agents/registry.json
+/srv/laia/users/<slug>/
 ```
 
 ARCH usa `laiactl` y/o los modulos del orquestador para:
