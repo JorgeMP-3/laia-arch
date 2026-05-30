@@ -105,6 +105,7 @@ def detect_environment(repo_root: Path) -> dict[str, bool]:
         "curl_available": shutil.which("curl") is not None,
         "sqlite3_available": shutil.which("sqlite3") is not None,
         "jq_available": shutil.which("jq") is not None,
+        "python3_available": shutil.which("python3") is not None,
         "atlas_available": shutil.which("atlas") is not None or (repo_root / "bin/atlas").exists(),
     }
 
@@ -132,6 +133,8 @@ def requirement_available(requirement: str, env: dict[str, bool]) -> bool:
         return env["jq_available"]
     if requirement == "atlas":
         return env["atlas_available"]
+    if requirement == "python3":
+        return env["python3_available"]
     return True
 
 
@@ -170,10 +173,20 @@ def run_test(test: IntegrityTest, profile: str) -> dict[str, Any]:
             env=env,
         )
         duration_ms = int((time.monotonic() - started) * 1000)
+        if proc.returncode == 0:
+            status = "pass"
+            reason = None
+        elif proc.returncode == 77:
+            status = "skip"
+            reason = "test requested skip"
+        else:
+            status = "fail"
+            reason = None
         return {
-            "status": "pass" if proc.returncode == 0 else "fail",
+            "status": status,
             "exit_code": proc.returncode,
             "duration_ms": duration_ms,
+            "reason": reason,
             "stdout": proc.stdout,
             "stderr": proc.stderr,
         }
@@ -274,6 +287,7 @@ def main(argv: list[str]) -> int:
     layer_filters = set(args.layer or [])
     records: list[dict[str, Any]] = []
     passed = failed = skipped = 0
+    runtime_skipped = 0
 
     for test in tests:
         record = test_record(test)
@@ -305,6 +319,9 @@ def main(argv: list[str]) -> int:
         record.update(result)
         if result["status"] == "pass":
             passed += 1
+        elif result["status"] == "skip":
+            skipped += 1
+            runtime_skipped += 1
         else:
             failed += 1
         records.append(record)
@@ -322,10 +339,11 @@ def main(argv: list[str]) -> int:
         },
         "summary": {
             "total": len(records),
-            "selected": passed + failed,
+            "selected": passed + failed + runtime_skipped,
             "passed": passed,
             "failed": failed,
             "skipped": skipped,
+            "runtime_skipped": runtime_skipped,
             "duration_ms": duration_ms,
         },
         "tests": records,
@@ -334,7 +352,7 @@ def main(argv: list[str]) -> int:
     print_human(report)
     if failed:
         return 1
-    if passed == 0 and not args.list:
+    if passed + failed + runtime_skipped == 0 and not args.list:
         return 2
     return 0
 

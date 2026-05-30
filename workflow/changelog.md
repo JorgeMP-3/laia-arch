@@ -77,6 +77,24 @@ todo el trabajo destructivo en la VM `laia-dev`. **No tocó código del backend*
 - Verificado: `test_clone_hardening.sh` rojo antes del fix; después verde 10/10.
   `bash tests/test_ci_workflow.sh` 23/23. `bash tests/installer/run_all.sh` completo verde.
 
+## 2026-05-30 — Track T2: invariantes por capa + regresión outage v1→v2 (Coder-Codex)
+
+- Añadidos módulos descubiertos por `tests/integration/run_integrity.sh` para las capas `host`,
+  `lxd`, `agora`, `executor`, `data`, `atlas` y `backups`, todos con metadata `# integrity:`.
+  D2 queda intacto como gate cross-layer.
+- Añadido helper shell común para contratos deterministas (`exit 77` = skip explícito) y soporte en
+  el runner para reportar esos skips en JSON sin contarlos como pass.
+- Regresión del outage `migrate-v1-to-v2-prod-outage`: el test
+  `migrate_v1_to_v2_prod_outage_regression` verifica que el `auth.json` del mount de AGORA no
+  desaparece, que el usuario `agora` puede leer `/opt/agora/data/{auth.json,agora.db}`, y que
+  `/api/health` mantiene `ok:true` + `auth_json_ready:true`.
+- Validación: `python3 -m py_compile tests/integration/lib/integrity_runner.py`;
+  `bash -n` sobre scripts de integridad; `tests/installer/test_integrity_runner.sh`;
+  `tests/integration/run_integrity.sh --profile ci --level unit --layer backups`;
+  suite `tests/installer/test_*.sh` completa (**34/34**); en VM `laia-dev`,
+  `tests/integration/run_integrity.sh --profile vm --json /tmp/laia-integrity-t2-vm.json`
+  (`passed=8 failed=0 skipped=1`). Prod no tocado.
+
 ## 2026-05-30 — Declutter del `$HOME` de laia-arch → `/mnt/data` (HDD 4 TB) (claude opus 4.8 · rol Lead)
 
 Limpieza del home del operador (host prod), **sin borrar nada** (decisión de Jorge): el clutter
