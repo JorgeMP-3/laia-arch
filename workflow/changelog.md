@@ -47,6 +47,20 @@ todo el trabajo destructivo en la VM `laia-dev`. **No tocó código del backend*
   `workflow/plans/2026-05-31-prod-cutover-v1v2-redesigned.md`, movido desde `_inbox/`).
   `problems.md` → `migrate-v1-to-v2-prod-outage` marcado `resolved`.
 
+## 2026-05-31 — Installer disk preflight sobre paths inexistentes (Codex)
+
+- Resuelto `ensure-disk-free-gb-nonexistent-path-reads-0` en commit `d67557e3`:
+  `ensure_disk_free_gb` mide el ancestro existente más cercano antes de llamar a `df`, así
+  un `LAIA_INSTALL_ROOT_OVERRIDE` aún no creado no se interpreta como 0 GB libres.
+- Añadida regresión en `tests/installer/test_clone_hardening.sh` que reproduce el preflight
+  con install root inexistente sin depender de `sudo -n`.
+- CI vuelve a ejecutar `test_clone_hardening.sh`; `INSTALLER_SKIP` queda reducido a
+  `test_install_native_layout.sh`.
+- Corregida la doc de `tests/installer/README.md` y `.github/workflows/README.md` para no
+  prometer que todos los tests son host-free.
+- Verificado: `test_clone_hardening.sh` rojo antes del fix; después verde 10/10.
+  `bash tests/test_ci_workflow.sh` 23/23. `bash tests/installer/run_all.sh` completo verde.
+
 ## 2026-05-30 — Declutter del `$HOME` de laia-arch → `/mnt/data` (HDD 4 TB) (claude opus 4.8 · rol Lead)
 
 Limpieza del home del operador (host prod), **sin borrar nada** (decisión de Jorge): el clutter
