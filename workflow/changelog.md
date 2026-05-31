@@ -28,10 +28,18 @@ limpieza segura). Hallazgos:
   ya cumplido, enfocar B2/B3.
 - **Contradicción de versiones resuelta:** ver corrección en la entrada del post-mortem (2026-05-30)
   más abajo. Host ARCH = v0.11.0 era-Hermes (v1); backend AGORA del container = código ≈v0.2.0.
-- **Branches limpiadas (local, `-d` seguro, mergeadas en main):** `wip/claude/{c1-anclas-arch,
-  c2-idmap-secrets,d1-backups,robustez-ops}`. **Pendiente (requiere OK de Jorge):** borrado en
-  `origin` de esas 4 + `c4-install-native` + `vm-laia-dev` (remotas mergeadas); y decidir sobre las
-  de Codex mergeadas (`wip/codex/{c4-tests,regression-suite}`) — son de otra IA.
+- **Branches mergeadas ARCHIVADAS** (decisión de Jorge: archivar, no borrar). 8 movidas al namespace
+  `archive/*` en origin (crear ref → verificar → retirar `wip/*` → prune local). claude/infra:
+  `c1-anclas-arch, c2-idmap-secrets, d1-backups, robustez-ops, c4-install-native, vm-laia-dev`.
+  codex: `c4-tests, regression-suite` (ambas 100% mergeadas; archivar `regression-suite` no afecta a
+  `regression-t2`, cuya base ya está en main). Nuevos refs `archive/wip-claude-*` (×6) y
+  `archive/wip-codex-*` (×2).
+- **PRD-B (draft, untracked) corregido:** la intro ya no dice "no hay CI"; B1 marcado ✅ HECHO. La
+  reestructuración mayor (reordenar a B2/B3) la decide Jorge al aprobar el track.
+- **Colisión de coordinación detectada:** CC2 (cutover) trabaja en el working tree compartido `~/LAIA`
+  (sobre `wip/claude/cutover-redesign`), no en un worktree propio → choques de `git switch`. Esta
+  sesión pasó a operar en su propio worktree (`LAIA-wt-hygiene`, temporal). Recomendación: cada
+  agente paralelo en su worktree (patrón ya usado: `LAIA-wt-robustez`, `LAIA-wt-regression`).
 - **Conservadas a propósito:** `monitor-dashboard` (B2 activo), `note-ui-remake-v2` y
   `codex/regression-t2` (sin mergear, trabajo vivo), `c3-migration-inplace` y `codex/d1-tests`
   (worktrees archivados en `/mnt/data/home-archive`), `tracker-hygiene` (este turno).
