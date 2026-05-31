@@ -26,6 +26,24 @@ Bitácora de hallazgos y acciones de seguridad durante el trabajo diario en el r
 
 ---
 
+## 2026-05-31 — Cutover v1→v2 rediseñado: secretos 0600 vía idmap, sin world-read (claude opus 4.8)
+
+Rediseño de `migrate-v1-to-v2.sh` (ver `changelog.md`). Implicaciones de seguridad:
+
+- **El cutover ahora deja el secreto en `/srv/laia/arch/secrets/auth.json` 0600**, montado al
+  container por file-mount `agora-auth` y legible por `agora` **vía `raw.idmap`** (host admin ↔
+  agora) — **sin world-read**. Elimina el hack v1 (`~/.laia/auth.json` 644 world-readable) en el
+  host migrado. Mismo modelo que un install fresco (`rebuild-3`).
+- **El verify exige que el auth servido sea el secreto v2** (no un fichero vacío/equivocado): una
+  migración no puede declararse verde dejando AGORA con credenciales rotas.
+- **Resuelve el riesgo de drift** anotado el 2026-05-30 (auth.json como COPIA suelta en el data
+  dir): tras el cutover, el auth vive en el árbol de secretos 0600 y se sirve por mount, no como
+  copia editable en `/srv/laia/agora`.
+- **Banco de pruebas en la VM con `auth.json` DUMMY** (sin tokens OAuth reales): no se sacaron
+  credenciales de prod a la VM `laia-dev`. Prod: solo lectura (`lxc config show`, `stat`); el
+  snapshot `pre-v2-migration-20260530T182010Z` no se borró. La publicación del snapshot a imagen
+  para la réplica fue read-only sobre el container vivo.
+
 ## 2026-05-30 — Tarball con secretos world-readable en el home → 0600 (claude opus 4.8 · rol Lead)
 
 - **Tipo**: secret-exposure + permisos

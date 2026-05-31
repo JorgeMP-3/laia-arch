@@ -1,12 +1,21 @@
 # Runbook — Migración in-place v1 → v2 (`migrate-v1-to-v2.sh`)
 
+> ⚠️ **ACTUALIZADO 2026-05-31 tras el outage del 2026-05-30.** El primer intento en prod falló
+> (post-mortem en `changelog.md`). El script fue **rediseñado y re-testeado**; la fase 7 ya **no**
+> usa `rebuild-3b` (dir-mount + env), sino que **converge al modelo file-mount de `rebuild-3`**
+> (apunta el device `agora-auth` al secreto v2, modificando su `source` IN PLACE). El plan HITL
+> de prod, la evidencia de validación y el detalle del rediseño están en el PRD canónico:
+> [`workflow/plans/2026-05-31-prod-cutover-v1v2-redesigned.md`](../2026-05-31-prod-cutover-v1v2-redesigned.md).
+> Este runbook conserva el procedimiento general; donde diga "rebuild-3b" léase el nuevo swap in-place.
+
 > **Qué es esto:** el procedimiento HITL para aplicar el layout **v2** a un host ARCH **v1**
 > existente (como producción) **in-place**, idempotente, con backup y rollback. Slice **C3** ·
 > módulo **M6** · decisión **T2** del [plan técnico](2026-05-29-estabilizacion-plan-tecnico.md).
 >
 > **Script:** [`infra/lxd/scripts/migrate-v1-to-v2.sh`](../../../infra/lxd/scripts/migrate-v1-to-v2.sh)
-> **Ensayado en la VM `laia-dev`** con una réplica v1 cruda (ver §Ensayo). **Aplicar a PROD es
-> el paso HITL final** (Jorge), con ventana de reinicio de `laia-agora` planificada.
+> **Re-testeado en la VM `laia-dev`** contra una réplica del snapshot REAL de prod + un test de
+> regresión (`tests/integration/test_cutover_migration.sh`). **Aplicar a PROD es el paso HITL
+> final** (Jorge), con ventana de reinicio de `laia-agora` planificada.
 
 ---
 

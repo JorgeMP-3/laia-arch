@@ -15,6 +15,38 @@ Formato:
 
 ---
 
+## 2026-05-31 — Rediseño + re-test del cutover v1→v2 (los 4 bugs del outage, arreglados) (claude opus 4.8)
+
+Rediseño del cutover de prod que causó el outage del 2026-05-30. **No tocó prod** (solo lectura);
+todo el trabajo destructivo en la VM `laia-dev`. **No tocó código del backend** (decisión de Jorge).
+
+- **Causa raíz**: `migrate-v1-to-v2.sh` usaba `rebuild-3b` (dir-mount `arch-laia` + env
+  `AGORA_ARCH_AUTH_JSON`), un modelo de auth divergente que el backend **ignora** (lee
+  `/opt/agora/data/auth.json`). El install fresco v2 (`rebuild-3`) usa un **file-mount** del
+  secreto sobre esa ruta. El fix **converge al modelo de rebuild-3**.
+- **`infra/lxd/scripts/migrate-v1-to-v2.sh`** reescrito en 4 frentes:
+  - **#2/#4 auth**: el swap apunta el file-mount `agora-auth` al secreto v2
+    (`/srv/laia/arch/secrets/auth.json`) **modificando el `source` del device IN PLACE**
+    (`lxc config device set`, nunca remove+recreate → **#1** no se destruye el mountpoint vivo).
+    Offline (stop→reconfig→start). Ya no invoca `rebuild-3b`.
+  - **#2 verify**: además de `auth_json_ready` (que solo mira existencia), exige que el auth
+    servido sea **el secreto v2** (sha, y no vacío) o auto-rollback. Mata el "verde falso".
+  - **#3 auto-rollback**: captura el owner numérico EN VIVO y **falla closed** si no puede
+    leerlo o si es `0:0`; el rollback restaura owner EXACTO + repunta el device in place +
+    revierte `raw.idmap`. Tras `cleanup` el rollback de dispositivo se rehúsa (→ snapshot/backup).
+  - **nuevo `--no-cleanup`**: migra+verifica conservando `~/.laia` (rollback instantáneo
+    disponible); completar luego con `--resume --yes`. Para el HITL prod.
+- **`tests/integration/test_cutover_migration.sh`** (nuevo, profile `vm`, alimenta Track T):
+  construye una réplica v1 fiel desde la imagen local (sin prod) y verifica los 4 escenarios
+  (auth converge, rollback manual exacto, auto-rollback en fallo, rehúse post-cleanup). **19/19.**
+  En CI se salta limpio (no-LXD / profile).
+- **Validado**: regresión **19/19** + ciclo completo contra la réplica del **snapshot REAL de
+  prod** importado en la VM (baseline→migrate→rollback→verde, owner `1000999:1000988` exacto)
+  **14/14**. Suite installer host-free verde.
+- **Abierto**: la ejecución del cutover en prod sigue siendo HITL de Jorge (PRD reescrito en
+  `workflow/plans/2026-05-31-prod-cutover-v1v2-redesigned.md`, movido desde `_inbox/`).
+  `problems.md` → `migrate-v1-to-v2-prod-outage` marcado `resolved`.
+
 ## 2026-05-30 — Declutter del `$HOME` de laia-arch → `/mnt/data` (HDD 4 TB) (claude opus 4.8 · rol Lead)
 
 Limpieza del home del operador (host prod), **sin borrar nada** (decisión de Jorge): el clutter
