@@ -15,6 +15,30 @@ Formato:
 
 ---
 
+## 2026-05-31 — Planificación del rediseño del cutover + handoff a otra cuenta de Claude Code (claude opus 4.8 · rol Lead)
+
+Sesión de planificación (sin tocar prod). Se decidió el siguiente paso para desbloquear el cutover
+v1→v2 y se preparó el handoff para que otra IA lo ejecute.
+
+- **Estado real de prod inspeccionado (read-only)** y documentado — no estaba escrito en ningún
+  sitio: `laia-agora` **sin `raw.idmap`** (idmap por defecto), 2 devices (`agora-api` proxy,
+  `agora-data` `/srv/laia/agora`→`/opt/agora/data`), **sin device de secretos**; el backend lee
+  `auth.json` de `/opt/agora/data/auth.json` (= host `/srv/laia/agora/auth.json`, dentro del mount
+  de datos). Owner real del data dir = `1000999:1000988` (el `0:0` del rollback fue el bug #3).
+  Existe el snapshot `pre-v2-migration-20260530T182010Z` (foto del v1 pre-incidente).
+- **Diagnóstico de raíz confirmado:** los 4 bugs son el *delta* entre la réplica **sintética** del
+  ensayo de C3 y el **prod real**. La validación nunca cubrió la migración de un container vivo.
+- **Plan acordado:** Step 1 = réplica **fiel** del snapshot en la VM `laia-dev` + línea base verde;
+  Step 2 = arreglar los 4 bugs *test-first* (empezando por el auto-rollback) + test de regresión.
+  **Prod re-attempt sigue fuera de alcance** (HITL de Jorge, después de esto).
+- **Entregable:** briefing autocontenido para la otra cuenta en
+  `workflow/_inbox/handoff-cutover-redesign.md` (estado real, por-qué-falló, plan, guardarraíles,
+  decisiones recomendadas, suggested skills).
+- **Tracker saneado:** 2 entradas stale de `problems.md` (shell_rc, cron) marcadas resolved tras
+  verificar que ya estaban en git (`a57011e9`, `691eaded`). Commit `374f5aaa`.
+- **Abierto:** Jorge no respondió aún las 3 decisiones del plan (VM vs host · snapshot vs sintética ·
+  auth dummy vs real); recomendaciones en el briefing §8. PRDs B/C/D/T siguen en `_inbox/` sin OK.
+
 ## 2026-05-30 — Declutter del `$HOME` de laia-arch → `/mnt/data` (HDD 4 TB) (claude opus 4.8 · rol Lead)
 
 Limpieza del home del operador (host prod), **sin borrar nada** (decisión de Jorge): el clutter
