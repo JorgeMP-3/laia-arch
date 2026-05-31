@@ -48,9 +48,9 @@ el outage del 30-may (`auth.json` como copia en `/srv/laia/agora`, sin device `a
 
 ## 3. Camino crítico hasta cerrar v2 (en orden)
 
-1. 🟡 **Mergear PR #38 a `main`** — *acción de Jorge* (merge a main está gateado por `CLAUDE.md`;
-   el guard exige su OK explícito). Está MERGEABLE + CI verde; conflicto de `changelog.md` ya resuelto.
-   → Tras esto, `main` tiene el cutover seguro y re-testeado.
+1. ✅ **PR #38 mergeado a `main`** (2026-05-31, merge commit `78557a27`; OK explícito de Jorge, tras
+   review del Lead + CI 4/4 verde + conflicto de `changelog.md` resuelto). `main` ya tiene el cutover
+   seguro y re-testeado, junto al fix del installer (#37, `c101b401`).
 2. 🔴 **Ventana de cutover de prod (HITL — el hito)** — *Jorge fija la ventana + supervisa en vivo*.
    Secuencia y gates en `2026-05-31-prod-cutover-v1v2-redesigned.md`. Resumen:
    - (Opcional pero recomendado) **ensayo en el bench** `laia-agora-v1` de la VM (parado, snapshot
@@ -81,7 +81,7 @@ el outage del 30-may (`auth.json` como copia en `/srv/laia/agora`, sin device `a
 
 ## 5. Estado git / PRs al cierre de esta sesión
 
-- **`main`:** tiene PR #37 (installer). **PR #38 (cutover) MERGEABLE + verde, pendiente del merge de Jorge.**
+- **`main`:** **PR #37 (installer, `c101b401`) y PR #38 (cutover, `78557a27`) — ambos MERGEADOS.**
 - **Branches activas:** `cutover-redesign` (PR #38, en worktree `~/LAIA-wt-cutover`), `monitor-dashboard`
   (B2), `codex/regression-t2` (T), `note-ui-remake-v2`, `tracker-hygiene` (docs del Lead, esta sesión).
 - **Limpieza pendiente** (tras mergear): archivar `cutover-redesign` + `installer-disk-free` en
@@ -91,5 +91,5 @@ el outage del 30-may (`auth.json` como copia en `/srv/laia/agora`, sin device `a
 
 ## 6. Una línea
 
-v2 está **a un merge (PR #38) + una ventana HITL de cutover** de estar vivo en prod; lo demás
-(escalado, eficiencia, regresión, UI) es post-v2 y no bloquea el cierre.
+con el cutover ya en `main`, v2 está **a una sola ventana HITL de cutover** de estar vivo en prod;
+lo demás (escalado, eficiencia, regresión, UI) es post-v2 y no bloquea el cierre.
