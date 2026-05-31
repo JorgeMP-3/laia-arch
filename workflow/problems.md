@@ -135,7 +135,7 @@ añade una línea `- **Resuelto**: 2026-MM-DD en commit <hash>`.
 
 ---
 
-## laia-core-cron-package-gitignored-lost-in-migration (in-progress)
+## laia-core-cron-package-gitignored-lost-in-migration (resolved)
 
 - **Descubierto**: 2026-05-27 por claude opus 4.7.
 - **Síntoma**: `laia chat`/one-shot crashea con `ModuleNotFoundError: No module named
@@ -151,10 +151,14 @@ añade una línea `- **Resuelto**: 2026-MM-DD en commit <hash>`.
   un `.pth` (`zz_laia_core_root.pth`) añade `.laia-core` al `sys.path`. Validado: el
   agente ya pasa el import de `cron`.
 - **Owner**: Jorge / claude.
-- **Estado**: in-progress — falta `git add -f` para durabilidad y que `laia release`
-  incluya `cron/` nativamente (no vía `.pth`).
+- **Estado**: resolved.
+- **Resuelto**: 2026-05-30 en commit `691eaded` (`git add -f` de `.laia-core/cron/` +
+  `SOUL.md`, durables en el repo). El empaquetado nativo también: `pyproject.toml`
+  `[tool.setuptools.packages.find].include` ya lista `"cron"`, así que `laia release`
+  lo incluye sin depender del `.pth`. El único `zz_laia_core_root.pth` que queda vive en
+  `/opt/laia-v0.11.0` (install era-Hermes) y se sustituye al desplegar v0.2.0. (verificado 2026-05-31.)
 
-## installer-shell-rc-bashrc-root-owned (resolved en código, sin commit)
+## installer-shell-rc-bashrc-root-owned (resolved)
 
 - **Descubierto**: 2026-05-27 por claude opus 4.7 (reporte de otra sesión).
 - **Síntoma**: tras `install` con sudo, `~/.bashrc` queda `root:root 0600`; el usuario
@@ -164,8 +168,10 @@ añade una línea `- **Resuelto**: 2026-MM-DD en commit <hash>`.
 - **Reproducción**: correr el instalador vía `sudo -E` y mirar `ls -l ~/.bashrc`.
 - **Workaround**: `sudo chown laia-arch:laia-arch ~/.bashrc && sudo chmod 644 ~/.bashrc`.
 - **Owner**: claude.
-- **Estado**: resolved en código (`shell_rc.sh` helper `shell_rc_restore_meta` + Test 7,
-  suite 19/19) — **pendiente de commit**.
+- **Estado**: resolved.
+- **Resuelto**: 2026-05-27/28 en commit `a57011e9` (`shell_rc.sh` helper
+  `shell_rc_restore_meta` + `tests/installer/test_shell_rc.sh`; reaplicado en C4 `2e98d6a1`).
+  La nota previa "pendiente de commit" estaba desactualizada (verificado 2026-05-31).
 
 ## installer-clone-leaves-root-owned-home-artifacts (resolved)
 
