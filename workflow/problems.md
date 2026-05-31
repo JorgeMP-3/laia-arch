@@ -30,7 +30,7 @@ añade una línea `- **Resuelto**: 2026-MM-DD en commit <hash>`.
 
 ---
 
-## migrate-v1-to-v2-prod-outage (open)
+## migrate-v1-to-v2-prod-outage (resolved)
 
 - **Descubierto**: 2026-05-30 por claude opus 4.8 (Lead) + Jorge, al ejecutar el cutover en prod.
 - **Síntoma**: `migrate-v1-to-v2.sh --yes` en prod → verify rojo (`auth_json_ready:false`) →
@@ -48,9 +48,18 @@ añade una línea `- **Resuelto**: 2026-MM-DD en commit <hash>`.
   container EXISTENTE en marcha (lo que es prod) → los bugs in-place no se cazaron.
 - **Reproducción**: replicar el estado v1 CRUDO de un container EN MARCHA en la VM y correr el script.
 - **Workaround (recuperación aplicada)**: ver post-mortem en `changelog.md`.
-- **Owner**: sin asignar (rediseño del cutover, en frío).
-- **Estado**: open — **NO re-ejecutar `migrate-v1-to-v2.sh` en prod** hasta arreglar los 4 bugs +
-  el auto-rollback y re-testear contra una réplica cruda de container en marcha.
+- **Reproducción confirmada (2026-05-31)**: la pieza que faltaba era el device `agora-auth`
+  (file-mount `~/.laia/auth.json` → `/opt/agora/data/auth.json`) que el snapshot pre-fatal SÍ
+  tenía — el briefing lo había omitido (describía el estado post-recuperación). Con él, el bench en
+  la VM reproduce el "verde falso" del bug #2 (el backend sirve un auth.json vacío tras el swap).
+- **Owner**: claude opus 4.8.
+- **Estado**: **resolved (2026-05-31)** — los 4 bugs arreglados en `migrate-v1-to-v2.sh`
+  (converge al modelo file-mount de `rebuild-3`, modifica el device IN PLACE, verify valida el
+  CONTENIDO del auth, auto-rollback captura el owner en vivo y falla-closed). Cubierto por
+  `tests/integration/test_cutover_migration.sh` (19/19) + ciclo verde contra la réplica del
+  snapshot real de prod (14/14). Detalle en `changelog.md` (2026-05-31) y el PRD reescrito
+  `workflow/plans/2026-05-31-prod-cutover-v1v2-redesigned.md`.
+  ⚠️ La **ejecución del cutover en prod** sigue siendo un paso HITL de Jorge (no ejecutado).
 
 ## backend-tests-hardcodean-ruta-de-plugins-del-host-de-dev (resolved)
 

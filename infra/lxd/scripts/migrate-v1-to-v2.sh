@@ -12,9 +12,13 @@
 #   3. rsync data with the ORIGIN INTACT: runtime → /srv/laia/arch, secrets →
 #      /srv/laia/arch/secrets.
 #   4. Repoint anchors (reload pathd at /srv/laia/arch — the C1 default).
-#   5. ADD-BEFORE-REMOVE: set raw.idmap + chown agora data, swap the laia-agora
-#      secrets mount to /srv/laia/arch/secrets (reuses rebuild-3b), restart and
-#      verify /api/health. ON GREEN ONLY: retire the old ~/.laia.
+#   5. ADD-BEFORE-REMOVE: set raw.idmap + chown agora data, point the laia-agora
+#      `agora-auth` FILE-mount at the v2 secret /srv/laia/arch/secrets/auth.json
+#      by MODIFYING its source IN PLACE (never remove+recreate — that destroys the
+#      live mountpoint inside the agora-data mount: the 2026-05-30 outage). Restart
+#      and verify /api/health AND that the served auth.json is the v2 secret (by
+#      content, not mere presence). This converges to the canonical fresh-install
+#      model (rebuild-3). ON GREEN ONLY: retire the old ~/.laia.
 #   6. Idempotent + resumable via markers; rollback reverts the device + idmap
 #      and leaves ~/.laia untouched until the migration is verified green.
 #
@@ -24,6 +28,11 @@
 # Usage:
 #   sudo bash migrate-v1-to-v2.sh [--resume] [--dry-run] [--yes]
 #                                 [--rollback] [--purge-old] [--no-snapshot]
+#                                 [--no-cleanup]
+#   --no-cleanup: migrate + verify but KEEP ~/.laia (skip retiring v1). Leaves an
+#                 instant device-level --rollback available; finish later with
+#                 --resume --yes. Recommended for the HITL prod cutover (observe
+#                 green before committing).
 #   Overrides (env): LAIA_ARCH_DIR_OVERRIDE, LAIA_ARCH_CREDS_DIR_OVERRIDE,
 #                    BACKUP_ROOT, CONTAINER, SRC_LAIA, AGORA_UID, AGORA_GID
 set -uo pipefail
@@ -62,13 +71,12 @@ AGORA_GID="${AGORA_GID:-988}"
 MARKER_DIR="${MARKER_DIR:-/srv/laia/.laia-migration-state}"
 ROLLBACK_ENV="$MARKER_DIR/rollback.env"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REBUILD_3B="$SCRIPT_DIR/rebuild-3b-fix-authjson.sh"
 
 # Secret files (live under SRC_LAIA in v1) vs everything-else (runtime).
 SECRET_FILES=(auth.json .env admin-session.json)
 
 # ── Flags ────────────────────────────────────────────────────────────────────
-RESUME=0; DRY_RUN=0; ASSUME_YES=0; MODE=migrate; PURGE_OLD=0; DO_SNAPSHOT=auto
+RESUME=0; DRY_RUN=0; ASSUME_YES=0; MODE=migrate; PURGE_OLD=0; DO_SNAPSHOT=auto; NO_CLEANUP=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --resume) RESUME=1 ;;
@@ -76,6 +84,7 @@ while [[ $# -gt 0 ]]; do
     --yes|-y) ASSUME_YES=1 ;;
     --rollback) MODE=rollback ;;
     --purge-old) PURGE_OLD=1 ;;
+    --no-cleanup) NO_CLEANUP=1 ;;
     --no-snapshot) DO_SNAPSHOT=no ;;
     --snapshot) DO_SNAPSHOT=yes ;;
     -h|--help) grep '^#' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
@@ -126,10 +135,24 @@ record_rollback_state() {
       break
     fi
   done
-  owner="$(stat -c '%u:%g' "$AGORA_DATA_DIR" 2>/dev/null || true)"
   if [[ $DRY_RUN -eq 1 ]]; then
-    ok "[dry-run] capturaría rollback (idmap=${idmap:-none}, secret-dev=${dev:-none}→${src:-none})"
+    owner="$(stat -c '%u:%g' "$AGORA_DATA_DIR" 2>/dev/null || echo '?')"
+    ok "[dry-run] capturaría rollback (idmap=${idmap:-none}, secret-dev=${dev:-none}→${src:-none}, owner=${owner})"
     return 0
+  fi
+  # Capture the LIVE numeric owner of the data dir — this is what --rollback must
+  # restore VERBATIM. The 2026-05-30 outage came from recording a bogus owner
+  # (0:0): on rollback the dir became root:root and the unprivileged `agora` user
+  # lost access → its restart failed → ~50 min down. So: read it LIVE and FAIL
+  # CLOSED rather than ever recording a value that would lock agora out.
+  owner="$(stat -c '%u:%g' "$AGORA_DATA_DIR")" \
+    || die "no puedo leer el owner de $AGORA_DATA_DIR — abort (el rollback necesita el valor real)"
+  [[ -n "$owner" && "$owner" == *:* ]] \
+    || die "owner de $AGORA_DATA_DIR ilegible ('$owner') — abort"
+  if [[ "$owner" == "0:0" ]]; then
+    die "$AGORA_DATA_DIR es root:root (0:0), inesperado para un data dir de agora v1.
+Abort para NO grabar un rollback que dejaría el dir inaccesible al user agora
+(ese fue exactamente el fallo del 2026-05-30). Revisa el estado del container antes de migrar."
   fi
   mkdir -p "$MARKER_DIR"
   {
@@ -276,12 +299,18 @@ phase_anchors() {
 
 phase_swap_mount() {
   should_skip swap-mount && return 0
-  section "7) ADD-BEFORE-REMOVE: raw.idmap + swap del mount de secretos"
+  section "7) ADD-BEFORE-REMOVE: raw.idmap + apuntar el file-mount de auth al secreto v2"
   record_rollback_state   # ensure captured even on --resume from here
 
+  # The v2 secret must exist BEFORE we touch the live mount — never break the
+  # running auth on a secret that isn't there.
+  [[ -f "$SECRETS_DIR/auth.json" ]] \
+    || die "no existe $SECRETS_DIR/auth.json — corre la fase sync-secrets primero (o --resume)"
+
   # 7a. raw.idmap (C2): map host admin uid/gid ↔ container agora uid/gid so the
-  # 0600 secrets are readable without world-read. Applied to the EXISTING
-  # container (no recreate); LXD re-shifts the rootfs on the next restart.
+  # 0600 secret is readable without world-read — the SAME contract as a fresh v2
+  # install (rebuild-3). Applied to the EXISTING container (no recreate); the
+  # rootfs re-shifts on the next start.
   local cur_idmap want_idmap
   cur_idmap="$(lxc config get "$CONTAINER" raw.idmap 2>/dev/null || true)"
   want_idmap=$'uid '"$ARCH_UID $AGORA_UID"$'\ngid '"$ARCH_GID $AGORA_GID"
@@ -295,54 +324,69 @@ gid $ARCH_GID $AGORA_GID'"
   # The shifted agora user must own its data dir on the host.
   run "chown -R '$ARCH_UID:$ARCH_GID' '$AGORA_DATA_DIR' 2>/dev/null || true"
 
-  # 7a-bis. raw.idmap only takes effect on a container (re)start — LXD re-shifts
-  # the rootfs then. rebuild-3b restarts only the backend service, so we must
-  # bounce the CONTAINER here first, or its readability check runs before the
-  # shift is live. The old ~/.laia mount (0755/644) stays readable through the
-  # shift (host uid maps to agora), so this restart is non-destructive.
-  if [[ "$cur_idmap" != "$want_idmap" ]]; then
-    log "restart $CONTAINER para aplicar raw.idmap (re-shift del rootfs)"
-    run "lxc restart '$CONTAINER'"
-    if [[ $DRY_RUN -eq 0 ]]; then
-      for _ in $(seq 1 30); do
-        lxc list "$CONTAINER" -c s --format csv 2>/dev/null | grep -q RUNNING && break; sleep 1
-      done
-    fi
-  fi
-
-  # 7b. Swap the secrets mount to the v2 dir. rebuild-3b is idempotent: it
-  # recreates the arch-laia dir-mount from HOST_LAIA_DIR, writes the systemd
-  # drop-in, restarts agora and verifies auth_json_ready. The OLD ~/.laia is
-  # NOT touched here — only the device source changes — so rollback is a device
-  # swap-back.
-  if [[ $DRY_RUN -eq 1 ]]; then
-    run "HOST_LAIA_DIR='$SECRETS_DIR' bash '$REBUILD_3B'"
+  # 7b. Point the auth.json FILE-mount at the v2 secret — IN PLACE. We MODIFY the
+  # existing `agora-auth` device's source (NEVER remove+recreate: removing a
+  # file-mount whose target lives inside the agora-data mount can delete the live
+  # auth.json mountpoint — that was the 2026-05-30 outage, bug #1). If there is no
+  # agora-auth device yet, we ADD one. End-state is byte-identical to a fresh v2
+  # install (rebuild-3): source=$SECRETS_DIR/auth.json → /opt/agora/data/auth.json.
+  #
+  # Do it OFFLINE (stop → reconfigure → start): a disk source change cannot be
+  # applied to a running container, and stopping first guarantees the new mount +
+  # the raw.idmap re-shift take effect together on the single start below.
+  local want_src="$SECRETS_DIR/auth.json"
+  run "lxc stop '$CONTAINER' 2>/dev/null || true"
+  if _device_exists agora-auth; then
+    log "agora-auth: source → $want_src (modify in place, sin remove)"
+    run "lxc config device set '$CONTAINER' agora-auth source '$want_src'"
+    run "lxc config device set '$CONTAINER' agora-auth path '/opt/agora/data/auth.json'"
+    run "lxc config device set '$CONTAINER' agora-auth readonly 'true'"
   else
-    log "swap mount → $SECRETS_DIR (vía rebuild-3b)"
-    if ! HOST_LAIA_DIR="$SECRETS_DIR" CONTAINER="$CONTAINER" bash "$REBUILD_3B"; then
-      warn "rebuild-3b falló — auto-rollback de este paso"
-      do_rollback "fallo en swap-mount"
-      die "swap-mount falló; se revirtió al estado v1 (~/.laia intacto)"
-    fi
+    log "agora-auth ausente — añadiendo file-mount → $want_src"
+    run "lxc config device add '$CONTAINER' agora-auth disk source='$want_src' path='/opt/agora/data/auth.json' readonly=true"
+  fi
+  log "start $CONTAINER (aplica raw.idmap + nuevo source del file-mount)"
+  run "lxc start '$CONTAINER'"
+  if [[ $DRY_RUN -eq 0 ]]; then
+    for _ in $(seq 1 30); do
+      lxc list "$CONTAINER" -c s --format csv 2>/dev/null | grep -q RUNNING && break; sleep 1
+    done
   fi
   mark_done swap-mount
 }
 
 phase_verify() {
   should_skip verify && return 0
-  section "8) Verificar /api/health (auth_json_ready)"
+  section "8) Verificar /api/health + que el auth servido ES el secreto v2"
   if [[ $DRY_RUN -eq 1 ]]; then ok "[dry-run] saltando verify real"; mark_done verify; return 0; fi
   local j rc
   j="$(wait_for_health)"; rc=$?
   echo "$j" | jq '{ok, auth_json_ready, auth_json_status, auth_json_path}' 2>/dev/null || echo "$j"
-  if [[ $rc -eq 0 ]]; then
-    ok "AGORA verde con secretos en $SECRETS_DIR ✓"
-    mark_done verify
-  else
+  if [[ $rc -ne 0 ]]; then
     warn "health no verde (rc=$rc) — auto-rollback"
     do_rollback "verify no verde"
     die "verify falló; revertido a v1 (~/.laia intacto)"
   fi
+  # auth_json_ready SÓLO confirma que el fichero existe — NO valida el contenido
+  # (main.py:342-344). El bug de fondo (2026-05-30) fue declarar verde mientras el
+  # backend servía un auth.json vacío/equivocado. Exigimos que el contenido servido
+  # sea EXACTAMENTE el secreto v2 (y no vacío), o auto-rollback.
+  local empty_sha="e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  local served_sha secret_sha
+  served_sha="$(lxc exec "$CONTAINER" -- sha256sum /opt/agora/data/auth.json 2>/dev/null | awk '{print $1}')"
+  secret_sha="$(sha256sum "$SECRETS_DIR/auth.json" 2>/dev/null | awk '{print $1}')"
+  if [[ -z "$served_sha" || "$served_sha" == "$empty_sha" ]]; then
+    warn "el auth.json servido está vacío/ilegible (sha=${served_sha:-none}) — auto-rollback"
+    do_rollback "auth servido vacío"
+    die "verify falló (auth vacío); revertido a v1 (~/.laia intacto)"
+  fi
+  if [[ "$served_sha" != "$secret_sha" ]]; then
+    warn "el auth.json servido NO coincide con el secreto v2 (served=$served_sha secret=$secret_sha) — auto-rollback"
+    do_rollback "auth servido != secreto v2"
+    die "verify falló (el backend no sirve el secreto v2); revertido a v1 (~/.laia intacto)"
+  fi
+  ok "AGORA verde y sirviendo el secreto v2 ($SECRETS_DIR/auth.json) ✓"
+  mark_done verify
 }
 
 phase_cleanup() {
@@ -384,6 +428,11 @@ do_rollback() {
     warn "  o el tar en $BACKUP_ROOT/<ts>/"
     die "rollback de dispositivo no seguro tras cleanup — usa backup/snapshot"
   fi
+  # Do the rollback OFFLINE (stop → reconfigure → start), same reason as the
+  # forward swap: disk source changes need the container stopped, and one start
+  # re-applies the restored idmap + mount together.
+  run "lxc stop '$CONTAINER' 2>/dev/null || true"
+
   # Revert raw.idmap to its pre-migration value (unset if it had none).
   if [[ -z "${PRE_RAW_IDMAP:-}" ]]; then
     run "lxc config unset '$CONTAINER' raw.idmap 2>/dev/null || true"
@@ -392,25 +441,44 @@ do_rollback() {
     run "lxc config set '$CONTAINER' raw.idmap '$PRE_RAW_IDMAP'"
     ok "raw.idmap restaurado"
   fi
-  # Revert the agora data ownership.
-  if [[ -n "${PRE_AGORA_DATA_OWNER:-}" ]]; then
-    run "chown -R '$PRE_AGORA_DATA_OWNER' '$AGORA_DATA_DIR' 2>/dev/null || true"
-  fi
-  # Drop the v2 secrets mount (rebuild-3b always lands on arch-laia) and restore
-  # the exact pre-migration device, whatever its name/source/type was.
-  run "lxc stop '$CONTAINER' 2>/dev/null || true"
-  for d in arch-laia agora-auth; do
-    _device_exists "$d" && run "lxc config device remove '$CONTAINER' '$d' 2>/dev/null || true"
-  done
-  if [[ -n "${PRE_SECRET_DEV:-}" && -n "${PRE_SECRET_SOURCE:-}" ]]; then
-    local addcmd="lxc config device add '$CONTAINER' '$PRE_SECRET_DEV' disk source='$PRE_SECRET_SOURCE' path='$PRE_SECRET_PATH'"
-    [[ "${PRE_SECRET_RO:-}" == "true" ]] && addcmd="$addcmd readonly=true"
-    run "$addcmd"
-    ok "device $PRE_SECRET_DEV restaurado → $PRE_SECRET_SOURCE"
+
+  # Restore the auth FILE-mount source IN PLACE — never REMOVE the live device
+  # (removing it is what deleted the auth.json mountpoint in the outage, bug #1).
+  # If v1 had an agora-auth device, point its source back; a legacy arch-laia
+  # dir-mount is restored verbatim; if v1 had NO secrets device, drop the one we
+  # added (safe pre-cleanup: the data-dir file, if any, is the real one).
+  if [[ "${PRE_SECRET_DEV:-}" == "agora-auth" && -n "${PRE_SECRET_SOURCE:-}" ]]; then
+    if _device_exists agora-auth; then
+      run "lxc config device set '$CONTAINER' agora-auth source '$PRE_SECRET_SOURCE'"
+      [[ -n "${PRE_SECRET_PATH:-}" ]] && run "lxc config device set '$CONTAINER' agora-auth path '$PRE_SECRET_PATH'"
+      run "lxc config device set '$CONTAINER' agora-auth readonly '${PRE_SECRET_RO:-true}'"
+    else
+      local addcmd="lxc config device add '$CONTAINER' agora-auth disk source='$PRE_SECRET_SOURCE' path='${PRE_SECRET_PATH:-/opt/agora/data/auth.json}'"
+      [[ "${PRE_SECRET_RO:-true}" == "true" ]] && addcmd="$addcmd readonly=true"
+      run "$addcmd"
+    fi
+    ok "agora-auth source restaurado → $PRE_SECRET_SOURCE"
+  elif [[ "${PRE_SECRET_DEV:-}" == "arch-laia" && -n "${PRE_SECRET_SOURCE:-}" ]]; then
+    _device_exists arch-laia \
+      || run "lxc config device add '$CONTAINER' arch-laia disk source='$PRE_SECRET_SOURCE' path='${PRE_SECRET_PATH:-/var/lib/laia-host}' readonly=true"
+    _device_exists agora-auth && run "lxc config device remove '$CONTAINER' agora-auth 2>/dev/null || true"
+    ok "device arch-laia restaurado → $PRE_SECRET_SOURCE"
   else
-    warn "no había device de secretos registrado — solo reinicio"
+    _device_exists agora-auth && run "lxc config device remove '$CONTAINER' agora-auth 2>/dev/null || true"
+    warn "v1 no tenía device de secretos — agora-auth retirado"
   fi
-  run "lxc start '$CONTAINER'"
+
+  # Restore the agora data ownership EXACTLY. Refuse a bogus value (empty / 0:0)
+  # rather than chowning the dir to something that locks agora out (the outage).
+  if [[ -n "${PRE_AGORA_DATA_OWNER:-}" && "${PRE_AGORA_DATA_OWNER}" == *:* && "${PRE_AGORA_DATA_OWNER}" != "0:0" ]]; then
+    run "chown -R '$PRE_AGORA_DATA_OWNER' '$AGORA_DATA_DIR'"
+    ok "owner de $AGORA_DATA_DIR restaurado → $PRE_AGORA_DATA_OWNER"
+  else
+    warn "PRE_AGORA_DATA_OWNER inválido/ausente ('${PRE_AGORA_DATA_OWNER:-}') — NO toco el owner"
+    warn "  (mejor dejarlo como está que chownear a un valor que rompa el acceso de agora)"
+  fi
+
+  run "lxc start '$CONTAINER' 2>/dev/null || true"
   # ~/.laia is never deleted before 'cleanup', so v1 is intact here.
   clear_marks
   ok "rollback completo · ~/.laia intacto: $([[ -d "$SRC_LAIA" ]] && echo sí || echo NO)"
@@ -443,7 +511,14 @@ main() {
   phase_anchors
   phase_swap_mount
   phase_verify
-  phase_cleanup
+  if [[ $NO_CLEANUP -eq 1 ]]; then
+    section "9) (--no-cleanup) ~/.laia CONSERVADO"
+    ok "migración verificada; el layout v1 ($SRC_LAIA) se conserva intacto"
+    ok "rollback de dispositivo disponible: $0 --rollback (antes de retirar ~/.laia)"
+    ok "para completar y retirar v1 más tarde: $0 --resume --yes"
+  else
+    phase_cleanup
+  fi
 }
 
 main "$@"
