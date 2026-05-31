@@ -67,31 +67,28 @@ jobs:
 
   # ── Installer / cloner (shell, host-free) ───────────────────────────────────
   # tests/installer/run_all.sh corre los test_*.sh diseñados para ejercitar
-  # parsing de flags, helpers de lib/, render de systemd y dry-runs SIN root,
-  # SIN LXD y SIN GitHub (ver tests/installer/README.md). Stubs en
-  # tests/installer/_stubs/ (lxc, lxd, snap, curl). Verificado: 33/33, exit 0
-  # sobre un checkout normal (.git como directorio, que es lo que da
-  # actions/checkout).
+  # parsing de flags, helpers de lib/, render de systemd y dry-runs sin LXD ni
+  # GitHub. Algunos tests usan sudo si existe y skipean ese bloque si no.
+  # Ver tests/installer/README.md. Stubs en
+  # tests/installer/_stubs/ (lxc, lxd, snap, curl). En CI se salta sólo
+  # test_install_native_layout.sh; actions/checkout deja .git como directorio.
   installer:
     name: Installer shell tests (host-free)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - name: Run host-free installer suite
-        # INSTALLER_SKIP excluye 2 tests que NO son host-free en un runner pelado
+        # INSTALLER_SKIP excluye el test que NO es host-free en un runner pelado
         # (pasan en local sólo por artefactos del host de dev). Se imprimen como
-        # SKIP en el log de run_all.sh → no silent cap. Razón de cada uno:
+        # SKIP en el log de run_all.sh → no silent cap. Razón:
         #  - test_install_native_layout.sh: su `laia auth add` dispatcha a
         #    laia_cli.main, que necesita las deps de laia-core (python-dotenv,
         #    pyyaml, …). En un host real las trae /opt/laia/.laia-core/venv; en el
         #    runner no existe → cae a python3 de sistema sin esas deps → falla.
-        #  - test_clone_hardening.sh: su bloque sudo-clone sólo corre con sudo
-        #    passwordless (presente en runners GitHub) y ejercita un install cuyo
-        #    preflight de disco (ensure_disk_free_gb, 5 GB) lee 0 GB sobre una ruta
-        #    override aún no creada bajo TMPDIR. Quirk latente (ver problems.md).
-        # Ambos quedan cubiertos por el E2E en VM (tests/installer/README.md).
+        # El resto queda cubierto aquí; test_clone_hardening.sh vuelve a correr
+        # tras corregir ensure_disk_free_gb sobre paths inexistentes.
         env:
-          INSTALLER_SKIP: "test_install_native_layout.sh test_clone_hardening.sh"
+          INSTALLER_SKIP: "test_install_native_layout.sh"
         run: bash tests/installer/run_all.sh
 
   # ── Matriz de SKIP (no silent cap) ──────────────────────────────────────────
@@ -104,10 +101,10 @@ jobs:
       - uses: actions/checkout@v4
       - name: Print run/skip matrix
         run: |
-          echo "::notice title=CI corre::backend pytest (services/agora-backend, py3.11 + py3.14, LAIA_ROOT=checkout) + tests/installer/run_all.sh (host-free, menos 2 excluidos)"
+          echo "::notice title=CI corre::backend pytest (services/agora-backend, py3.11 + py3.14, LAIA_ROOT=checkout) + tests/installer/run_all.sh (shell/stubs, menos 1 excluido)"
           echo "::notice title=SKIP por diseño — D2::tests/integration/test_ecosystem_integrity.sh requiere LXD + container laia-agora vivo + /api/health → no ejecutable en runner sin host. Se corre a mano / en VM laia-dev y (B2) vía monitor."
           echo "::notice title=SKIP por diseño — tests de plugin del backend::6 tests cargan plugins de .laia-core/plugins (gitignored, provistos por la instalación). En el checkout no existen → pytest.skip limpio (helper tests/_laia_core.py). Corren en host/VM con laia-core."
-          echo "::notice title=SKIP por diseño — 2 installer tests::test_install_native_layout.sh (laia auth necesita deps de laia-core: dotenv/pyyaml) y test_clone_hardening.sh (bloque sudo-clone + preflight de disco) NO son host-free en un runner pelado → INSTALLER_SKIP. Cubiertos por VM E2E."
+          echo "::notice title=SKIP por diseño — installer::test_install_native_layout.sh (laia auth necesita deps de laia-core: dotenv/pyyaml) NO es host-free en un runner pelado → INSTALLER_SKIP. Cubierto por VM E2E / host con laia-core instalado."
           echo "::notice title=SKIP por diseño — host tests::tests/*.sh top-level y tests/wizard/*.py quedan fuera del alcance de B1 (algunos requieren host/servicios). Candidatos a ampliación futura del CI."
           echo "::notice title=SKIP por diseño — VM E2E::tests/installer/vm-*.sh (Multipass/VM) no son test_*.sh → run_all.sh no los toca; necesitan VM."
           echo "Detalle completo y razones: .github/workflows/README.md"
