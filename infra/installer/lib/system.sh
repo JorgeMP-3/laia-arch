@@ -77,9 +77,18 @@ require_python_min() {
 
 # ensure_disk_free_gb <path> <min_gb>
 ensure_disk_free_gb() {
-  local path="$1" min_gb="$2" avail_gb
-  mkdir -p "$(dirname "$path")" 2>/dev/null || true
-  avail_gb="$(df -BG --output=avail "$path" 2>/dev/null | tail -1 | tr -dc '0-9' || echo 0)"
+  local path="$1" min_gb="$2" avail_gb probe parent
+  probe="$path"
+  while [[ ! -e "$probe" ]]; do
+    parent="$(dirname "$probe")"
+    if [[ "$parent" == "$probe" ]]; then
+      break
+    fi
+    probe="$parent"
+  done
+  [[ -e "$probe" ]] || probe="/"
+
+  avail_gb="$(df -BG --output=avail "$probe" 2>/dev/null | tail -1 | tr -dc '0-9')"
   [[ -n "$avail_gb" && "$avail_gb" -ge "$min_gb" ]] || \
     die "Not enough disk space at $path: ${avail_gb:-0} GB free, ${min_gb} GB required"
 }

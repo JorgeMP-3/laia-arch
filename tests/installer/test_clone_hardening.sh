@@ -73,6 +73,39 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# Install disk preflight must tolerate a not-yet-created override root
+# ---------------------------------------------------------------------------
+
+echo
+echo "→ install disk preflight reads free space from existing ancestor"
+DISK_PREFLIGHT_DIR="$TMPDIR_TEST/disk-preflight"
+NONEXISTENT_INSTALL_ROOT="$DISK_PREFLIGHT_DIR/dest/opt"
+out=$(
+  LAIA_INSTALL_ROOT_OVERRIDE="$NONEXISTENT_INSTALL_ROOT" \
+  LAIA_HOME_OVERRIDE="$DISK_PREFLIGHT_DIR/LAIA-ARCH" \
+  LAIA_BIN_DIR_OVERRIDE="$DISK_PREFLIGHT_DIR/bin" \
+  LAIA_SYSTEMD_DIR_OVERRIDE="$DISK_PREFLIGHT_DIR/systemd" \
+  LAIA_LOG_FILE="$DISK_PREFLIGHT_DIR/run.log" \
+  NO_COLOR=1 \
+  bash -c '
+    set -e
+    export LAIA_ROOT="'"$LAIA_ROOT"'"
+    source "'"$LAIA_ROOT"'/infra/installer/lib/common.sh"
+    source "'"$LAIA_ROOT"'/infra/installer/lib/system.sh"
+    source "'"$LAIA_ROOT"'/infra/installer/lib/install.sh"
+    OPT_DRY_RUN=true
+    inst_preflight
+  ' 2>&1
+)
+rc=$?
+if [[ $rc -eq 0 ]] && ! grep -q "Not enough disk space.*0 GB free" <<<"$out"; then
+  assert "nonexistent install root override does not read as 0 GB free" 0
+else
+  printf '%s\n' "$out" >&2
+  assert "nonexistent install root override does not read as 0 GB free (got rc=$rc)" 1
+fi
+
+# ---------------------------------------------------------------------------
 # Sudo clone must not leave root-owned HOME control artifacts
 # ---------------------------------------------------------------------------
 

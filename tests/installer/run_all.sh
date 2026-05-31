@@ -10,7 +10,7 @@ export HOME="$RUN_HOME"
 
 # Optional skip-list (backward-compatible: empty by default → runs everything).
 # INSTALLER_SKIP accepts space- or comma-separated test basenames, e.g.
-#   INSTALLER_SKIP="test_clone_hardening.sh test_install_native_layout.sh"
+#   INSTALLER_SKIP="test_install_native_layout.sh"
 # Skips are printed LOUDLY (never silent) so a CI log shows exactly what was
 # left out. Used by .github/workflows/ci.yml to drop tests that need host
 # artifacts a bare runner doesn't have (see that file + README for the why).

@@ -74,10 +74,10 @@ echo "→ Exclusión de tests no-host-free documentada (no silent cap)"
 assert_true "ci.yml usa INSTALLER_SKIP" grep -q 'INSTALLER_SKIP:' "$CI"
 assert_true "run_all.sh soporta INSTALLER_SKIP" \
   grep -q 'INSTALLER_SKIP' "$LAIA_ROOT/tests/installer/run_all.sh"
-assert_true "ci.yml nombra los 2 tests excluidos (native_layout)" \
+assert_true "ci.yml nombra el test excluido (native_layout)" \
   grep -q 'test_install_native_layout.sh' "$CI"
-assert_true "ci.yml nombra los 2 tests excluidos (clone_hardening)" \
-  grep -q 'test_clone_hardening.sh' "$CI"
+assert_true "ci.yml ya no excluye clone_hardening" \
+  bash -c "! grep -Eq 'INSTALLER_SKIP:.*test_clone_hardening\\.sh' \"\$1\"" _ "$CI"
 assert_true "README documenta la exclusión" \
   grep -q 'INSTALLER_SKIP' "$README"
 
