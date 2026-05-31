@@ -70,9 +70,10 @@ añade una línea `- **Resuelto**: 2026-MM-DD en commit <hash>`.
 - **Owner**: Coder-Opus.
 - **Estado**: resolved.
 
-## ensure-disk-free-gb-nonexistent-path-reads-0 (open)
+## ensure-disk-free-gb-nonexistent-path-reads-0 (resolved)
 
 - **Descubierto**: 2026-05-30 por claude opus 4.8 (Coder-Opus) durante B1 (CI greenfield).
+- **Resuelto**: 2026-05-31 por Codex en commit `d67557e3`.
 - **Síntoma**: en CI (runner con sudo passwordless), `test_clone_hardening.sh` falla con
   `✗ Not enough disk space at /tmp/laia-marker-test.XXX/sudo-clone/dest/opt: 0 GB free,
   5 GB required`, aunque el runner tiene >10 GB libres.
@@ -85,14 +86,17 @@ añade una línea `- **Resuelto**: 2026-MM-DD en commit <hash>`.
 - **Reproducción**: en un host con sudo passwordless, `bash tests/installer/test_clone_hardening.sh`
   (entra en el bloque `sudo -n true`). En un host sin sudo passwordless el bloque se salta y
   no se ve.
-- **Workaround**: en CI se excluye el test vía `INSTALLER_SKIP` (ver `.github/workflows/ci.yml`);
-  cubierto por VM E2E. No bloquea B1.
-- **Owner**: sin asignar (candidato a fix en el flujo de install/clone, prod-risk → revisar con Jorge).
-- **Estado**: open.
+- **Fix**: `ensure_disk_free_gb` mide el ancestro existente más cercano del path antes de
+  llamar a `df`; el preflight de install ya no interpreta una ruta override aún no creada
+  como 0 GB libres. `test_clone_hardening.sh` añade regresión sin sudo para ese caso y
+  vuelve a correr en CI.
+- **Owner**: Codex.
+- **Estado**: resolved.
 
-## installer-tests-readme-overclaims-host-free (open)
+## installer-tests-readme-overclaims-host-free (resolved)
 
 - **Descubierto**: 2026-05-30 por claude opus 4.8 (Coder-Opus) durante B1 (CI greenfield).
+- **Resuelto**: 2026-05-31 por Codex en commit `d67557e3`.
 - **Síntoma**: `tests/installer/README.md` afirma que **todos** los `test_*.sh` corren "without
   root, without LXD, without GitHub". En un runner limpio fallan 2: `test_install_native_layout.sh`
   (su `laia auth` necesita las deps de laia-core: `python-dotenv`, `pyyaml`, … que en un host real
@@ -100,9 +104,12 @@ añade una línea `- **Resuelto**: 2026-MM-DD en commit <hash>`.
 - **Causa raíz sospechada**: docu desactualizada / falso positivo enmascarado por artefactos del
   host de dev (`$HOME/LAIA`, `/opt/laia/.laia-core/venv`). Solo el CI limpio lo destapa.
 - **Reproducción**: correr esos 2 tests con `env -i` (sin `/opt/laia` ni `$HOME/LAIA`).
-- **Workaround**: excluidos en CI vía `INSTALLER_SKIP`, documentado en `.github/workflows/README.md`.
-- **Owner**: sin asignar.
-- **Estado**: open.
+- **Fix**: `tests/installer/README.md` ahora distingue la suite shell/stubs general de los bloques
+  host-specific guardados: `test_clone_hardening.sh` ejecuta sudo sólo si está disponible y ya
+  no está excluido en CI; `test_install_native_layout.sh` queda documentado como el único skip
+  por depender de deps de laia-core en un host/VM real.
+- **Owner**: Codex.
+- **Estado**: resolved.
 
 ## agora-backend-test-pool-contamination (resolved)
 
