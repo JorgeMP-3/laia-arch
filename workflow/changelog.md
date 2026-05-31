@@ -15,6 +15,27 @@ Formato:
 
 ---
 
+## 2026-05-31 — Saneamiento: reconciliación de estado + limpieza de branches mergeadas (claude opus 4.8 · rol Lead)
+
+Mientras la otra cuenta arranca el cutover, este turno saneó el estado del repo (read-only +
+limpieza segura). Hallazgos:
+
+- **Track B (PRD-B draft) parcialmente HECHO, adelantándose al OK del PRD:** `.github/workflows/ci.yml`
+  **existe y está mergeado** (branch `wip/claude/robustez-ops` "CI verde sobre PR #30 — B1 cumplido").
+  → **B1 (CI) de PRD-B = done.** **B2 (monitor/dashboard) en curso** en worktree `LAIA-wt-robustez`
+  (branch `wip/claude/monitor-dashboard`, sin mergear). ⚠️ La intro de `prd-B-robustez-ops.md`
+  ("no hay CI, .github/workflows no existe") quedó **stale** — Jorge debería actualizar el PRD: B1
+  ya cumplido, enfocar B2/B3.
+- **Contradicción de versiones resuelta:** ver corrección en la entrada del post-mortem (2026-05-30)
+  más abajo. Host ARCH = v0.11.0 era-Hermes (v1); backend AGORA del container = código ≈v0.2.0.
+- **Branches limpiadas (local, `-d` seguro, mergeadas en main):** `wip/claude/{c1-anclas-arch,
+  c2-idmap-secrets,d1-backups,robustez-ops}`. **Pendiente (requiere OK de Jorge):** borrado en
+  `origin` de esas 4 + `c4-install-native` + `vm-laia-dev` (remotas mergeadas); y decidir sobre las
+  de Codex mergeadas (`wip/codex/{c4-tests,regression-suite}`) — son de otra IA.
+- **Conservadas a propósito:** `monitor-dashboard` (B2 activo), `note-ui-remake-v2` y
+  `codex/regression-t2` (sin mergear, trabajo vivo), `c3-migration-inplace` y `codex/d1-tests`
+  (worktrees archivados en `/mnt/data/home-archive`), `tracker-hygiene` (este turno).
+
 ## 2026-05-31 — Planificación del rediseño del cutover + handoff a otra cuenta de Claude Code (claude opus 4.8 · rol Lead)
 
 Sesión de planificación (sin tocar prod). Se decidió el siguiente paso para desbloquear el cutover
@@ -74,7 +95,10 @@ Se ejecutó `migrate-v1-to-v2.sh --yes` en PROD. El verify falló y el **auto-ro
   `agora-auth` (el container arrancó) → `chown -R 1000999:1000988 /srv/laia/agora` (el agora user
   recupera acceso a su data dir) → colocar `auth.json` real (644) en el data dir → restart limpio →
   `ok:true`, `auth_json_ready:true`, agora.db intacto.
-- **Estado:** prod estable en v0.2.0. ⚠️ `auth.json` quedó como COPIA en `/srv/laia/agora` (no
+- **Estado:** prod estable. *(Corrección 2026-05-31: la frase original decía "en v0.2.0" — es
+  impreciso. El **backend AGORA** del container corre imagen reconstruida el 2026-05-26 (código
+  ≈v0.2.0), pero la **capa ARCH del host** sigue en `/opt/laia-v0.11.0` era-Hermes, layout v1 sin
+  migrar. Son dos capas distintas; el cutover migra la del host.)* ⚠️ `auth.json` quedó como COPIA en `/srv/laia/agora` (no
   bind-mount de `~/.laia`) → riesgo de drift, ver `security.md`. Red de seguridad intacta
   (snapshot `pre-v2-migration-20260530T182010Z` + tar en `/mnt/data/laia-migration-backups/` + `~/.laia`).
 - **Causa raíz de proceso:** la migración se validó contra un install FRESCO v0.2.0 en la VM, **no**
