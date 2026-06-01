@@ -88,8 +88,8 @@ sudo sshd -T | grep -Ei 'passwordauthentication|permitrootlogin|kbdinteractive|p
 ```
 **✅ HECHO + VERIFICADO EN VIVO 2026-06-01** (`sudo sshd -T`): `passwordauthentication no`,
 `permitrootlogin no`, `allowusers laia-arch`. El gotcha del cloud-init se resolvió bien
-(password-auth apagado en el propio `50-cloud-init.conf`, que gana por orden de lectura).
-Receta aplicada (se conserva para auditoría):
+(password-auth apagado en el propio `50-cloud-init.conf`, que gana por orden de lectura
+sobre cualquier drop-in `99-*`, que sería ignorado). Receta aplicada (se conserva para auditoría):
 ```bash
 # 0) (opcional) clave para el path LAN directo — pega la pública de tu MacBook.
 #    NO hace falta para no quedarte fuera: Tailscale SSH (100.87.62.18) no usa sshd.

@@ -28,7 +28,9 @@ ORIG_HOME=$(getent passwd "$ORIG_USER" 2>/dev/null | cut -d: -f6)
 [[ -z "$ORIG_HOME" ]] && ORIG_HOME="/home/$ORIG_USER"
 
 REPO="${LAIA_ROOT:-$ORIG_HOME/LAIA}"
-STATE_DIR="${LAIA_STATE_DIR:-$ORIG_HOME/.laia/state}"
+# Layout v2: orchestrator state lives in /srv/laia/state (top-level), not in the
+# legacy v1 home path ~/.laia/state. Override with LAIA_STATE_DIR if needed.
+STATE_DIR="${LAIA_STATE_DIR:-/srv/laia/state}"
 HOST_DATA_DIR="${HOST_DATA_DIR:-/srv/laia/agora}"
 AUTH_JSON_HOST="${AUTH_JSON_HOST:-$ORIG_HOME/.laia/auth.json}"
 # Auto-detect owner: ORIG_USER:primary_group (avoids hardcoding any specific user)

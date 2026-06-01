@@ -36,6 +36,10 @@ dependencies = [
   "edge-tts>=7.2.7,<8",
   # Skills Hub (GitHub App JWT auth — optional, only needed for bot identity)
   "PyJWT[crypto]>=2.12.0,<3",  # CVE-2026-32597
+  # laia-pathd runs in this venv and uses watchdog for inotify-based path
+  # watching (the systemd unit relies on it being present here). Without it the
+  # daemon still works but falls back to polling-only mode.
+  "watchdog>=4.0.0,<7",
 ]
 
 [project.optional-dependencies]
