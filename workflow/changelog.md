@@ -15,6 +15,25 @@ Formato:
 
 ---
 
+## 2026-06-01 — Fix del idmap de zonas de datos del usuario (shift=true) — T3 verde (claude-a)
+
+Diagnóstico (FASE 4) + fix del bug grave descubierto en la tanda anterior
+(`problems.md: user-data-zone-not-writable-idmap-mismatch`).
+
+- **Causa raíz confirmada**: `infra/lxd/scripts/create-agent.sh:41` fijaba `LXD_UID_OFFSET=100000`
+  (hardcoded), pero la base idmap real del LXD (snap 5.21) es **1000000** → los dirs de datos del
+  usuario caían fuera del rango → `nobody` dentro del container → el ejecutor no podía escribir.
+  Corroborado: `rebuild-4-first-user.sh`/`deploy-redesign.sh` ya usaban `chown 1000000`.
+- **Fix** (`wip/claude-a/fix-idmap-data-zone`, decisión de Jorge): adjuntar los 3 disk devices
+  (home/plugins/workspace) con **`shift=true`** (idmapped mounts; kernel 7.0 + LXD 5.21). Los dirs
+  quedan root-owned y LXD mapea por el idmap del container — sin adivinar offset. Eliminado el chown
+  al offset y la variable `LXD_UID_OFFSET`.
+- **Validado en VM `laia-dev`**: e2e **T3 golden-path PASS** end-to-end ("tool-call executed and landed
+  in the user's data zone"; deprovision sin residuo). Test de regresión = el propio T3.
+- **Pendiente (HITL Jorge, prod-risk)**: remediar agentes EXISTENTES (`lxc config device set <c>
+  {home,plugins,workspace} shift=true` + restart; sus dirs ya son root-owned). Revisar aparte
+  `create-agora.sh:53` (chown 100000 del dir AGORA; AGORA funciona hoy, baja prioridad).
+
 ## 2026-06-01 — Tooling laiactl reconciliado al cerebro centralizado + bug grave de idmap descubierto (claude-a)
 
 Corriendo los e2e destructivos **T3/T6 en la VM `laia-dev`** (que nunca se habían ejecutado). Hallazgos:
