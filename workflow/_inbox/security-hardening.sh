@@ -119,10 +119,19 @@ else warn "saltado"; fi
 
 # ---------- 4) Nextcloud (F11) ----------
 sect "4) Nextcloud admin (F11)"
-if command -v nextcloud.occ >/dev/null 2>&1 || [ -x /snap/bin/nextcloud.occ ]; then
-  sudo nextcloud.occ user:lastlogin admin 2>/dev/null | sed 's/^/    /' || true
-  if ask "resetear el password admin de Nextcloud AHORA (interactivo)"; then
-    sudo nextcloud.occ user:resetpassword admin
+NC=""
+command -v nextcloud.occ >/dev/null 2>&1 && NC=nextcloud.occ
+[ -x /snap/bin/nextcloud.occ ] && NC=/snap/bin/nextcloud.occ
+if [ -n "$NC" ]; then
+  # occ puede colgarse en "Waiting for redis..."; SIEMPRE con timeout para no bloquear el script.
+  if sudo timeout 25 "$NC" status >/dev/null 2>&1; then
+    sudo timeout 25 "$NC" user:lastlogin admin 2>/dev/null | sed 's/^/    /' || true
+    if ask "resetear el password admin de Nextcloud AHORA (interactivo)"; then
+      sudo "$NC" user:resetpassword admin     # interactivo: sin timeout
+    fi
+  else
+    warn "occ no respondio en 25s (poll a redis lento). Saltado; reintentalo luego con:"
+    echo "      sudo nextcloud.occ status && sudo nextcloud.occ user:resetpassword admin"
   fi
 else warn "nextcloud.occ no encontrado -> saltado"; fi
 
