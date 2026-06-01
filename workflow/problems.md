@@ -52,6 +52,27 @@ añade una línea `- **Resuelto**: 2026-MM-DD en commit <hash>`.
 - **Owner**: Codex/Lead (fix del template).
 - **Estado**: open.
 
+## d2-health-check-requiere-jq-y-privilegios-lxc (open)
+
+- **Descubierto**: 2026-05-30 por claude opus 4.8 (Coder-Opus) durante el ensayo de B2 en la VM `laia-dev`.
+- **Síntoma**: D2 (`tests/integration/test_ecosystem_integrity.sh`) da **falso-rojo** con el cerebro
+  sano en dos casos: (a) lo corre un usuario que **no ve el container** (no está en el grupo `lxd`)
+  → "container laia-agora no existe"; (b) **falta `jq`** → el check de `/api/health` (Capa 3) no
+  resuelve la IP del container y **falla** en vez de degradar a skip.
+- **Causa raíz**: en `test_ecosystem_integrity.sh`, `agora_health_json()` hace
+  `lxc list … --format json | jq …` para sacar la IP y luego `curl http://<ip>:${AGORA_HEALTH_PORT:-8000}`.
+  `jq` está marcado `optional_jq` en la metadata, pero el check no tiene fallback jq-free → cuando
+  falta, no degrada (skip) sino que reporta FAIL. Y `lxc` sin privilegios no lista el container.
+- **Reproducción**: correr D2 (vía `run_integrity.sh --profile host`) como un usuario fuera del
+  grupo `lxd`, o en un host sin `jq`, con el cerebro arriba → FAIL espurio.
+- **Impacto en B2**: el monitor reporta fielmente lo que D2 dice → falso-rojo. Mitigación: el
+  servicio `laia-health-monitor` debe correr como usuario del grupo `lxd` y con `jq` presente
+  (documentado en `infra/docs/HEALTH_MONITOR.md`). En el host de prod `laia-arch` ya está en `lxd`.
+- **Fix propuesto**: en D2, fallback jq-free para la IP (p.ej. `lxc list … -c 4 --format csv`) y
+  que la ausencia de jq degrade a `skip`/`pend`, no a `fail`. Es trabajo del runner T1, no de B2.
+- **Owner**: sin asignar.
+- **Estado**: open.
+
 ## migrate-v1-to-v2-prod-outage (resolved)
 
 - **Descubierto**: 2026-05-30 por claude opus 4.8 (Lead) + Jorge, al ejecutar el cutover en prod.

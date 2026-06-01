@@ -156,6 +156,31 @@ todo el trabajo destructivo en la VM `laia-dev`. **No tocó código del backend*
 - Verificado: `test_clone_hardening.sh` rojo antes del fix; después verde 10/10.
   `bash tests/test_ci_workflow.sh` 23/23. `bash tests/installer/run_all.sh` completo verde.
 
+## 2026-05-30 — B2 · Monitor de salud → estado consultable (claude opus 4.8 · rol Coder-Opus)
+
+Track B/B2 (Robustez/Ops). LAIA se autovigila: corre el runner de integridad T1 y publica un
+veredicto a un estado consultable, **sin email** (decisión de Jorge). Revisado por el Lead y
+mergeado (PR #36).
+
+- **`infra/bin/laia_health_state.py`** (helper puro/testeable): reporte T1 + exit code →
+  veredicto `green`/`red`/`error` con causa; escribe atómicamente `latest.json`, `latest.txt`,
+  `report.json`, `history.jsonl` (capado) a `/srv/laia/state/health/`. Sobrescribe, no acumula.
+- **`infra/bin/laia-health-monitor`** (entrypoint bash, `run`/`show`/`path`): resuelve LAIA_ROOT/
+  STATE como `laia-backup`, corre `run_integrity.sh --profile host`, delega en el helper. Sale 0
+  aunque la salud sea roja (la salud se lee del estado, no del exit del unit).
+- **`infra/installer/systemd/laia-health-monitor.{service,timer}.tmpl`**: oneshot + timer cada
+  10 min, espejo de `laia-backup`. Se renderizan con el resto (glob) pero **NO se habilitan**
+  (habilitar el timer en prod sigue siendo prod-risk → paso aparte).
+- **`tests/test_health_monitor.sh`** (host-free, 21/21): criterio del PRD a nivel helper + E2E
+  con runner real + test sintético (sin tocar prod).
+- **`infra/docs/HEALTH_MONITOR.md`**: qué es, estado publicado, cómo habilitar (prod-risk),
+  caveats de D2 y resultados del ensayo.
+- **Ensayo en VM `laia-dev`** contra el ecosistema **real anidado**, sin tocar prod: cerebro
+  arriba → **GREEN**; `lxc stop laia-agora` → **RED** con causa; `lxc start` → **GREEN**.
+  `history.jsonl` registró `green→red→green`.
+- **Hallazgo del ensayo** (en `problems.md`): D2 da falso-rojo si lo corre un usuario sin acceso a
+  `lxc` o sin `jq`. → `d2-health-check-requiere-jq-y-privilegios-lxc` (open).
+
 ## 2026-05-30 — Track T2: invariantes por capa + regresión outage v1→v2 (Coder-Codex)
 
 - Añadidos módulos descubiertos por `tests/integration/run_integrity.sh` para las capas `host`,

@@ -1,0 +1,104 @@
+#!/usr/bin/env bash
+set -uo pipefail
+# ─────────────────────────────────────────────────────────────────────────────
+# laia-health-monitor — autovigilancia de LAIA (Track B · slice B2).
+#
+# Corre el runner de integridad T1 y PUBLICA su veredicto a un estado consultable
+# en /srv/laia/state/health/ (sin email — Jorge lo mira cuando quiere). Pensado
+# para ser disparado por `laia-health-monitor.timer` cada N minutos, pero también
+# es ejecutable a mano.
+#
+# NO confundir con `laia-health` (chequeo interactivo a terminal). Éste es el
+# monitor no-interactivo que alimenta el dashboard/estado.
+#
+#   laia-health-monitor [run]   corre el runner T1 y publica el estado (default)
+#   laia-health-monitor show    imprime el último estado (latest.txt)
+#   laia-health-monitor path    imprime el directorio de estado
+#
+# Env:
+#   LAIA_ROOT               raíz del repo/instalación (auto-detect si falta)
+#   LAIA_STATE_ROOT         raíz de estado (default /srv/laia/state)
+#   LAIA_HEALTH_STATE_DIR   override directo del dir de salud (default $STATE_ROOT/health)
+#   LAIA_HEALTH_PROFILE     perfil del runner (default host)
+#   LAIA_HEALTH_HISTORY_MAX líneas a retener en history.jsonl (default 50)
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ── Resolución de paths (misma convención que laia-backup) ──────────────────
+if [[ -z "${LAIA_ROOT:-}" ]]; then
+  _script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  LAIA_ROOT="$(git -C "$_script_dir" rev-parse --show-toplevel 2>/dev/null || { cd "$_script_dir/../.." && pwd; })"
+  unset _script_dir
+fi
+SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+STATE_ROOT="${LAIA_STATE_ROOT:-/srv/laia/state}"
+HEALTH_DIR="${LAIA_HEALTH_STATE_DIR:-$STATE_ROOT/health}"
+PROFILE="${LAIA_HEALTH_PROFILE:-host}"
+HIST_MAX="${LAIA_HEALTH_HISTORY_MAX:-50}"
+
+RUNNER="$LAIA_ROOT/tests/integration/run_integrity.sh"
+HELPER="$SELF_DIR/laia_health_state.py"
+
+PY="${LAIA_PYTHON:-python3}"
+
+log() { printf '%s\n' "$*" >&2; }
+
+cmd_run() {
+  command -v "$PY" >/dev/null 2>&1 || { log "ERROR: $PY no disponible — no se puede publicar estado"; return 1; }
+  [[ -f "$HELPER" ]] || { log "ERROR: helper no encontrado: $HELPER"; return 1; }
+
+  local tmp_json rc
+  tmp_json="$(mktemp "${TMPDIR:-/tmp}/laia-health.XXXXXX.json")"
+  # shellcheck disable=SC2064
+  trap "rm -f '$tmp_json'" RETURN
+
+  if [[ ! -x "$RUNNER" && ! -f "$RUNNER" ]]; then
+    log "ERROR: runner de integridad no encontrado: $RUNNER"
+    # Publica estado 'error' (reporte vacío → el helper lo marca como error).
+    : >"$tmp_json"
+    "$PY" "$HELPER" --report "$tmp_json" --runner-exit 2 \
+      --state-dir "$HEALTH_DIR" --profile "$PROFILE" --history-max "$HIST_MAX" >/dev/null
+    return 0
+  fi
+
+  # Corre el runner. Su salida humana va a stderr (journal); el JSON al fichero.
+  # No usamos `set -e`: queremos capturar el exit code, sea cual sea.
+  bash "$RUNNER" --profile "$PROFILE" --json "$tmp_json"
+  rc=$?
+
+  "$PY" "$HELPER" --report "$tmp_json" --runner-exit "$rc" \
+    --state-dir "$HEALTH_DIR" --profile "$PROFILE" --history-max "$HIST_MAX" >/dev/null
+
+  # Eco de una línea de estado al journal (útil en `journalctl -u laia-health-monitor`).
+  if [[ -f "$HEALTH_DIR/latest.txt" ]]; then
+    head -1 "$HEALTH_DIR/latest.txt" >&2
+  fi
+  # El monitor SIEMPRE termina 0 si logró publicar: la salud se consulta en el
+  # estado, no en el exit code del unit (un 'red' no debe marcar el timer como
+  # fallido). Sólo un fallo del propio monitor (helper/python) da != 0.
+  return 0
+}
+
+cmd_show() {
+  if [[ -f "$HEALTH_DIR/latest.txt" ]]; then
+    cat "$HEALTH_DIR/latest.txt"
+  else
+    log "sin estado todavía: $HEALTH_DIR/latest.txt no existe (¿corriste 'laia-health-monitor run'?)"
+    return 1
+  fi
+}
+
+main() {
+  local sub="${1:-run}"
+  case "$sub" in
+    run|"") cmd_run ;;
+    show)   cmd_show ;;
+    path)   printf '%s\n' "$HEALTH_DIR" ;;
+    -h|--help|help)
+      sed -n '2,40p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+      ;;
+    *) log "subcomando desconocido: $sub (usa: run | show | path)"; return 2 ;;
+  esac
+}
+
+main "$@"
