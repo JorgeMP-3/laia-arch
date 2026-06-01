@@ -30,6 +30,26 @@ añade una línea `- **Resuelto**: 2026-MM-DD en commit <hash>`.
 
 ---
 
+## ui-prod-layer-rota-v0.11.0-necesita-remake-v0.2.0 (open)
+
+- **Descubierto**: 2026-05-30 por claude opus 4.8 (Lead) + Jorge, al intentar abrir la consola admin para chatear.
+- **Síntoma**: no hay forma de acceder al chat. `laia-ui-server` (consola ARCH Admin, `:8077`) NO arranca
+  (`status=203/EXEC`: falta el ejecutable `/opt/laia/.laia-core/venv/bin/uvicorn`). `laia-gateway` y el resto
+  de la capa de cara al usuario están inactivos. El backend (`agora-backend`, `:8088`) sí responde — el cerebro
+  funciona, pero **no hay UI/consola operativa**.
+- **Causa raíz**: el install de prod es **v0.11.0 era-Hermes** y su `laia-ui-server` está **incompleto** (venv
+  sin `uvicorn`). Además el `EnvironmentFile=~/LAIA-ARCH/.env.paths` usa líneas `export KEY=val` que **systemd
+  no parsea** (las ignora → las anclas de path no llegan al servicio). Es código viejo, desalineado con el
+  backend **v0.2.0** que corre en el container `laia-agora`.
+- **Reproducción**: `sudo systemctl start laia-ui-server` en prod → falla; ver `journalctl -u laia-ui-server`.
+- **Workaround**: NINGUNO aplicado (decisión de Jorge: **no parchear el v0.11.0**). La unit queda en estado
+  `failed` (inofensivo) hasta el remake.
+- **Owner**: sin asignar.
+- **Estado**: open — **MODIFICAR + REMAKE de la capa de UI/consola para v0.2.0** (consola admin + gateway +
+  UI de AGORA de cara al usuario, que hoy NO existe operativa en prod). NO parchear el v0.11.0. Incluir: venv
+  correcto con `uvicorn`/deps, `.env.paths` en formato systemd (`KEY=val`, sin `export`), y alineación con el
+  backend v0.2.0. Es trabajo aparte (despliegue de la capa de usuario), a planificar como FASE cuando toque.
+
 ## backup-timer-runs-as-laia-arch-cannot-read-agora (open)
 
 - **Descubierto**: 2026-06-01 por claude opus 4.8 (Lead, en el roadmap) — confirmado por claude-b (Track T)
