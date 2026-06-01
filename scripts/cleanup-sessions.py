@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Archiva y elimina sesiones antiguas de Hermes. Soporta `sessions/` actual y `logs/sessions/` legacy.
+# Archives and removes old Hermes sessions. Supports current `sessions/` and legacy `logs/sessions/`.
 
 from __future__ import annotations
 

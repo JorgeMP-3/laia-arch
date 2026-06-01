@@ -1,14 +1,13 @@
 """Canonical identity for the LAIA coordinator user.
 
-LAIA es el único agente padre del ecosistema. Vive dentro de
-``laia-agora`` (no tiene container propio); el storage layer la siembra
-como usuario sintético ``user_laia`` con ``agent_id=NULL`` y un AgentArea
-canónica derivado de ``coordinador.md`` y ``coordinador-protocolo.md``
-del workspace ``laia-ecosystem``.
+LAIA is the only parent agent in the ecosystem. It lives inside
+``laia-agora`` (has no own container); the storage layer seeds it
+as synthetic user ``user_laia`` with ``agent_id=NULL`` and a canonical
+AgentArea derived from ``coordinador.md`` and ``coordinador-protocolo.md``
+in the ``laia-ecosystem`` workspace.
 
-El plan permite editar el AgentArea de LAIA vía CLI/API, pero el seed se
-ejecuta una sola vez: cualquier edición posterior persiste y NO se
-sobreescribe al reiniciar el backend.
+The plan allows editing LAIA's AgentArea via CLI/API, but the seed runs
+only once: any later edits persist and are NOT overwritten on backend restart.
 """
 
 from __future__ import annotations

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-# Orquestador multi-IA DB-first para Hermes.
-"""ai-orchestrator.py - coordina briefs, planes y workers desde workspace.db."""
+# Multi-AI DB-first orchestrator for Hermes.
+"""ai-orchestrator.py - coordinates briefs, plans and workers from workspace.db."""
 
 from __future__ import annotations
 

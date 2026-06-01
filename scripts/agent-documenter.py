@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-# Sincroniza la documentacion agentica DB-first de los workspaces Hermes.
-"""agent-documenter.py — mantiene agent-team y agent-log desde workspace.db."""
+# Synchronizes DB-first agent documentation from Hermes workspaces.
+"""agent-documenter.py — maintains agent-team and agent-log from workspace.db."""
 
 from __future__ import annotations
 

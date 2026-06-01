@@ -27,7 +27,7 @@ RESERVED_AGENT_SLUGS: frozenset[str] = frozenset({
 def _validate_agent_slug(value: str) -> str:
     if value.lower() in RESERVED_AGENT_SLUGS:
         raise ValueError(
-            f"slug '{value}' está reservado por la plataforma (LAIA, AGORA, ARCH...)"
+            f"slug '{value}' is reserved by the platform (LAIA, AGORA, ARCH...)"
         )
     return value
 

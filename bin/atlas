@@ -1,21 +1,21 @@
 #!/usr/bin/env python3
-"""atlas — Centro de control del registro de referencias LAIA.
+"""atlas — LAIA reference registry control center.
 
-Uso:
-  atlas init [--force]            Bootstrap ~/.laia/atlas.yaml desde la plantilla
-  atlas get <nombre>              Resolver una referencia
-  atlas check <nombre>            Health check de una sola referencia
-  atlas list [--type T] [--json]  Listar todas las referencias
-  atlas doctor [--type T] [--fix] Verificar salud (--fix repara lo roto)
-  atlas consumers [--ref R]       Qué archivos usan cada referencia
-  atlas validate                  Validar estructura de atlas.yaml
-  atlas env                       Exportar variables (bash-sourceable)
-  atlas graph [--from REF]        Mostrar grafo de dependencias
-  atlas visualize [--output F]    Generar webapp HTML self-contained del registro
-  atlas watch [--interval N]      Monitor en vivo
-  atlas status                    Estado del daemon y ficheros
-  atlas reload                    Recargar config
-  atlas version                   Mostrar versión
+Usage:
+  atlas init [--force]            Bootstrap ~/.laia/atlas.yaml from template
+  atlas get <name>                 Resolve a reference
+  atlas check <name>              Health check a single reference
+  atlas list [--type T] [--json]  List all references
+  atlas doctor [--type T] [--fix] Verify health (--fix repairs what's broken)
+  atlas consumers [--ref R]       Which files use each reference
+  atlas validate                  Validate atlas.yaml structure
+  atlas env                       Export variables (bash-sourceable)
+  atlas graph [--from REF]        Show dependency graph
+  atlas visualize [--output F]    Generate self-contained HTML webapp of the registry
+  atlas watch [--interval N]      Live monitor
+  atlas status                    Daemon and file status
+  atlas reload                    Reload config
+  atlas version                   Show version
 """
 from __future__ import annotations
 

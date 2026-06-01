@@ -28,7 +28,7 @@ CANCEL_FILE = Path("/tmp/laia-cancel-shutdown")
 LOG_FILE    = LAIA_ROOT / "logs" / "nightly.log"
 WAKE_HOUR   = 7
 WAKE_MINUTE = 30
-CANCEL_WINDOW = 5 * 60  # segundos
+CANCEL_WINDOW = 5 * 60  # seconds
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -82,7 +82,7 @@ def sync_workspaces() -> dict:
             repos = ws.get("repos", [])
             if not repos:
                 continue
-            # Solo sincroniza repos con remote y cambios pendientes (o ahead)
+            # Only sync repos with remote and pending changes (or ahead)
             has_pending = any(
                 (not r["git"]["clean"] or r["git"]["ahead"] > 0)
                 for r in repos

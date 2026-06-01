@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-# Crea, repara y migra workspaces DB-only en Hermes.
-"""create-workspace.py — crea, repara y migra workspaces DB-only en Hermes."""
+# Creates, repairs, and migrates DB-only workspaces in Hermes.
+"""create-workspace.py — creates, repairs, and migrates DB-only workspaces in Hermes."""
 
 from __future__ import annotations
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-# Monitor legible de orquestacion agentica DB-first para Hermes.
-"""agent-monitor.py — muestra tareas activas, eventos recientes y nodos agenticos."""
+# Readable DB-first agentic orchestration monitor for Hermes.
+"""agent-monitor.py — shows active tasks, recent events, and agentic nodes."""
 
 from __future__ import annotations
 
