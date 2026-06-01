@@ -30,7 +30,7 @@ añade una línea `- **Resuelto**: 2026-MM-DD en commit <hash>`.
 
 ---
 
-## user-data-zone-not-writable-idmap-mismatch (open)
+## user-data-zone-not-writable-idmap-mismatch (resolved)
 
 - **Descubierto**: 2026-06-01 por claude-a (Lead), al correr el e2e T3 golden-path tras arreglar el tooling.
 - **Síntoma**: en un container de usuario, el ejecutor (root en el container) **no puede escribir en
@@ -50,8 +50,21 @@ añade una línea `- **Resuelto**: 2026-MM-DD en commit <hash>`.
   `/srv/laia/users/t3x/home/`. (Lo automatiza el e2e T3 `tests/integration/e2e/golden/test_golden_path_e2e.sh`.)
 - **Workaround**: ninguno. (Pre-prod: aún sin usuarios reales, por eso no se había detectado; sería
   bloqueante en cuanto un usuario use su agente.)
-- **Owner**: sin asignar — **escalado a Jorge** (idmap = prod-risk, no tocar a ciegas; ver [[project-cutover-redesign]]).
-- **Estado**: open.
+- **Causa raíz CONFIRMADA**: `create-agent.sh:41` fijaba `LXD_UID_OFFSET=100000` (hardcoded) y chowneaba
+  los dirs a 100000, pero la base idmap real de este LXD (snap 5.21) es **1000000** → fuera de rango →
+  `nobody`. (Corroborado: `rebuild-4-first-user.sh`/`deploy-redesign.sh` ya usan `chown 1000000`.) Validado:
+  chowneando a 1000000 **o** con `shift=true` el dir pasa a verse `root:root` dentro y escribible.
+- **Owner**: claude-a (decisión de fix de Jorge: `shift=true`).
+- **Estado**: resolved.
+- **Resuelto**: 2026-06-01 en `wip/claude-a/fix-idmap-data-zone` — `create-agent.sh` adjunta los 3 disk
+  devices (home/plugins/workspace) con **`shift=true`** (idmapped mounts; los dirs quedan root-owned y LXD
+  mapea por el idmap del container, sin adivinar offset); eliminado el `chown` al offset y `LXD_UID_OFFSET`.
+  **Validado en VM**: e2e **T3 golden-path PASS** end-to-end ("tool-call landed in the user's data zone").
+- **Pendiente de remediación (agentes EXISTENTES, prod-risk → HITL Jorge)**: los agentes ya creados
+  (`agent-jorge-dev`, etc.) necesitan `lxc config device set <c> {home,plugins,workspace} shift=true` +
+  restart (sus dirs ya son root-owned 0:0, no necesitan chown). Hacer en la ventana o como paso aprobado.
+  Aparte (baja prioridad): `create-agora.sh:53` usa `chown 100000` para el dir de datos del container
+  AGORA — revisar si aplica el mismo patrón (AGORA funciona hoy; no urge).
 
 ## laiactl-tooling-stale-vs-centralized-brain (resolved)
 
