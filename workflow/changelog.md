@@ -15,6 +15,22 @@ Formato:
 
 ---
 
+## 2026-06-01 — Hardening de AGORA backend y health real de auth.json (Codex)
+
+- Backend aislado en `wip/codex/backend-production` mediante worktree propio para no colisionar
+  con `wip/claude-b/integrity-suite`.
+- `/api/health` y `/api/admin/status` ahora validan contenido real de `auth.json`: un fichero
+  vacío, JSON inválido o sin credenciales del proveedor OAuth por defecto deja
+  `ready:false` / `auth_json_ready:false` con `auth_json_reason`, evitando el falso-verde del outage.
+- Añadido `app/health.py` con snapshots de auth sin exponer secretos, más regresiones para
+  `auth.json` vacío, sin credenciales y con credenciales mínimas válidas.
+- SQLite endurecido para producción: conexión compartida con serialización por lock reentrante,
+  `busy_timeout=30000`, WAL y `synchronous=NORMAL`; añadido test de concurrencia de escrituras.
+- Endpoints FastAPI documentados con docstrings en inglés; `test_laia_coordinator.py` usa el
+  helper portable de `.laia-core` para correr en worktrees con `LAIA_ROOT`.
+- Verificado: `LAIA_ROOT=/home/laia-arch/LAIA pytest services/agora-backend/tests -v` →
+  **368 passed, 0 skipped**, 7 warnings existentes de Starlette `TestClient(timeout=...)`.
+
 ## 2026-05-31 — Rediseño + re-test del cutover v1→v2 (los 4 bugs del outage, arreglados) (claude opus 4.8)
 
 Rediseño del cutover de prod que causó el outage del 2026-05-30. **No tocó prod** (solo lectura);

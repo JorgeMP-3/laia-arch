@@ -169,16 +169,19 @@ def _audit(user_id: str | None, kind: str, summary: str) -> None:
 
 @router.get("/api/plugins/catalog", response_model=list[PluginOut])
 def list_plugin_catalog(_: User = Depends(current_user)):
+    """Handle GET /api/plugins/catalog."""
     return [_plugin_to_out(p) for p in ms.list_catalog(_get_store())]
 
 
 @router.get("/api/me/plugins", response_model=list[PluginOut])
 def list_my_plugins(user: User = Depends(current_user)):
+    """Handle GET /api/me/plugins."""
     return [_plugin_to_out(p) for p in ms.list_my_plugins(_get_store(), user.id)]
 
 
 @router.post("/api/me/plugins/upload", response_model=PluginOut)
 def upload_my_plugin(payload: PluginUploadRequest, user: User = Depends(current_user)):
+    """Handle POST /api/me/plugins/upload."""
     if payload.kind not in PLUGIN_KINDS:
         raise HTTPException(status_code=400, detail=f"invalid kind: {payload.kind}")
     import base64
@@ -221,6 +224,7 @@ def _yaml_dump(manifest: dict[str, Any]) -> str:
 
 @router.post("/api/me/plugins/{plugin_id}/publish", response_model=PluginOut)
 def publish_my_plugin(plugin_id: str, user: User = Depends(current_user)):
+    """Handle POST /api/me/plugins/{plugin_id}/publish."""
     try:
         plg = ms.submit_plugin_for_review(_get_store(), plugin_id, user.id)
     except MarketplaceError as exc:
@@ -232,6 +236,7 @@ def publish_my_plugin(plugin_id: str, user: User = Depends(current_user)):
 
 @router.delete("/api/me/plugins/{plugin_id}")
 def delete_my_plugin(plugin_id: str, user: User = Depends(current_user)):
+    """Handle DELETE /api/me/plugins/{plugin_id}."""
     try:
         ms.delete_plugin(_get_store(), plugin_id, user.id)
     except MarketplaceError as exc:
@@ -243,6 +248,7 @@ def delete_my_plugin(plugin_id: str, user: User = Depends(current_user)):
 
 @router.post("/api/me/plugins/install")
 def install_my_plugin(payload: PluginInstallRequest, user: User = Depends(current_user)):
+    """Handle POST /api/me/plugins/install."""
     store = _get_store()
     if not payload.plugin_id and not payload.slug:
         raise HTTPException(status_code=400, detail="provide plugin_id or slug")
@@ -286,6 +292,7 @@ def install_my_plugin(payload: PluginInstallRequest, user: User = Depends(curren
 
 @router.delete("/api/me/plugins/installs/{plugin_id}")
 def uninstall_my_plugin(plugin_id: str, user: User = Depends(current_user)):
+    """Handle DELETE /api/me/plugins/installs/{plugin_id}."""
     removed = ms.uninstall_plugin(_get_store(), user_id=user.id, plugin_id=plugin_id)
     if not removed:
         raise HTTPException(status_code=404, detail="not installed")
@@ -297,6 +304,7 @@ def uninstall_my_plugin(plugin_id: str, user: User = Depends(current_user)):
 
 @router.get("/api/me/plugins/installs")
 def list_my_installs(user: User = Depends(current_user)):
+    """Handle GET /api/me/plugins/installs."""
     return ms.list_user_installs(_get_store(), user.id)
 
 
@@ -305,16 +313,19 @@ def list_my_installs(user: User = Depends(current_user)):
 
 @router.get("/api/skills/catalog", response_model=list[SkillOut])
 def list_skill_catalog(_: User = Depends(current_user)):
+    """Handle GET /api/skills/catalog."""
     return [_skill_to_out(s) for s in ms.list_skill_catalog(_get_store())]
 
 
 @router.get("/api/me/skills", response_model=list[SkillOut])
 def list_my_skills(user: User = Depends(current_user)):
+    """Handle GET /api/me/skills."""
     return [_skill_to_out(s) for s in ms.list_my_skills(_get_store(), user.id)]
 
 
 @router.post("/api/me/skills/upload", response_model=SkillOut)
 def upload_my_skill(payload: SkillUploadRequest, user: User = Depends(current_user)):
+    """Handle POST /api/me/skills/upload."""
     try:
         sk = ms.insert_skill(_get_store(), slug=payload.slug, manifest_md=payload.manifest_md,
                              owner_user_id=user.id)
@@ -327,6 +338,7 @@ def upload_my_skill(payload: SkillUploadRequest, user: User = Depends(current_us
 
 @router.post("/api/me/skills/{skill_id}/publish", response_model=SkillOut)
 def publish_my_skill(skill_id: str, user: User = Depends(current_user)):
+    """Handle POST /api/me/skills/{skill_id}/publish."""
     try:
         sk = ms.submit_skill_for_review(_get_store(), skill_id, user.id)
     except MarketplaceError as exc:
@@ -338,6 +350,7 @@ def publish_my_skill(skill_id: str, user: User = Depends(current_user)):
 
 @router.delete("/api/me/skills/{skill_id}")
 def delete_my_skill(skill_id: str, user: User = Depends(current_user)):
+    """Handle DELETE /api/me/skills/{skill_id}."""
     try:
         ms.delete_skill(_get_store(), skill_id, user.id)
     except MarketplaceError as exc:
@@ -349,6 +362,7 @@ def delete_my_skill(skill_id: str, user: User = Depends(current_user)):
 
 @router.post("/api/me/skills/install")
 def install_my_skill(payload: SkillInstallRequest, user: User = Depends(current_user)):
+    """Handle POST /api/me/skills/install."""
     store = _get_store()
     if not payload.skill_id and not payload.slug:
         raise HTTPException(status_code=400, detail="provide skill_id or slug")
@@ -377,6 +391,7 @@ def install_my_skill(payload: SkillInstallRequest, user: User = Depends(current_
 
 @router.delete("/api/me/skills/installs/{skill_id}")
 def uninstall_my_skill(skill_id: str, user: User = Depends(current_user)):
+    """Handle DELETE /api/me/skills/installs/{skill_id}."""
     removed = ms.uninstall_skill(_get_store(), user_id=user.id, skill_id=skill_id)
     if not removed:
         raise HTTPException(status_code=404, detail="not installed")
@@ -386,6 +401,7 @@ def uninstall_my_skill(skill_id: str, user: User = Depends(current_user)):
 
 @router.get("/api/me/skills/installs")
 def list_my_skill_installs(user: User = Depends(current_user)):
+    """Handle GET /api/me/skills/installs."""
     return ms.list_user_skill_installs(_get_store(), user.id)
 
 
@@ -394,6 +410,7 @@ def list_my_skill_installs(user: User = Depends(current_user)):
 
 @router.get("/api/admin/marketplace/pending", response_model=PendingResponse)
 def list_marketplace_pending(_: User = Depends(require_roles("agora_admin"))):
+    """Handle GET /api/admin/marketplace/pending."""
     store = _get_store()
     return PendingResponse(
         plugins=[_plugin_to_out(p) for p in ms.list_pending_plugins(store)],
@@ -403,6 +420,7 @@ def list_marketplace_pending(_: User = Depends(require_roles("agora_admin"))):
 
 @router.post("/api/admin/plugins/{plugin_id}/approve", response_model=PluginOut)
 def admin_approve_plugin(plugin_id: str, actor: User = Depends(require_roles("agora_admin"))):
+    """Handle POST /api/admin/plugins/{plugin_id}/approve."""
     try:
         plg = ms.approve_plugin(_get_store(), plugin_id)
     except MarketplaceError as exc:
@@ -415,6 +433,7 @@ def admin_approve_plugin(plugin_id: str, actor: User = Depends(require_roles("ag
 @router.post("/api/admin/plugins/{plugin_id}/reject", response_model=PluginOut)
 def admin_reject_plugin(plugin_id: str, payload: RejectRequest,
                         actor: User = Depends(require_roles("agora_admin"))):
+    """Handle POST /api/admin/plugins/{plugin_id}/reject."""
     try:
         plg = ms.reject_plugin(_get_store(), plugin_id, payload.reason)
     except MarketplaceError as exc:
@@ -427,6 +446,7 @@ def admin_reject_plugin(plugin_id: str, payload: RejectRequest,
 @router.post("/api/admin/plugins/{plugin_id}/revoke", response_model=PluginOut)
 def admin_revoke_plugin(plugin_id: str, payload: RejectRequest,
                         actor: User = Depends(require_roles("agora_admin"))):
+    """Handle POST /api/admin/plugins/{plugin_id}/revoke."""
     try:
         plg = ms.revoke_plugin(_get_store(), plugin_id, payload.reason)
     except MarketplaceError as exc:
@@ -439,6 +459,7 @@ def admin_revoke_plugin(plugin_id: str, payload: RejectRequest,
 
 @router.post("/api/admin/skills/{skill_id}/approve", response_model=SkillOut)
 def admin_approve_skill(skill_id: str, actor: User = Depends(require_roles("agora_admin"))):
+    """Handle POST /api/admin/skills/{skill_id}/approve."""
     try:
         sk = ms.approve_skill(_get_store(), skill_id)
     except MarketplaceError as exc:
@@ -451,6 +472,7 @@ def admin_approve_skill(skill_id: str, actor: User = Depends(require_roles("agor
 @router.post("/api/admin/skills/{skill_id}/reject", response_model=SkillOut)
 def admin_reject_skill(skill_id: str, payload: RejectRequest,
                        actor: User = Depends(require_roles("agora_admin"))):
+    """Handle POST /api/admin/skills/{skill_id}/reject."""
     try:
         sk = ms.reject_skill(_get_store(), skill_id, payload.reason)
     except MarketplaceError as exc:

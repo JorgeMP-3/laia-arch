@@ -70,8 +70,8 @@ from .coordinator import coordinator, drain_broadcasts
 from .monitor import monitor
 from .logging import RequestTimer, request_id_var, request_user_var, setup_logging
 from .metrics import metrics
+from .health import auth_json_snapshot
 from .security import verify_password, hash_password, verify_token
-from .config import settings
 from .storage import store
 from .websocket import ws_manager
 
@@ -324,6 +324,7 @@ async def request_middleware(request: Request, call_next):
 
 @app.get("/api/health")
 def health():
+    """Report backend readiness, dependencies, and auth-store content health."""
     import subprocess
     lxd_ok = False
     try:
@@ -337,17 +338,21 @@ def health():
     # surfaces in /api/health so the operator notices before the first chat.
     try:
         from . import agent_pool as _ap
+        default_provider = os.environ.get("AGORA_DEFAULT_PROVIDER", "openai-codex")
         auth_status = _ap.auth_json_status
         auth_path = _ap.auth_json_path or str(settings.data_dir / "auth.json")
-        if auth_status in {"unknown", "missing"} and (settings.data_dir / "auth.json").is_file():
-            auth_status = "linked"
-        auth_ready = auth_status == "linked"
+        if auth_status in {"unknown", "missing"} and not _ap.auth_json_path:
+            fallback_path = settings.data_dir / "auth.json"
+            if fallback_path.is_file():
+                auth_path = str(fallback_path)
+        auth = auth_json_snapshot(auth_path, auth_status, default_provider)
     except Exception:
-        auth_status = "unknown"
-        auth_ready = False
-        auth_path = None
+        default_provider = os.environ.get("AGORA_DEFAULT_PROVIDER", "openai-codex")
+        auth = auth_json_snapshot(None, "unknown", default_provider)
+    ready = bool(auth["ready"])
     return {
         "ok": True,
+        "ready": ready,
         "service": "agora-backend",
         "version": "0.2.0",
         "env": settings.env,
@@ -356,21 +361,25 @@ def health():
         "coordinator": coordinator.is_running,
         "lxd_available": lxd_ok,
         "laiactl_available": laiactl_ok,
-        "auth_json_ready": auth_ready,
-        "auth_json_status": auth_status,
-        "auth_json_path": auth_path,
-        "default_llm_provider": os.environ.get("AGORA_DEFAULT_PROVIDER", "openai-codex"),
+        "auth_json_ready": auth["ready"],
+        "auth_json_status": auth["status"],
+        "auth_json_path": auth["path"],
+        "auth_json_reason": auth["reason"],
+        "auth": auth,
+        "default_llm_provider": default_provider,
         "time": now_iso(),
     }
 
 
 @app.get("/api/metrics")
 def get_metrics(_: User = Depends(require_roles("agora_admin"))):
+    """Handle GET /api/metrics."""
     return metrics.snapshot()
 
 
 @app.post("/api/login", response_model=LoginResponse)
 def login(payload: LoginRequest, request: Request):
+    """Handle POST /api/login."""
     from .security import should_rate_limit
     client_ip = request.client.host if request.client else "unknown"
     if should_rate_limit(client_ip):
@@ -385,6 +394,7 @@ def login(payload: LoginRequest, request: Request):
 
 @app.post("/api/refresh")
 def refresh_token(payload: TokenRefreshRequest):
+    """Handle POST /api/refresh."""
     try:
         data = verify_token(payload.refresh_token, settings.jwt_secret)
     except ValueError as exc:
@@ -420,6 +430,7 @@ def logout(user: User = Depends(current_user)):
 
 @app.get("/api/me")
 def me(user: User = Depends(current_user)):
+    """Handle GET /api/me."""
     return public_user(user)
 
 
@@ -434,6 +445,7 @@ def list_llm_providers():
 
 @app.get("/api/llm/providers/{provider_id}/models")
 def list_llm_provider_models(provider_id: str):
+    """Handle GET /api/llm/providers/{provider_id}/models."""
     p = llm_get_provider(provider_id)
     if p is None:
         raise HTTPException(status_code=404, detail=f"unknown provider: {provider_id}")
@@ -453,6 +465,7 @@ def _parse_mcp_servers(raw: str | None) -> list[dict[str, Any]]:
 
 @app.get("/api/user/llm-config", response_model=LLMConfigView)
 def get_llm_config(user: User = Depends(current_user)):
+    """Handle GET /api/user/llm-config."""
     return LLMConfigView(
         provider=user.llm_provider,
         base_url=user.llm_base_url,
@@ -466,6 +479,7 @@ def get_llm_config(user: User = Depends(current_user)):
 
 @app.patch("/api/user/llm-config", response_model=LLMConfigView)
 def patch_llm_config(payload: LLMConfigUpdate, user: User = Depends(current_user)):
+    """Handle PATCH /api/user/llm-config."""
     if payload.provider and llm_get_provider(payload.provider) is None:
         raise HTTPException(status_code=400, detail=f"unknown provider: {payload.provider}")
     import json as _json
@@ -536,12 +550,14 @@ def post_telegram_link_token(user: User = Depends(current_user)) -> TelegramLink
 
 @app.get("/api/user/telegram/link", response_model=TelegramLinkStatus)
 def get_telegram_link(user: User = Depends(current_user)) -> TelegramLinkStatus:
+    """Handle GET /api/user/telegram/link."""
     ids = store.telegram_ids_for_user(user.id)
     return TelegramLinkStatus(linked=bool(ids), telegram_user_ids=ids)
 
 
 @app.delete("/api/user/telegram/link")
 def delete_telegram_link(user: User = Depends(current_user)) -> dict:
+    """Handle DELETE /api/user/telegram/link."""
     from .telegram_links import link_token_store
     link_token_store.revoke_for_user(user.id)
     dropped = store.unlink_telegram_user(agora_user_id=user.id)
@@ -556,11 +572,13 @@ def delete_telegram_link(user: User = Depends(current_user)) -> dict:
 
 @app.get("/api/me/agent-area", response_model=AgentAreaView)
 def get_my_agent_area(user: User = Depends(current_user)):
+    """Handle GET /api/me/agent-area."""
     return _agent_area_view(user)
 
 
 @app.patch("/api/me/agent-area", response_model=AgentAreaView)
 def patch_my_agent_area(payload: AgentAreaUpdate, user: User = Depends(current_user)):
+    """Handle PATCH /api/me/agent-area."""
     changes = payload.model_dump(exclude_unset=True)
     if not changes:
         raise HTTPException(status_code=400, detail="nothing to update")
@@ -583,16 +601,19 @@ def patch_my_agent_area(payload: AgentAreaUpdate, user: User = Depends(current_u
 
 @app.get("/api/me/agent-area/plugins")
 def get_my_agent_area_plugins(user: User = Depends(current_user)):
+    """Handle GET /api/me/agent-area/plugins."""
     return {"plugins": _plugin_installs(user.id)}
 
 
 @app.get("/api/me/agent-area/skills")
 def get_my_agent_area_skills(user: User = Depends(current_user)):
+    """Handle GET /api/me/agent-area/skills."""
     return {"skills": _skill_installs(user.id)}
 
 
 @app.get("/api/me/agent-area/memory")
 def get_my_agent_area_memory(user: User = Depends(current_user)):
+    """Handle GET /api/me/agent-area/memory."""
     area = store.agent_area_for_user(user)
     if area is None:
         raise HTTPException(status_code=404, detail="agent area not found")
@@ -601,6 +622,7 @@ def get_my_agent_area_memory(user: User = Depends(current_user)):
 
 @app.post("/api/me/password")
 def change_password(payload: PasswordChangeRequest, user: User = Depends(current_user)):
+    """Handle POST /api/me/password."""
     if not user.password or not user.password.startswith("$pbkdf2$"):
         if (user.password or "") != payload.old_password:
             raise HTTPException(status_code=403, detail="invalid current password")
@@ -614,6 +636,7 @@ def change_password(payload: PasswordChangeRequest, user: User = Depends(current
 
 @app.get("/api/users")
 def list_users(_: User = Depends(require_roles("agora_admin"))):
+    """Handle GET /api/users."""
     return {"users": [public_user(user) for user in store.users()]}
 
 
@@ -629,6 +652,7 @@ def create_user(payload: UserCreateRequest, actor: User = Depends(require_roles(
     # accepts (validated by ARCH's _codex_curated_models in
     # .laia-core/laia_cli/codex_models.py). "gpt-5-codex" is API-only and
     # fails with HTTP 400 for OAuth callers.
+    """Handle POST /api/users."""
     default_provider = os.environ.get("AGORA_DEFAULT_PROVIDER", "openai-codex")
     default_model = os.environ.get("AGORA_DEFAULT_MODEL", "gpt-5.5")
     default_api_mode = os.environ.get("AGORA_DEFAULT_API_MODE") or None
@@ -706,6 +730,7 @@ def create_user(payload: UserCreateRequest, actor: User = Depends(require_roles(
 
 @app.get("/api/users/{user_id}")
 def get_user(user_id: str, _: User = Depends(require_roles("agora_admin"))):
+    """Handle GET /api/users/{user_id}."""
     user = store.user_by_id(user_id)
     if not user or not user.active:
         raise HTTPException(status_code=404, detail="user not found")
@@ -715,6 +740,7 @@ def get_user(user_id: str, _: User = Depends(require_roles("agora_admin"))):
 
 @app.get("/api/admin/users/{user_id}/agent-area", response_model=AgentAreaView)
 def admin_get_user_agent_area(user_id: str, _: User = Depends(require_roles("agora_admin"))):
+    """Handle GET /api/admin/users/{user_id}/agent-area."""
     user = store.user_by_id(user_id)
     if not user or not user.active:
         raise HTTPException(status_code=404, detail="user not found")
@@ -727,6 +753,7 @@ def admin_patch_user_agent_area(
     payload: AgentAreaUpdate,
     actor: User = Depends(require_roles("agora_admin")),
 ):
+    """Handle PATCH /api/admin/users/{user_id}/agent-area."""
     user = store.user_by_id(user_id)
     if not user or not user.active:
         raise HTTPException(status_code=404, detail="user not found")
@@ -752,6 +779,7 @@ def admin_patch_user_agent_area(
 
 @app.patch("/api/users/{user_id}")
 def update_user(user_id: str, payload: UserUpdateRequest, actor: User = Depends(require_roles("agora_admin"))):
+    """Handle PATCH /api/users/{user_id}."""
     user = store.user_by_id(user_id)
     if not user or not user.active:
         raise HTTPException(status_code=404, detail="user not found")
@@ -768,6 +796,7 @@ def update_user(user_id: str, payload: UserUpdateRequest, actor: User = Depends(
 
 @app.delete("/api/users/{user_id}")
 def delete_user(user_id: str, actor: User = Depends(require_roles("agora_admin"))):
+    """Handle DELETE /api/users/{user_id}."""
     if user_id == actor.id:
         raise HTTPException(status_code=400, detail="cannot delete yourself")
     user = store.user_by_id(user_id)
@@ -786,6 +815,7 @@ def reset_user_password(
     payload: UserResetPasswordRequest | None = None,
     actor: User = Depends(require_roles("agora_admin")),
 ):
+    """Handle POST /api/users/{user_id}/reset-password."""
     user = store.user_by_id(user_id)
     if not user or not user.active:
         raise HTTPException(status_code=404, detail="user not found")
@@ -800,6 +830,7 @@ def reset_user_password(
 
 @app.get("/api/tasks")
 def list_tasks(user: User = Depends(current_user)):
+    """Handle GET /api/tasks."""
     tasks = store.tasks()
     if user.role != "agora_admin":
         tasks = [task for task in tasks if task.assignee_id in {None, user.id}]
@@ -808,6 +839,7 @@ def list_tasks(user: User = Depends(current_user)):
 
 @app.post("/api/tasks")
 def create_task(payload: TaskCreate, user: User = Depends(require_roles("agora_admin", "employee"))):
+    """Handle POST /api/tasks."""
     if not can_access_user_scope(user, payload.assignee_id):
         raise HTTPException(status_code=403, detail="cannot assign task outside user scope")
     task = Task(**payload.model_dump())
@@ -820,6 +852,7 @@ def create_task(payload: TaskCreate, user: User = Depends(require_roles("agora_a
 
 @app.patch("/api/tasks/{task_id}")
 def update_task(task_id: str, payload: TaskUpdate, user: User = Depends(current_user)):
+    """Handle PATCH /api/tasks/{task_id}."""
     existing = next((task for task in store.tasks() if task.id == task_id), None)
     if not existing:
         raise HTTPException(status_code=404, detail="task not found")
@@ -834,6 +867,7 @@ def update_task(task_id: str, payload: TaskUpdate, user: User = Depends(current_
 
 @app.delete("/api/tasks/{task_id}")
 def delete_task(task_id: str, user: User = Depends(current_user)):
+    """Handle DELETE /api/tasks/{task_id}."""
     existing = next((task for task in store.tasks() if task.id == task_id), None)
     if not existing:
         raise HTTPException(status_code=404, detail="task not found")
@@ -846,18 +880,21 @@ def delete_task(task_id: str, user: User = Depends(current_user)):
 
 @app.get("/api/events")
 def list_events(limit: int = 100, user: User = Depends(require_roles("agora_admin", "agent"))):
+    """Handle GET /api/events."""
     events = store.events()
     return {"events": events[-limit:]}
 
 
 @app.post("/api/events")
 def create_event(payload: EventCreate, user: User = Depends(current_user)):
+    """Handle POST /api/events."""
     actor_id = payload.actor_id if user.role == "agora_admin" else user.id
     return store.record_event(Event(**payload.model_dump(exclude={"actor_id"}), actor_id=actor_id))
 
 
 @app.get("/api/workspace/nodes")
 def list_workspace_nodes(q: str | None = None, _: User = Depends(current_user)):
+    """Handle GET /api/workspace/nodes."""
     if q:
         return {"nodes": store.workspace.search_nodes(q)}
     return {"nodes": store.workspace.list_all_nodes()}
@@ -865,6 +902,7 @@ def list_workspace_nodes(q: str | None = None, _: User = Depends(current_user)):
 
 @app.get("/api/workspace/nodes/{slug}")
 def get_workspace_node(slug: str, _: User = Depends(current_user)):
+    """Handle GET /api/workspace/nodes/{slug}."""
     node = store.workspace.get_node(slug)
     if not node:
         raise HTTPException(status_code=404, detail="node not found")
@@ -873,6 +911,7 @@ def get_workspace_node(slug: str, _: User = Depends(current_user)):
 
 @app.post("/api/workspace/nodes")
 def create_workspace_node(payload: WorkspaceNodeCreate, user: User = Depends(require_roles("agora_admin", "employee"))):
+    """Handle POST /api/workspace/nodes."""
     node = store.workspace.upsert_node(**payload.model_dump(), source_kind="manual")
     store.record_event(Event(event_type="workspace_node_upserted", actor_id=user.id, summary=node["title"], payload={"slug": node["slug"]}))
     return node
@@ -882,6 +921,7 @@ def create_workspace_node(payload: WorkspaceNodeCreate, user: User = Depends(req
 
 @app.get("/api/coordinator/report")
 def coordinator_report(_: User = Depends(require_roles("agora_admin"))):
+    """Handle GET /api/coordinator/report."""
     tasks = store.tasks()
     agents_list = store.agents()
     try:
@@ -935,6 +975,7 @@ def coordinator_report(_: User = Depends(require_roles("agora_admin"))):
 
 @app.post("/api/coordinator/assign", status_code=201)
 def coordinator_assign(payload: CoordinatorAssignRequest, _: User = Depends(require_roles("agora_admin"))):
+    """Handle POST /api/coordinator/assign."""
     task = Task(
         title=payload.title,
         description=payload.description,
@@ -955,6 +996,7 @@ def coordinator_assign(payload: CoordinatorAssignRequest, _: User = Depends(requ
 
 @app.get("/api/coordinator/health")
 def coordinator_health():
+    """Handle GET /api/coordinator/health."""
     return {
         "coordinator": "LAIA AGORA",
         "running": coordinator.is_running,
@@ -965,11 +1007,13 @@ def coordinator_health():
 
 @app.get("/api/coordinator/alerts")
 def coordinator_alerts(limit: int = 50, _: User = Depends(require_roles("agora_admin"))):
+    """Handle GET /api/coordinator/alerts."""
     return {"alerts": coordinator.get_alerts(limit=limit)}
 
 
 @app.post("/api/coordinator/check")
 def coordinator_force_check(_: User = Depends(require_roles("agora_admin"))):
+    """Handle POST /api/coordinator/check."""
     result = coordinator.run_check()
     store.record_event(Event(
         event_type="coordinator_check_forced",
@@ -981,11 +1025,13 @@ def coordinator_force_check(_: User = Depends(require_roles("agora_admin"))):
 
 @app.get("/api/monitor/health")
 def monitor_health():
+    """Handle GET /api/monitor/health."""
     return monitor.health()
 
 
 @app.post("/api/monitor/check")
 def monitor_force_check(_: User = Depends(require_roles("agora_admin"))):
+    """Handle POST /api/monitor/check."""
     result = monitor.run_check()
     return result
 
@@ -994,12 +1040,14 @@ def monitor_force_check(_: User = Depends(require_roles("agora_admin"))):
 
 @app.get("/api/agent/profile", response_model=AgentProfile)
 def get_my_agent_profile(user: User = Depends(current_user)):
+    """Handle GET /api/agent/profile."""
     store.record_event(Event(event_type="agent_profile_read", actor_id=user.id, summary=f"{user.username} profile read"))
     return _agent_profile_from_area(user)
 
 
 @app.patch("/api/agent/profile", response_model=AgentProfile)
 def update_my_agent_profile(payload: AgentProfileUpdate, user: User = Depends(current_user)):
+    """Handle PATCH /api/agent/profile."""
     update_data = payload.model_dump(exclude_unset=True)
     if not update_data:
         raise HTTPException(status_code=400, detail="nothing to update")
@@ -1035,6 +1083,7 @@ def update_my_agent_profile(payload: AgentProfileUpdate, user: User = Depends(cu
 
 @app.get("/api/agent/status", response_model=AgentStatus)
 def get_my_agent_status(user: User = Depends(current_user)):
+    """Handle GET /api/agent/status."""
     slug = _resolve_agent_slug(user)
     try:
         result = orchestrator.get_agent_status(slug)
@@ -1049,6 +1098,7 @@ def get_my_agent_status(user: User = Depends(current_user)):
 
 @app.get("/api/agent/tasks")
 def list_my_agent_tasks(user: User = Depends(current_user)):
+    """Handle GET /api/agent/tasks."""
     slug = _resolve_agent_slug(user)
     container = _resolve_agent_for_user(user).container_name
     import subprocess
@@ -1074,6 +1124,7 @@ def list_my_agent_tasks(user: User = Depends(current_user)):
 
 @app.patch("/api/agent", response_model=User)
 def update_my_agent(payload: AgentUpdate, user: User = Depends(current_user)):
+    """Handle PATCH /api/agent."""
     if payload.display_name:
         user.display_name = payload.display_name
         users = store.users()
@@ -1089,6 +1140,7 @@ def update_my_agent(payload: AgentUpdate, user: User = Depends(current_user)):
 
 @app.get("/api/agents")
 def list_agents(user: User = Depends(current_user)):
+    """Handle GET /api/agents."""
     try:
         lxd_agents = orchestrator.list_agents()
     except OrchestratorError:
@@ -1114,6 +1166,7 @@ def list_agents(user: User = Depends(current_user)):
 
 @app.get("/api/agents/{slug}")
 def get_agent(slug: str, _: User = Depends(require_roles("agora_admin"))):
+    """Handle GET /api/agents/{slug}."""
     try:
         agent = orchestrator.get_agent(slug)
     except OrchestratorError as exc:
@@ -1228,6 +1281,7 @@ def fetch_agent_secrets(slug: str, payload: SecretsFetchRequest):
 
 @app.post("/api/agents", status_code=201)
 def create_agent(payload: CreateAgentRequest, user: User = Depends(require_roles("agora_admin"))):
+    """Handle POST /api/agents."""
     try:
         result = orchestrator.create_agent(payload.slug)
     except OrchestratorError as exc:
@@ -1257,6 +1311,7 @@ def create_agent(payload: CreateAgentRequest, user: User = Depends(require_roles
 
 @app.post("/api/agents/{slug}/start")
 def start_agent(slug: str, _: User = Depends(require_roles("agora_admin"))):
+    """Handle POST /api/agents/{slug}/start."""
     try:
         return orchestrator.start_agent(slug)
     except OrchestratorError as exc:
@@ -1265,6 +1320,7 @@ def start_agent(slug: str, _: User = Depends(require_roles("agora_admin"))):
 
 @app.post("/api/agents/{slug}/stop")
 def stop_agent(slug: str, _: User = Depends(require_roles("agora_admin"))):
+    """Handle POST /api/agents/{slug}/stop."""
     try:
         return orchestrator.stop_agent(slug)
     except OrchestratorError as exc:
@@ -1273,6 +1329,7 @@ def stop_agent(slug: str, _: User = Depends(require_roles("agora_admin"))):
 
 @app.post("/api/agents/{slug}/restart")
 def restart_agent(slug: str, _: User = Depends(require_roles("agora_admin"))):
+    """Handle POST /api/agents/{slug}/restart."""
     try:
         return orchestrator.restart_agent(slug)
     except OrchestratorError as exc:
@@ -1359,6 +1416,7 @@ async def chat_with_agent_admin(
 
 @app.post("/api/agents/{slug}/snapshot")
 def snapshot_agent(slug: str, payload: SnapshotRequest, _: User = Depends(require_roles("agora_admin"))):
+    """Handle POST /api/agents/{slug}/snapshot."""
     try:
         return orchestrator.snapshot_agent(slug, payload.name)
     except OrchestratorError as exc:
@@ -1367,6 +1425,7 @@ def snapshot_agent(slug: str, payload: SnapshotRequest, _: User = Depends(requir
 
 @app.get("/api/agents/{slug}/snapshots")
 def list_snapshots(slug: str, _: User = Depends(require_roles("agora_admin"))):
+    """Handle GET /api/agents/{slug}/snapshots."""
     import subprocess, re
     agent = _find_agent_by_slug(slug)
     container = agent.container_name if agent else normalize_container_name(slug)
@@ -1386,6 +1445,7 @@ def list_snapshots(slug: str, _: User = Depends(require_roles("agora_admin"))):
 
 @app.post("/api/agents/{slug}/restore")
 def restore_snapshot(slug: str, payload: SnapshotRequest, _: User = Depends(require_roles("agora_admin"))):
+    """Handle POST /api/agents/{slug}/restore."""
     import subprocess
     agent = _find_agent_by_slug(slug)
     container = agent.container_name if agent else normalize_container_name(slug)
@@ -1401,6 +1461,7 @@ def restore_snapshot(slug: str, payload: SnapshotRequest, _: User = Depends(requ
 
 @app.get("/api/agents/{slug}/logs")
 def get_agent_logs(slug: str, _: User = Depends(require_roles("agora_admin"))):
+    """Handle GET /api/agents/{slug}/logs."""
     try:
         return orchestrator.get_agent_logs(slug)
     except OrchestratorError as exc:
@@ -1409,6 +1470,7 @@ def get_agent_logs(slug: str, _: User = Depends(require_roles("agora_admin"))):
 
 @app.post("/api/agents/{slug}/tasks", status_code=202)
 def send_agent_task(slug: str, payload: AgentTaskCreate, user: User = Depends(require_roles("agora_admin"))):
+    """Handle POST /api/agents/{slug}/tasks."""
     try:
         result = orchestrator.send_task(slug, payload.task_type, payload.payload)
     except OrchestratorError as exc:
@@ -1421,6 +1483,7 @@ def send_agent_task(slug: str, payload: AgentTaskCreate, user: User = Depends(re
 
 @app.get("/api/agents/{slug}/tasks/{task_id}")
 def get_agent_task_result(slug: str, task_id: str, _: User = Depends(require_roles("agora_admin"))):
+    """Handle GET /api/agents/{slug}/tasks/{task_id}."""
     try:
         result = orchestrator.read_task_result(slug, task_id)
     except OrchestratorError as exc:
@@ -1432,6 +1495,7 @@ def get_agent_task_result(slug: str, task_id: str, _: User = Depends(require_rol
 
 @app.post("/api/agents/{slug}/install-runtime")
 def install_agent_runtime(slug: str, _: User = Depends(require_roles("agora_admin"))):
+    """Handle POST /api/agents/{slug}/install-runtime."""
     try:
         return orchestrator.install_runtime(slug)
     except OrchestratorError as exc:
@@ -1515,6 +1579,7 @@ def delete_agent(slug: str, _: User = Depends(require_roles("agora_admin"))):
 
 @app.get("/api/fleet/status")
 def fleet_status_endpoint(_: User = Depends(require_roles("agora_admin"))):
+    """Handle GET /api/fleet/status."""
     agents_list = store.agents()
     try:
         lxd_agents = orchestrator.list_agents()
