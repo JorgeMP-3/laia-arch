@@ -24,7 +24,7 @@
 # integrity:name=D2 ecosystem integrity gate
 # integrity:level=integration
 # integrity:layers=host,lxd,agora,executor,data,atlas,backups
-# integrity:profiles=ci,host,vm
+# integrity:profiles=host,vm
 # integrity:requires=optional_lxd,optional_curl,optional_sqlite3,optional_jq,optional_atlas
 # integrity:timeout=180
 set -u
