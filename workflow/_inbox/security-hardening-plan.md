@@ -66,45 +66,49 @@ Verif.: ✅ verificado en vivo · ⚠️ requiere `sudo` (§4) · 📄 según do
 
 ### P0 — Hoy (minutos; cierra el riesgo agudo)
 
-**P0.1 · Cerrar y rotar el secreto expuesto (F1/F2)**
+**P0.1 · Cerrar el secreto expuesto (F1/F2) — ✅ HECHO 2026-06-01 (Claude)**
 ```bash
-# (a) Permisos — más restrictivo, reversible. Lo puede ejecutar Claude tras OK de Jorge.
-chmod 700 /home/laia-arch /home/laia-arch/.laia
-chmod 600 /home/laia-arch/.laia/auth.json \
-          /home/laia-arch/.laia/atlas.yaml \
-          /home/laia-arch/.laia/config.yaml \
-          /home/laia-arch/.laia/atlas.yaml.bak-pre-pr1 \
-          /home/laia-arch/LAIA-ARCH/.env.paths
-# (b) Verificar
-stat -c '%A %n' /home/laia-arch /home/laia-arch/.laia /home/laia-arch/.laia/auth.json
+# Aplicado: ~/ y ~/.laia ahora 0700; auth.json/atlas.yaml/config.yaml/*.bak/.env.paths ahora 0600.
+# Verificado: barrido find bajo ~ y /srv/laia → 0 secretos world/group-readable. Sin host-side exposure.
 ```
-**Rotación obligatoria** (asume que el `refresh_token` pudo leerse): re-login y regenerar en
-cada portal — OpenAI/Codex, Anthropic, Copilot, MiniMax, Ollama-Cloud — y rotar los tokens de
-`.env`: `TELEGRAM_BOT_TOKEN`, `TAVILY`, `ANTHROPIC`, `MINIMAX`, y cualquier API key LLM.
-Tras rotar: regenerar `auth.json` v2 en `/srv/laia/arch/secrets/` y **eliminar las copias
-legacy** (`~/.laia/auth.json`, `/opt/agora/data/auth.json` si es duplicado world-readable).
+> Copia legacy `/opt/agora/data/auth.json` `0644` vive **dentro** del contenedor `laia-agora`
+> (source host `/srv/laia/agora` es `0700` idmapped → sin alcance host). Fix opcional, no urgente:
+> `lxc exec laia-agora -- chmod 600 /opt/agora/data/auth.json` (confirmar que el backend corre como owner).
+
+**Rotación (precautoria, NO de emergencia):** dado que **no hay otros usuarios locales** y los snaps
+están confinados, la probabilidad de que el `refresh_token` se leyera es **baja** y no hay evidencia
+de lectura. Si quieres ser estricto: re-login/regenerar en cada portal — OpenAI/Codex, Anthropic,
+Copilot, MiniMax, Ollama-Cloud — y rotar tokens de `.env` (`TELEGRAM_BOT_TOKEN`, `TAVILY`, etc.).
+Es **decisión de Jorge**, no bloqueante.
 
 **P0.2 · Verificar y endurecer SSH (F3/F4)** *(Jorge, con `sudo`)*
 ```bash
 sudo cat /etc/ssh/sshd_config.d/50-cloud-init.conf
 sudo sshd -T | grep -Ei 'passwordauthentication|permitrootlogin|kbdinteractive|pubkeyauthentication|^port |x11forwarding'
 ```
-Si `passwordauthentication yes` → primero asegura clave ED25519, luego:
+**CONFIRMADO `passwordauthentication yes`** → endurecer. ⚠️ **Gotcha crítico:** sshd usa el
+**primer** valor obtenido de cada clave, y `50-cloud-init.conf` (que activa el password-auth)
+se lee **antes** que cualquier `99-*.conf` → un drop-in `99` con `PasswordAuthentication no`
+**sería ignorado**. Hay que apagarlo en el propio fichero que lo activa:
 ```bash
-# 1) clave (si authorized_keys está vacío) — pega TU pública real:
-install -d -m 700 ~/.ssh && printf '%s\n' 'ssh-ed25519 AAAA...tu_llave... jorge' >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys
-# 2) hardening
+# 0) (opcional) clave para el path LAN directo — pega la pública de tu MacBook.
+#    NO hace falta para no quedarte fuera: Tailscale SSH (100.87.62.18) no usa sshd.
+install -d -m 700 ~/.ssh && printf '%s\n' 'ssh-ed25519 AAAA...tu_pública... jorge@macbook' >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys
+# 1) apagar password-auth donde HOY se activa (cloud-init, gana por orden):
+sudo sed -i 's/^PasswordAuthentication.*/PasswordAuthentication no/' /etc/ssh/sshd_config.d/50-cloud-init.conf
+# 2) resto de hardening (estas claves NO están en 50 → un drop-in 99 las fija bien):
 sudo tee /etc/ssh/sshd_config.d/99-laia-hardening.conf >/dev/null <<'EOF'
-PasswordAuthentication no
 KbdInteractiveAuthentication no
 PermitRootLogin no
 PubkeyAuthentication yes
-MaxAuthTries 3
 AllowUsers laia-arch
+MaxAuthTries 3
 X11Forwarding no
 EOF
+# 3) validar sintaxis, recargar, CONFIRMAR (mantén una sesión Tailscale viva):
 sudo sshd -t && sudo systemctl reload ssh
-sudo sshd -T | grep -Ei 'passwordauth|permitroot|allowusers'   # confirmar
+sudo sshd -T | grep -Ei 'passwordauthentication|permitrootlogin|allowusers|x11forwarding'
+# → debe mostrar: passwordauthentication no
 ```
 
 **P0.3 · Confirmar que UFW bloquea los puertos web desde internet/IPv6 (F5/F6/F7/F8)** *(Jorge, `sudo`)*
