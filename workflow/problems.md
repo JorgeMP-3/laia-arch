@@ -60,11 +60,12 @@ añade una línea `- **Resuelto**: 2026-MM-DD en commit <hash>`.
   devices (home/plugins/workspace) con **`shift=true`** (idmapped mounts; los dirs quedan root-owned y LXD
   mapea por el idmap del container, sin adivinar offset); eliminado el `chown` al offset y `LXD_UID_OFFSET`.
   **Validado en VM**: e2e **T3 golden-path PASS** end-to-end ("tool-call landed in the user's data zone").
-- **Pendiente de remediación (agentes EXISTENTES, prod-risk → HITL Jorge)**: los agentes ya creados
-  (`agent-jorge-dev`, etc.) necesitan `lxc config device set <c> {home,plugins,workspace} shift=true` +
-  restart (sus dirs ya son root-owned 0:0, no necesitan chown). Hacer en la ventana o como paso aprobado.
-  Aparte (baja prioridad): `create-agora.sh:53` usa `chown 100000` para el dir de datos del container
-  AGORA — revisar si aplica el mismo patrón (AGORA funciona hoy; no urge).
+- **Remediación de agentes EXISTENTES: HECHA 2026-06-01** (HITL Jorge): `agent-jorge-dev`,
+  `agent-verify-bob`, `agent-verify-carol` → `lxc config device set <c> {home,plugins,workspace}
+  shift=true` + restart. Verificado: `/home/user` ahora `root:root` y **escribible** en los 3, ejecutor
+  active. (Sus dirs ya eran root-owned, sin chown.)
+- **Aparte (baja prioridad, abierto)**: `create-agora.sh:53` usa `chown 100000` para el dir de datos del
+  container AGORA — revisar si aplica el mismo patrón (AGORA funciona hoy; no urge).
 
 ## laiactl-tooling-stale-vs-centralized-brain (resolved)
 
