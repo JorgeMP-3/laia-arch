@@ -26,6 +26,30 @@ Bitácora de hallazgos y acciones de seguridad durante el trabajo diario en el r
 
 ---
 
+## 2026-06-01 — Hardening P0 del host doyouwin-server: permisos secretos + SSH + UFW (claude opus 4.8)
+
+Aplicados y **verificados en vivo** los P0 del `_inbox/security-hardening-plan.md`:
+
+- **Tipo**: permisos + red
+- **Severidad**: P0
+- **Sistema afectado**: host `doyouwin-server` (secretos `~/.laia`, sshd, UFW)
+- **Acción tomada**:
+  - **P0.1 — permisos secretos**: `~/` y `~/.laia` a `0700`; `auth.json`/`atlas.yaml`/`config.yaml`/
+    `*.bak`/`.env.paths` a `0600`. Barrido `find` bajo `~` y `/srv/laia` → **0 secretos
+    world/group-readable**.
+  - **P0.2 — SSH** (`sudo sshd -T`): `passwordauthentication no`, `permitrootlogin no`,
+    `allowusers laia-arch`. El gotcha del orden de `50-cloud-init.conf` se resolvió correctamente.
+  - **P0.3 — UFW** (`sudo ufw status verbose`): `active`, default `deny (incoming)`, solo LAN
+    `192.168.100.0/24` + `tailscale0` + puentes `lxdbr0`/`laiadev0`. **Nada de prod expuesto a
+    internet** (IPv4 ni IPv6).
+- **Acción pendiente** (decisión de Jorge, NO bloqueante de la ventana de prod):
+  - **Rotación de tokens OAuth**: precautoria, no de emergencia (sin otros usuarios locales ni
+    evidencia de lectura del `refresh_token`).
+  - **P0.4 — password admin Nextcloud**: sin verificar (requiere `sudo nextcloud.occ`).
+  - **P1+**: Fail2Ban, TLS/reverse-proxy, drift de copias legacy — ver el plan.
+
+---
+
 ## 2026-05-31 — Cutover v1→v2 rediseñado: secretos 0600 vía idmap, sin world-read (claude opus 4.8)
 
 Rediseño de `migrate-v1-to-v2.sh` (ver `changelog.md`). Implicaciones de seguridad:

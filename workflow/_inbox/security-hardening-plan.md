@@ -86,10 +86,10 @@ Es **decisión de Jorge**, no bloqueante.
 sudo cat /etc/ssh/sshd_config.d/50-cloud-init.conf
 sudo sshd -T | grep -Ei 'passwordauthentication|permitrootlogin|kbdinteractive|pubkeyauthentication|^port |x11forwarding'
 ```
-**CONFIRMADO `passwordauthentication yes`** → endurecer. ⚠️ **Gotcha crítico:** sshd usa el
-**primer** valor obtenido de cada clave, y `50-cloud-init.conf` (que activa el password-auth)
-se lee **antes** que cualquier `99-*.conf` → un drop-in `99` con `PasswordAuthentication no`
-**sería ignorado**. Hay que apagarlo en el propio fichero que lo activa:
+**✅ HECHO + VERIFICADO EN VIVO 2026-06-01** (`sudo sshd -T`): `passwordauthentication no`,
+`permitrootlogin no`, `allowusers laia-arch`. El gotcha del cloud-init se resolvió bien
+(password-auth apagado en el propio `50-cloud-init.conf`, que gana por orden de lectura
+sobre cualquier drop-in `99-*`, que sería ignorado). Receta aplicada (se conserva para auditoría):
 ```bash
 # 0) (opcional) clave para el path LAN directo — pega la pública de tu MacBook.
 #    NO hace falta para no quedarte fuera: Tailscale SSH (100.87.62.18) no usa sshd.
@@ -111,7 +111,9 @@ sudo sshd -T | grep -Ei 'passwordauthentication|permitrootlogin|allowusers|x11fo
 # → debe mostrar: passwordauthentication no
 ```
 
-**P0.3 · Confirmar que UFW bloquea los puertos web desde internet/IPv6 (F5/F6/F7/F8)** *(Jorge, `sudo`)*
+**P0.3 · UFW — ✅ HECHO + VERIFICADO EN VIVO 2026-06-01** *(`sudo ufw status verbose`)*: `active`,
+default `deny (incoming)`, solo permite LAN `192.168.100.0/24` + `tailscale0` + puentes internos
+`lxdbr0`/`laiadev0`. **Nada de prod expuesto a internet** (ni IPv4 ni IPv6). Receta (auditoría):
 ```bash
 sudo ufw status verbose
 sudo ss -tulnp | grep -E ':(22|80|3000|8080|8088|35005)\b'   # atribuir 8080/35005
