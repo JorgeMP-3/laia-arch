@@ -1,3 +1,5 @@
+"""Auth-store readiness checks for AGORA's /api/health (no secrets exposed)."""
+
 from __future__ import annotations
 
 import json

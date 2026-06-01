@@ -114,6 +114,43 @@ else
   assert "failure JSON preserves exit code and stderr" 1
 fi
 
+rm -f "$ROOT/test_fails_ci.sh"
+cat >"$ROOT/test_skips_ci.sh" <<'SH'
+#!/usr/bin/env bash
+# integrity:id=skips_ci
+# integrity:name=Skipping CI contract
+# integrity:level=unit
+# integrity:layers=host
+# integrity:profiles=ci
+printf 'not applicable here\n'
+exit 77
+SH
+chmod +x "$ROOT/test_skips_ci.sh"
+
+echo
+echo "→ Test-requested skip is reported as skip, not pass"
+if "$RUNNER" --root "$ROOT" --profile ci --json "$TMPDIR_TEST/skip.json" >"$TMPDIR_TEST/skip.out" 2>&1; then
+  assert "runner exits 0 when selected tests pass or skip" 0
+else
+  assert "runner exits 0 when selected tests pass or skip" 1
+fi
+
+if python3 - "$TMPDIR_TEST/skip.json" <<'PY'
+import json, sys
+doc = json.load(open(sys.argv[1], encoding="utf-8"))
+tests = {t["id"]: t for t in doc["tests"]}
+assert doc["summary"]["passed"] == 1, doc["summary"]
+assert doc["summary"]["runtime_skipped"] == 1, doc["summary"]
+assert tests["skips_ci"]["status"] == "skip"
+assert tests["skips_ci"]["exit_code"] == 77
+assert tests["skips_ci"]["reason"] == "test requested skip"
+PY
+then
+  assert "skip JSON preserves exit 77 and reason" 0
+else
+  assert "skip JSON preserves exit 77 and reason" 1
+fi
+
 echo
 echo "═══════════════════════════════════════════════════"
 printf "  PASS: %d   FAIL: %d\n" "$PASS" "$FAIL"

@@ -17,7 +17,18 @@ PR con varios pushes seguidos cancela los runs anteriores.
 | `backend` (py3.11) | `pytest tests/` en `services/agora-backend`, `LAIA_ROOT=$GITHUB_WORKSPACE` | `requirements.txt` + `pytest`, sin DB ni servicios (los aísla `conftest.py`) | 355 passed, 8 skipped |
 | `backend` (py3.14) | idem, en la versión del dev | idem | 355 passed, 8 skipped |
 | `installer` | `tests/installer/run_all.sh` con `INSTALLER_SKIP` (1 test) | shell/stubs (`lxc`/`lxd`/`snap`/`curl`); sudo opcional si el test lo detecta | 33 corren + 1 skip documentado |
+| `integrity` | `tests/integration/run_integrity.sh --profile ci` (Track T) | `python3`, sin LXD; sube `integrity-ci.json` como artefacto | 5 pass + skips por entorno (D2-ci, backup fixture, T4 reconciler, T-DOC, regresión backend-paths) |
 | `skip-matrix` | imprime esta matriz como anotaciones del PR | — | informativo |
+
+**Job `integrity` (Track T):** corre el subset CI-safe de la suite de integridad
+(`--profile ci`): el gate D2 en modo ci, el contrato de backups por fixture, el
+reconciliador de consistencia T4 (fixture), el gate de docstrings **T-DOC** y la
+regresión del bug de rutas hardcodeadas del backend. Los contratos por capa
+(host/lxd/agora/executor/atlas/data) y los e2e (T3 golden-path, T6 load smoke)
+tienen `profiles=host,vm` y se reportan como `skip` con motivo en el JSON — se
+corren en la VM `laia-dev` / monitor B2, no en el runner pelado. Los e2e
+destructivos además exigen `LAIA_E2E_ALLOW_DESTRUCTIVE=1` (doble blindaje
+anti-prod). Detalle en `tests/integration/README.md`.
 
 **Por qué `LAIA_ROOT=$GITHUB_WORKSPACE` en backend:** `app/storage.py` hace
 `sys.path.insert(0, settings.laia_root)` para importar el módulo `workspace_store`

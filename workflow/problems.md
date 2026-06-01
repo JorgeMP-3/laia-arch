@@ -30,6 +30,28 @@ añade una línea `- **Resuelto**: 2026-MM-DD en commit <hash>`.
 
 ---
 
+## backup-timer-runs-as-laia-arch-cannot-read-agora (open)
+
+- **Descubierto**: 2026-06-01 por claude opus 4.8 (Lead, en el roadmap) — confirmado por claude-b (Track T)
+  al revisar el template para T5.
+- **Síntoma**: el backup nocturno correría "OK" **sin `agora.db`** (falso-verde, mismo patrón que el
+  outage del cutover). `infra/installer/systemd/laia-backup.service.tmpl` usa `User=${LAIA_USER}`
+  (= `laia-arch`), pero `/srv/laia/agora` es `drwx------` del uid del container (`1000999`):
+  `laia-arch` no puede leer `agora.db`.
+- **Causa raíz**: el servicio de backup corre como el usuario operador, no como `root`; el dir de datos
+  de AGORA es root/container-owned y cerrado.
+- **Reproducción**: instalar el timer y correr `laia-backup all` como `laia-arch`; el artefacto de
+  `agora.db` sale vacío o ausente aunque el exit sea 0.
+- **Workaround**: correr `laia-backup` como `root` manualmente.
+- **Fix**: el servicio de prod debe correr como `root` (o `User=root` en la plantilla). Validar con
+  corrida real que `agora_*.db` pesa ~36M, no vacío. **Fix = código de producción** (plantilla del
+  installer) → NO lo toca Track T; coordinado con Codex/Lead.
+- **Cobertura (Track T)**: `tests/integration/regression/test_backup_service_runs_as_root.sh` guarda el
+  invariante; hoy SKIPea (exit 77) con motivo loud citando esta entrada, y vira a PASS al arreglar la
+  plantilla (sin silent gap).
+- **Owner**: Codex/Lead (fix del template).
+- **Estado**: open.
+
 ## migrate-v1-to-v2-prod-outage (resolved)
 
 - **Descubierto**: 2026-05-30 por claude opus 4.8 (Lead) + Jorge, al ejecutar el cutover en prod.

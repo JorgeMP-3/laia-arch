@@ -91,6 +91,34 @@ jobs:
           INSTALLER_SKIP: "test_install_native_layout.sh"
         run: bash tests/installer/run_all.sh
 
+  # ── Integrity suite (Track T, CI profile: host-free) ───────────────────────
+  # Corre el subset CI-safe del runner de integridad: D2 en modo ci, el contrato
+  # de backups por fixture y el gate de docstrings T-DOC. Los contratos por capa
+  # y los e2e (profiles host/vm) se reportan como SKIP con motivo (no silent gap)
+  # y se corren en la VM laia-dev / monitor B2. Ver tests/integration/README.md.
+  integrity:
+    name: Integrity suite (CI profile)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Run integrity runner (profile ci)
+        # CI=1 fuerza el subset sin-LXD. El runner sale 1 si algún test
+        # seleccionado falla (incl. el gate T-DOC ante un docstring EN faltante).
+        env:
+          CI: "1"
+        run: tests/integration/run_integrity.sh --profile ci --json integrity-ci.json
+      - name: Upload integrity report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: integrity-ci-report
+          path: integrity-ci.json
+          if-no-files-found: warn
+
   # ── Matriz de SKIP (no silent cap) ──────────────────────────────────────────
   # No corre tests: documenta en el propio run de CI qué suites quedan FUERA y
   # por qué. Así el límite de cobertura es explícito en cada PR, no silencioso.
@@ -101,7 +129,8 @@ jobs:
       - uses: actions/checkout@v4
       - name: Print run/skip matrix
         run: |
-          echo "::notice title=CI corre::backend pytest (services/agora-backend, py3.11 + py3.14, LAIA_ROOT=checkout) + tests/installer/run_all.sh (shell/stubs, menos 1 excluido)"
+          echo "::notice title=CI corre::backend pytest (services/agora-backend, py3.11 + py3.14, LAIA_ROOT=checkout) + tests/installer/run_all.sh (shell/stubs, menos 1 excluido) + tests/integration/run_integrity.sh --profile ci (D2-ci, backup fixture, gate T-DOC)"
+          echo "::notice title=SKIP por diseño — contratos por capa (Track T)::los contratos host/lxd/agora/executor/atlas/data y los e2e (profiles host,vm) requieren LXD + ecosistema vivo. El runner los reporta como skip con motivo. Se corren en la VM laia-dev / monitor B2."
           echo "::notice title=SKIP por diseño — D2::tests/integration/test_ecosystem_integrity.sh requiere LXD + container laia-agora vivo + /api/health → no ejecutable en runner sin host. Se corre a mano / en VM laia-dev y (B2) vía monitor."
           echo "::notice title=SKIP por diseño — tests de plugin del backend::6 tests cargan plugins de .laia-core/plugins (gitignored, provistos por la instalación). En el checkout no existen → pytest.skip limpio (helper tests/_laia_core.py). Corren en host/VM con laia-core."
           echo "::notice title=SKIP por diseño — installer::test_install_native_layout.sh (laia auth necesita deps de laia-core: dotenv/pyyaml) NO es host-free en un runner pelado → INSTALLER_SKIP. Cubierto por VM E2E / host con laia-core instalado."

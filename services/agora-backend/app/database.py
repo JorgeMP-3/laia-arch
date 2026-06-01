@@ -324,26 +324,32 @@ class LockedConnection(sqlite3.Connection):
         self._lock = threading.RLock()
 
     def execute(self, *args, **kwargs):
+        """Execute a single statement while holding the connection lock."""
         with self._lock:
             return super().execute(*args, **kwargs)
 
     def executemany(self, *args, **kwargs):
+        """Execute a parameterized statement repeatedly under the lock."""
         with self._lock:
             return super().executemany(*args, **kwargs)
 
     def executescript(self, *args, **kwargs):
+        """Execute a multi-statement SQL script under the lock."""
         with self._lock:
             return super().executescript(*args, **kwargs)
 
     def commit(self) -> None:
+        """Commit the current transaction under the lock."""
         with self._lock:
             super().commit()
 
     def rollback(self) -> None:
+        """Roll back the current transaction under the lock."""
         with self._lock:
             super().rollback()
 
     def close(self) -> None:
+        """Close the connection under the lock."""
         with self._lock:
             super().close()
 
