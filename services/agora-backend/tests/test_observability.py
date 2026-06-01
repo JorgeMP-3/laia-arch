@@ -23,6 +23,64 @@ def test_health_complete():
     assert "laiactl_available" in data
 
 
+def test_health_rejects_empty_auth_json(tmp_path, monkeypatch):
+    auth_json = tmp_path / "auth.json"
+    auth_json.write_text("", encoding="utf-8")
+    from app import agent_pool
+
+    monkeypatch.setenv("AGORA_DEFAULT_PROVIDER", "openai-codex")
+    monkeypatch.setattr(agent_pool, "auth_json_status", "linked")
+    monkeypatch.setattr(agent_pool, "auth_json_path", str(auth_json))
+
+    r = client.get("/api/health")
+
+    assert r.status_code == 200
+    data = r.json()
+    assert data["ready"] is False
+    assert data["auth_json_ready"] is False
+    assert data["auth_json_status"] == "invalid"
+    assert data["auth_json_reason"] == "empty"
+
+
+def test_health_accepts_auth_json_with_default_provider_credentials(tmp_path, monkeypatch):
+    auth_json = tmp_path / "auth.json"
+    auth_json.write_text(
+        '{"version":1,"providers":{"openai-codex":{"tokens":{"access_token":"a","refresh_token":"r"}}}}',
+        encoding="utf-8",
+    )
+    from app import agent_pool
+
+    monkeypatch.setenv("AGORA_DEFAULT_PROVIDER", "openai-codex")
+    monkeypatch.setattr(agent_pool, "auth_json_status", "linked")
+    monkeypatch.setattr(agent_pool, "auth_json_path", str(auth_json))
+
+    r = client.get("/api/health")
+
+    assert r.status_code == 200
+    data = r.json()
+    assert data["ready"] is True
+    assert data["auth_json_ready"] is True
+    assert data["auth_json_reason"] == "ok"
+
+
+def test_admin_status_rejects_auth_json_without_credentials(tmp_path, monkeypatch):
+    auth_json = tmp_path / "auth.json"
+    auth_json.write_text('{"version":1,"providers":{}}', encoding="utf-8")
+    from app import agent_pool
+
+    monkeypatch.setenv("AGORA_DEFAULT_PROVIDER", "openai-codex")
+    monkeypatch.setattr(agent_pool, "auth_json_status", "linked")
+    monkeypatch.setattr(agent_pool, "auth_json_path", str(auth_json))
+
+    r = client.get("/api/admin/status", headers=HEADERS)
+
+    assert r.status_code == 200
+    auth = r.json()["status"]["auth"]
+    assert auth["ready"] is False
+    assert auth["status"] == "invalid"
+    assert auth["reason"] == "missing_openai-codex_credentials"
+
+
 def test_metrics_requires_admin():
     r = client.get("/api/metrics")
     assert r.status_code == 401

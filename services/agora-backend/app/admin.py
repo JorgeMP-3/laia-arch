@@ -30,6 +30,7 @@ from .agent_identity import (
     normalize_container_name,
 )
 from .config import settings
+from .health import auth_json_snapshot
 from .models import Agent, Event, Role, User, new_id, now_iso
 from .security import hash_password
 from .storage import store
@@ -373,6 +374,7 @@ def _http_json(url: str, *, headers: dict[str, str] | None = None, timeout: floa
 
 
 def _auth_snapshot() -> dict:
+    """Return admin-facing auth-store readiness without exposing secrets."""
     try:
         from . import agent_pool
         status = agent_pool.auth_json_status
@@ -380,15 +382,11 @@ def _auth_snapshot() -> dict:
     except Exception:
         status = "unknown"
         path = str(settings.data_dir / "auth.json")
-    present = Path(path).is_file()
-    if present and status in {"unknown", "missing"}:
-        status = "linked"
-    return {
-        "ready": present or status == "linked",
-        "status": status,
-        "path": path,
-        "present": present,
-    }
+    return auth_json_snapshot(
+        path,
+        status,
+        os.environ.get("AGORA_DEFAULT_PROVIDER", "openai-codex"),
+    )
 
 
 def _backend_health_snapshot() -> dict:
@@ -804,11 +802,13 @@ def list_admin_jobs(
     limit: int = Query(default=100, ge=1, le=500),
     _: User = Depends(require_roles("agora_admin")),
 ):
+    """Handle GET /jobs."""
     return {"jobs": store.admin_jobs(status=status, limit=limit)}
 
 
 @router.get("/jobs/{job_id}")
 def get_admin_job(job_id: str, _: User = Depends(require_roles("agora_admin"))):
+    """Handle GET /jobs/{job_id}."""
     job = store.admin_job(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="job not found")
@@ -928,6 +928,7 @@ def _image_freshness_snapshot() -> dict:
 
 @router.get("/status")
 def admin_status(_: User = Depends(require_roles("agora_admin"))):
+    """Handle GET /status."""
     containers, container_error = _list_lxc_containers()
     if not containers and container_error:
         containers = _fallback_containers_from_store()
@@ -963,11 +964,13 @@ def admin_status(_: User = Depends(require_roles("agora_admin"))):
 
 @router.get("/image/freshness")
 def image_freshness(_: User = Depends(require_roles("agora_admin"))):
+    """Handle GET /image/freshness."""
     return {"image": _image_freshness_snapshot()}
 
 
 @router.get("/containers")
 def admin_containers(_: User = Depends(require_roles("agora_admin"))):
+    """Handle GET /containers."""
     containers, error = _list_lxc_containers()
     if not containers and error:
         containers = _fallback_containers_from_store()
@@ -981,6 +984,7 @@ def admin_logs(
     since: str | None = None,
     _: User = Depends(require_roles("agora_admin")),
 ):
+    """Handle GET /logs/{name}."""
     output, error = _journal_lines(name, lines=lines, since=since)
     return {
         "logs": {
@@ -1057,6 +1061,7 @@ def admin_errors(
 
 @router.post("/system/refresh-oauth")
 def refresh_oauth(actor: User = Depends(require_roles("agora_admin"))):
+    """Handle POST /system/refresh-oauth."""
     _admin_rate_limit(actor.id)
     host_auth = Path(
         os.environ.get("AGORA_ADMIN_HOST_AUTH_JSON")
@@ -1098,6 +1103,7 @@ def refresh_oauth(actor: User = Depends(require_roles("agora_admin"))):
 
 @router.post("/users/provision", response_model=AdminJobResponse, status_code=202)
 def provision_user(payload: AdminProvisionUserRequest, actor: User = Depends(require_roles("agora_admin"))):
+    """Handle POST /users/provision."""
     _admin_rate_limit(actor.id)
     if payload.image_alias not in _ALLOWED_IMAGE_ALIASES:
         raise HTTPException(
@@ -1117,6 +1123,7 @@ def provision_user(payload: AdminProvisionUserRequest, actor: User = Depends(req
 
 @router.get("/users")
 def admin_users(_: User = Depends(require_roles("agora_admin"))):
+    """Handle GET /users."""
     containers, _ = _list_lxc_containers()
     containers_by_name = {c["name"]: c for c in containers}
     agents = store.agents()
@@ -1160,6 +1167,7 @@ class _BudgetPatch(_BaseModel):
 
 @router.get("/users/{user_id}/budget")
 def get_user_budget(user_id: str, _: User = Depends(require_roles("agora_admin"))):
+    """Handle GET /users/{user_id}/budget."""
     if store.user_by_id(user_id) is None:
         raise HTTPException(status_code=404, detail="user not found")
     return {"user_id": user_id, "budget": store.get_user_budget(user_id)}
@@ -1168,6 +1176,7 @@ def get_user_budget(user_id: str, _: User = Depends(require_roles("agora_admin")
 @router.patch("/users/{user_id}/budget")
 def patch_user_budget(user_id: str, payload: _BudgetPatch,
                       actor: User = Depends(require_roles("agora_admin"))):
+    """Handle PATCH /users/{user_id}/budget."""
     if store.user_by_id(user_id) is None:
         raise HTTPException(status_code=404, detail="user not found")
     kwargs: dict = {}
@@ -1357,6 +1366,7 @@ def user_scheduled_jobs(
     user_id: str,
     _: User = Depends(require_roles("agora_admin")),
 ):
+    """Handle GET /users/{user_id}/scheduled-jobs."""
     if store.user_by_id(user_id) is None:
         raise HTTPException(status_code=404, detail="user not found")
     jobs = store.list_scheduled_jobs(user_id)
@@ -1374,6 +1384,7 @@ def user_child_runs(
     limit: int = Query(default=20, ge=1, le=200),
     _: User = Depends(require_roles("agora_admin")),
 ):
+    """Handle GET /users/{user_id}/child-runs."""
     if store.user_by_id(user_id) is None:
         raise HTTPException(status_code=404, detail="user not found")
     runs = store.list_child_runs_for_user(user_id, limit=limit)
@@ -1383,6 +1394,7 @@ def user_child_runs(
 
 @router.delete("/users/{slug}", response_model=AdminJobResponse, status_code=202)
 def delete_admin_user(slug: str, actor: User = Depends(require_roles("agora_admin"))):
+    """Handle DELETE /users/{slug}."""
     _admin_rate_limit(actor.id)
     if not SLUG_RE.fullmatch(slug):
         raise HTTPException(status_code=422, detail="invalid slug")
@@ -1407,6 +1419,7 @@ def rebuild_admin_user(
     image_alias: str = "laia-agent",
     actor: User = Depends(require_roles("agora_admin")),
 ):
+    """Handle POST /users/{slug}/rebuild."""
     _warn_host_op_via_agora_admin(actor, "rebuild-user")  # regla ⑥
     _admin_rate_limit(actor.id)
     if not SLUG_RE.fullmatch(slug):
@@ -1430,6 +1443,7 @@ def rebuild_admin_user(
 def restart_container(name: str, actor: User = Depends(require_roles("agora_admin"))):
     # regla ⑥: this is LXD host territory, should require host_admin
     # post-migration. See _warn_host_op_via_agora_admin docstring.
+    """Handle POST /containers/{name}/restart."""
     _warn_host_op_via_agora_admin(actor, "container-restart")
     _admin_rate_limit(actor.id)
     container = _normalize_container_name(name)
@@ -1449,6 +1463,7 @@ def snapshot_container(
     payload: AdminContainerSnapshotRequest,
     actor: User = Depends(require_roles("agora_admin")),
 ):
+    """Handle POST /containers/{name}/snapshot."""
     _warn_host_op_via_agora_admin(actor, "container-snapshot")  # regla ⑥
     _admin_rate_limit(actor.id)
     container = _normalize_container_name(name)
@@ -1468,6 +1483,7 @@ def restore_container(
     payload: AdminContainerSnapshotRequest,
     actor: User = Depends(require_roles("agora_admin")),
 ):
+    """Handle POST /containers/{name}/restore."""
     _warn_host_op_via_agora_admin(actor, "container-restore")  # regla ⑥
     _admin_rate_limit(actor.id)
     container = _normalize_container_name(name)
@@ -1483,6 +1499,7 @@ def restore_container(
 
 @router.post("/system/restart-backend", response_model=AdminJobResponse, status_code=202)
 def restart_backend(actor: User = Depends(require_roles("agora_admin"))):
+    """Handle POST /system/restart-backend."""
     _warn_host_op_via_agora_admin(actor, "restart-backend")  # regla ⑥
     _admin_rate_limit(actor.id)
 
@@ -1627,6 +1644,7 @@ _FIX_REGISTRY: dict[str, dict] = {
 
 @router.get("/fixes")
 def list_fixes(_: User = Depends(require_roles("agora_admin"))):
+    """Handle GET /fixes."""
     return {
         "fixes": [
             {"name": name, "description": info["description"]}
@@ -1637,6 +1655,7 @@ def list_fixes(_: User = Depends(require_roles("agora_admin"))):
 
 @router.post("/fix/{name}", response_model=AdminJobResponse, status_code=202)
 def run_fix(name: str, actor: User = Depends(require_roles("agora_admin"))):
+    """Handle POST /fix/{name}."""
     _admin_rate_limit(actor.id)
     fix = _FIX_REGISTRY.get(name)
     if not fix:

@@ -2,7 +2,7 @@
 
 Backend oficial de AGORA — plataforma de agentes personales del ecosistema LAIA.
 
-Estado: Produccion-ready (7 fases completadas). 69 tests.
+Estado: Produccion-ready. Suite backend actual: 368 tests.
 
 ## Responsabilidades
 
@@ -29,7 +29,7 @@ El control global de agentes, contenedores, snapshots y runtime pertenece a LAIA
 ## Desarrollo
 
 ```bash
-cd /home/laia-hermes/LAIA/services/agora-backend
+cd /home/laia-arch/LAIA/services/agora-backend
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
 .venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8088 --reload
@@ -38,7 +38,7 @@ python3 -m venv .venv
 Tests:
 
 ```bash
-.venv/bin/python -m pytest tests/ -v
+LAIA_ROOT=/home/laia-arch/LAIA .venv/bin/python -m pytest tests/ -v
 ```
 
 ## Variables de entorno

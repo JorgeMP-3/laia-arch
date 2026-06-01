@@ -46,6 +46,7 @@ async def receive_webhook(
     request: Request,
     x_laia_signature: str | None = Header(default=None, alias="X-Laia-Signature"),
 ):
+    """Handle POST /{slug}."""
     body = await request.body()
     if len(body) > 64 * 1024:
         raise HTTPException(status_code=413, detail="payload too large")

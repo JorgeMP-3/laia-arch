@@ -10,10 +10,7 @@ Covers:
 
 from __future__ import annotations
 
-import importlib.util
-import sys
 import uuid
-from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -48,28 +45,13 @@ def make_user():
 
 
 def _load_laia_plugin():
-    """Side-load the laia-coordinator plugin module from the repo path so
-    handlers can be unit-tested without the full plugin manager.
+    """Side-load the laia-coordinator plugin module for unit-level tests."""
+    from tests._laia_core import load_plugin_or_skip
 
-    The plugin file lives at
-    ``.laia-core/plugins/laia-coordinator/__init__.py``; we resolve it from
-    the test runtime by walking up from this test file.
-    """
-    here = Path(__file__).resolve()
-    # services/agora-backend/tests/test_laia_coordinator.py
-    #  → services/agora-backend/tests
-    #  → services/agora-backend
-    #  → services
-    #  → LAIA
-    laia_root = here.parents[3]
-    pyfile = laia_root / ".laia-core" / "plugins" / "laia-coordinator" / "__init__.py"
-    if not pyfile.is_file():
-        pytest.skip(f"laia-coordinator plugin not found at {pyfile}")
-    spec = importlib.util.spec_from_file_location("laia_coordinator_plugin", pyfile)
-    mod = importlib.util.module_from_spec(spec)
-    sys.modules["laia_coordinator_plugin"] = mod
-    spec.loader.exec_module(mod)
-    return mod
+    return load_plugin_or_skip(
+        "laia-coordinator/__init__.py",
+        "laia_coordinator_plugin",
+    )
 
 
 # ── 1. Seed ─────────────────────────────────────────────────────────────────

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+import threading
 from pathlib import Path
 
 SCHEMA = """
@@ -315,6 +316,38 @@ CREATE INDEX IF NOT EXISTS idx_coord_msgs_created ON coordinator_messages(user_i
 """
 
 
+class LockedConnection(sqlite3.Connection):
+    """SQLite connection that serializes access from FastAPI worker threads."""
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self._lock = threading.RLock()
+
+    def execute(self, *args, **kwargs):
+        with self._lock:
+            return super().execute(*args, **kwargs)
+
+    def executemany(self, *args, **kwargs):
+        with self._lock:
+            return super().executemany(*args, **kwargs)
+
+    def executescript(self, *args, **kwargs):
+        with self._lock:
+            return super().executescript(*args, **kwargs)
+
+    def commit(self) -> None:
+        with self._lock:
+            super().commit()
+
+    def rollback(self) -> None:
+        with self._lock:
+            super().rollback()
+
+    def close(self) -> None:
+        with self._lock:
+            super().close()
+
+
 class Database:
     def __init__(self, path: Path) -> None:
         self.path = path
@@ -324,8 +357,15 @@ class Database:
     def conn(self) -> sqlite3.Connection:
         if self._conn is None:
             self.path.parent.mkdir(parents=True, exist_ok=True)
-            self._conn = sqlite3.connect(str(self.path), check_same_thread=False)
+            self._conn = sqlite3.connect(
+                str(self.path),
+                check_same_thread=False,
+                timeout=30,
+                factory=LockedConnection,
+            )
             self._conn.execute("PRAGMA journal_mode=WAL")
+            self._conn.execute("PRAGMA synchronous=NORMAL")
+            self._conn.execute("PRAGMA busy_timeout=30000")
             self._conn.execute("PRAGMA foreign_keys=ON")
             self._conn.row_factory = sqlite3.Row
         return self._conn
