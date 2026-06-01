@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-# Crea, repara y migra workspaces DB-only en Hermes.
-"""create-workspace.py — crea, repara y migra workspaces DB-only en Hermes."""
+# Creates, repairs, and migrates DB-only workspaces in Hermes.
+"""create-workspace.py — creates, repairs, and migrates DB-only workspaces in Hermes."""
 
 from __future__ import annotations
 
@@ -459,7 +459,7 @@ def edit_workspace(name: str) -> None:
                 title=f"{title} — Topic",
                 kind="topic",
                 summary=body or title,
-                body=body or "## Guia\n\n_(añadir mapa del tema)_",
+                body=body or "## Guide\n\n_(add topic map)_",
                 source_kind="interactive",
                 parent_ref="topics",
             )
@@ -537,7 +537,7 @@ def _init_code_git(ws_path: Path, ws_name: str) -> None:
     if not code_path.exists():
         return
 
-    # Si ya hay git en code/ o en algún subproyecto, no hacer nada
+    # If git already exists in code/ or any subproject, do nothing
     if (code_path / ".git").exists():
         print(f"  ✓ git ya existe en {ws_name}/code")
         return

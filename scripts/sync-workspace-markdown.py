@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Exporta `workspace.db` a Markdown bajo demanda: `context/` y `docs/db-export/`.
+# Exports `workspace.db` to Markdown on demand: `context/` and `docs/db-export/`.
 
 from __future__ import annotations
 

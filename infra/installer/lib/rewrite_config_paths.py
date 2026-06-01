@@ -23,7 +23,7 @@ import sys
 
 def rewrite(text: str, live: str) -> str:
     """Return *text* with path anchors rewritten. Pure; no I/O."""
-    # Layout v2 (slice C1) split — the eje is volatility + sensitivity:
+    # Layout v2 (slice C1) split — the core is volatility + sensitivity:
     #   - INTERACTIVE mesa viva (laia_home, workspaces, memories, skills,
     #     plugins) → the live LAIA_HOME (~/LAIA-ARCH).
     #   - OPERATIONAL runtime state (state_db, response_store) → /srv/laia/arch,

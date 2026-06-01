@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Elimina un workspace de Hermes con confirmacion manual fuerte y backup previo.
+# Removes a Hermes workspace with strong manual confirmation and prior backup.
 
 from __future__ import annotations
 

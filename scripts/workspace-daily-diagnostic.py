@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Diagnóstico rápido del flujo DB-first esperado para preguntas reales."""
+"""Quick diagnostic of the DB-first flow expected for real queries."""
 
 from __future__ import annotations
 

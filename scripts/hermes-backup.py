@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Crea backups rotativos de ~/.laia en un SSD externo.
+# Creates rotating backups of ~/.laia to an external SSD.
 """hermes-backup.py — backup periódico con retención configurable."""
 
 from __future__ import annotations

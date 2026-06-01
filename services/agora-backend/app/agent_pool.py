@@ -65,7 +65,7 @@ def seed_agora_config_yaml() -> None:
     the file doesn't yet list ``agora-executor-forwarder`` then the
     forwarder hook is never registered, and every filesystem/bash tool
     call from the LLM runs on the host instead of being forwarded to the
-    user's executor container. That defeats the whole rediseño.
+    user's executor container. That defeats the whole redesign.
 
     Two paths:
       1. File missing → write a fresh seed including ``enabled`` + the

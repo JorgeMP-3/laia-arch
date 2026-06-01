@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""workspace-switch.py — activa, desactiva y consulta el workspace activo."""
+"""workspace-switch.py — activates, deactivates, and queries the active workspace."""
 
 from __future__ import annotations
 

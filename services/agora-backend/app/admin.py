@@ -122,21 +122,21 @@ def _admin_rate_limit(actor_id: str) -> None:
 def _warn_host_op_via_agora_admin(actor: User, action: str) -> None:
     """Emit a WARN audit event when ``actor`` triggers a host-LXD action.
 
-    Regla ⑥ del Documento Definitivo: admin AGORA NO gestiona
-    infraestructura (LXD, systemd, filesystem del host). Esos endpoints
-    son territorio de LAIA-ARCH y deberían exigir el rol ``host_admin``.
-    Hoy se siguen aceptando con ``agora_admin`` por compatibilidad —
-    flippear el role-check rompería el flujo de Jorge sin la migración
-    asociada (asignarle el rol ``host_admin`` a su fila ``users``).
+    Rule ⑥ of the Definitive Document: AGORA admin does NOT manage
+    infrastructure (LXD, systemd, host filesystem). Those endpoints
+    are LAIA-ARCH territory and should require the ``host_admin`` role.
+    They are still accepted with ``agora_admin`` for backwards compatibility —
+    flipping the role-check would break Jorge's workflow without the associated
+    migration (assigning the ``host_admin`` role to his ``users`` row).
 
-    Esta función deja una pista observable cada vez que se hace una
-    operación host por la puerta ``agora_admin``, sin bloquear. Cuando la
-    migración esté hecha (Jorge marcado como ``host_admin``), cambiar el
-    ``require_roles("agora_admin")`` a ``require_roles("host_admin")`` en
-    los 5 endpoints afectados y eliminar este helper.
+    This function leaves an observable trail whenever a host
+    operation is performed via ``agora_admin``, without blocking. Once the
+    migration is done (Jorge marked as ``host_admin``), change
+    ``require_roles("agora_admin")`` to ``require_roles("host_admin")`` in
+    the 5 affected endpoints and remove this helper.
     """
     if getattr(actor, "role", None) == "host_admin":
-        return  # caller is the right role, nada que loggear.
+        return  # caller is the right role, nothing to log.
     try:
         ev = Event(
             id=new_id("evt"),
@@ -1410,7 +1410,7 @@ def delete_admin_user(slug: str, actor: User = Depends(require_roles("agora_admi
     return AdminJobResponse(job_id=job_id)
 
 
-# regla ⑥: this endpoint runs `lxc delete --force` + `create-agent.sh`
+# Rule ⑥: this endpoint runs `lxc delete --force` + `create-agent.sh`
 # on the host. After the host_admin migration it should require that
 # role. For now we audit + accept.
 @router.post("/users/{slug}/rebuild", response_model=AdminJobResponse, status_code=202)
@@ -1441,7 +1441,7 @@ def rebuild_admin_user(
 
 @router.post("/containers/{name}/restart", response_model=AdminJobResponse, status_code=202)
 def restart_container(name: str, actor: User = Depends(require_roles("agora_admin"))):
-    # regla ⑥: this is LXD host territory, should require host_admin
+    # Rule ⑥: this is LXD host territory, should require host_admin
     # post-migration. See _warn_host_op_via_agora_admin docstring.
     """Handle POST /containers/{name}/restart."""
     _warn_host_op_via_agora_admin(actor, "container-restart")
@@ -1464,7 +1464,7 @@ def snapshot_container(
     actor: User = Depends(require_roles("agora_admin")),
 ):
     """Handle POST /containers/{name}/snapshot."""
-    _warn_host_op_via_agora_admin(actor, "container-snapshot")  # regla ⑥
+    _warn_host_op_via_agora_admin(actor, "container-snapshot")  # Rule ⑥
     _admin_rate_limit(actor.id)
     container = _normalize_container_name(name)
     job_id = _start_job(
@@ -1484,7 +1484,7 @@ def restore_container(
     actor: User = Depends(require_roles("agora_admin")),
 ):
     """Handle POST /containers/{name}/restore."""
-    _warn_host_op_via_agora_admin(actor, "container-restore")  # regla ⑥
+    _warn_host_op_via_agora_admin(actor, "container-restore")  # Rule ⑥
     _admin_rate_limit(actor.id)
     container = _normalize_container_name(name)
     job_id = _start_job(
@@ -1500,7 +1500,7 @@ def restore_container(
 @router.post("/system/restart-backend", response_model=AdminJobResponse, status_code=202)
 def restart_backend(actor: User = Depends(require_roles("agora_admin"))):
     """Handle POST /system/restart-backend."""
-    _warn_host_op_via_agora_admin(actor, "restart-backend")  # regla ⑥
+    _warn_host_op_via_agora_admin(actor, "restart-backend")  # Rule ⑥
     _admin_rate_limit(actor.id)
 
     def run(_params: dict, log_path: str) -> dict:

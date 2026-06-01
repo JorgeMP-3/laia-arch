@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Verifica el estado estructural y DB-only de los workspaces de Hermes.
+# Verifies the structural and DB-only state of Hermes workspaces.
 
 from __future__ import annotations
 
