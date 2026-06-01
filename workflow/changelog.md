@@ -15,6 +15,43 @@ Formato:
 
 ---
 
+## 2026-06-01 — Sesión Lead: merges #40/#41, validación en VM, review #39, ops servidor (claude-a)
+
+Coordinación y cierre de los dos primeros tracks del roadmap V2. **No se tocó prod** (el cutover
+sigue HITL). Roadmap y briefs por agente en `workflow/_inbox/roadmap-v2-to-production.md`.
+
+- **Mergeados a `main`** tras revisión: **PR #40** (hardening backend, Codex) y **PR #41**
+  (Track T integridad, claude-b).
+- **#41 — 2 bugs de CI cazados y arreglados por el Lead** (commits `2e74e2bc` + `1a403d3a`):
+  (1) `ecosystem_integrity_d2` estaba en perfil `ci` con `requires=optional_lxd` → corría y fallaba
+  en el runner sin LXD → movido a `profiles=host,vm`. (2) el gate **T-DOC cazó 7 huecos de docstring
+  reales del #40** (`LockedConnection.*` + módulo `health.py`) → añadidos docstrings en inglés (NO se
+  regeneró baseline). **Lección**: `bash -n` y un run en host (con LXD) enmascararon el fallo; solo el
+  **CI real** lo cazó.
+- **Validación con-LXD en VM `laia-dev`** (worktree aislado, `--profile vm`): contratos de las 6 capas
+  + regresiones **PASS (7/7 ejecutables)**. Único FAIL = `cutover_migration_regression` por **timeout
+  600s en LXD anidado** (no es fallo de lógica; ya 14/14 en #38). **Hueco pendiente**: los e2e
+  destructivos **T3/T6 nunca se han ejecutado** (skipean sin `LAIA_E2E_ALLOW_DESTRUCTIVE=1`) → correr
+  en `laia-dev` antes de que Track T gatee la Fase 2.
+- **Review del PR #39 (Minimax, docs+QA)** — informe en `_inbox/qa-reports/qa-2026-06-01-docs-and-qa.md`:
+  señal real (dead code `monitor.py:74`, `except: pass` sin logging, comentarios con rutas v1 `~/.laia`)
+  pero **severidades poco fiables** — los 3 "blockers" NO lo son (el de `monitor.py:74` estaba analizado
+  al revés: `if not True:` nunca dispara el `continue`). **#39 NO mergeado**: contaminado con el commit
+  extraviado `b232acb0` (T-DOC de claude-b, ya en main vía #41) → reconstruir limpio. Minimax = buen
+  radar, mal juez de severidad.
+- **Ops del host `doyouwin-server`**: `apt upgrade` a kernel `7.0.0-22` + módulos NVIDIA (`needrestart`
+  se colgó pidiendo input interactivo en `pts/39`; resuelto). **Primer backup real** a
+  `/mnt/data/laia-backups` (`agora.db` 36M + `users` + `arch`) + **snapshots LXD** de las 5 instancias
+  (`pre-reboot-kernel7022-20260601`). **Reboot del host PENDIENTE** (ventana de Jorge; autostart confirmado).
+- **Higiene**: worktrees de #40/#41 archivados a `/home/laia-arch/archive` (→ `/mnt/data/home-archive`)
+  vía `cp -a` + `git worktree remove` (ramas preservadas, nada borrado). Política de idioma fijada:
+  **código en inglés, docs de proyecto en español**.
+
+**Abierto / siguiente**: reboot del host · fix `backup-timer-runs-as-laia-arch` (plantilla `User=root`)
+· reconstruir #39 limpio + **cerrar #35** (superado por #41) · 5 follow-ups pre-prod (Fase 1) · **ventana
+cutover v1→v2 (Fase 2, HITL)**. Problema recurrente: **HEAD compartido de `~/LAIA`** entre agentes →
+adoptar **1 worktree por agente**.
+
 ## 2026-06-01 — Hardening de AGORA backend y health real de auth.json (Codex)
 
 - Backend aislado en `wip/codex/backend-production` mediante worktree propio para no colisionar
@@ -30,6 +67,7 @@ Formato:
   helper portable de `.laia-core` para correr en worktrees con `LAIA_ROOT`.
 - Verificado: `LAIA_ROOT=/home/laia-arch/LAIA pytest services/agora-backend/tests -v` →
   **368 passed, 0 skipped**, 7 warnings existentes de Starlette `TestClient(timeout=...)`.
+
 ## 2026-06-01 — Track T: suite de integridad completa (T3/T4/T5/T6/T-DOC sobre el cimiento de Codex) (claude-b)
 
 FASE 4 · Track T. Extiende la suite de integridad sobre lo ya hecho (T1 en `main`,
