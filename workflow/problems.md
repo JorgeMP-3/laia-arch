@@ -405,12 +405,16 @@ añade una línea `- **Resuelto**: 2026-MM-DD en commit <hash>`.
 ## monitor-dead-code-if-not-true (open)
 
 - **Descubierto**: 2026-06-01 por minimax (QA).
-- **Síntoma**: FleetMonitor checks never run — `if not True: continue` at line 74 makes entire for-loop body unreachable. Monitor is completely ineffective.
-- **Causa raíz sospechada**: leftover debug guard that should have been removed.
-- **Reproducción**: `services/agora-backend/app/monitor.py:74` — `if not True:` is always False, so `continue` executes every iteration, skipping all agent checks.
-- **Workaround**: none — monitoring silently does nothing.
-- **Owner**: sin asignar (suggest Codex or Claude-a).
-- **Estado**: open.
+- **Síntoma**: dead code. `if not True: continue` en `monitor.py:74` es un guard que **nunca dispara**
+  (`not True` == `False`), así que el `continue` no se ejecuta y el cuerpo del bucle corre normal. El
+  monitor **funciona**; es un leftover inofensivo que hay que limpiar. **Severidad real: minor/cleanup.**
+- **Causa raíz**: leftover de debug que debió quitarse.
+- **Reproducción**: leer `services/agora-backend/app/monitor.py:74` — el `continue` es inalcanzable.
+- **Nota de revisión (Lead)**: el informe original de Minimax (`_inbox/qa-reports/qa-2026-06-01-docs-and-qa.md`)
+  lo clasificó **blocker** con "el monitor no hace nada" — **incorrecto** (análisis al revés, `if False`
+  nunca salta). Verificado por el Lead. Acción: borrar el guard muerto.
+- **Owner**: sin asignar (cleanup trivial — Codex/Claude-a).
+- **Estado**: open (minor).
 
 ---
 
