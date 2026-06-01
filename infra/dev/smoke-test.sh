@@ -23,7 +23,8 @@ while [[ $# -gt 0 ]]; do
 done
 
 API_URL="${API_URL%/}"
-STATE_DIR="${LAIA_STATE_DIR:-$HOME/.laia/state}"
+# Layout v2: orchestrator state lives in /srv/laia/state, not v1 ~/.laia/state.
+STATE_DIR="${LAIA_STATE_DIR:-/srv/laia/state}"
 STATE_FILE="$STATE_DIR/laia-state-${SLUG}.json"
 [[ -f "$STATE_FILE" ]] || STATE_FILE="/tmp/laia-state-${SLUG}.json"
 
