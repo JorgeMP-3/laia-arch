@@ -11,7 +11,6 @@ class Paths:
     infra_root: Path
     state_root: Path
     agents_state: Path
-    agent_runtime_root: Path
 
 
 def discover_paths() -> Paths:
@@ -30,7 +29,6 @@ def discover_paths() -> Paths:
         infra_root=infra_root,
         state_root=state_root,
         agents_state=state_root / "agents.json",
-        agent_runtime_root=laia_root / "services" / "laia-runtime",
     )
 
 

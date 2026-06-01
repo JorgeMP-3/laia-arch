@@ -154,118 +154,59 @@ def delete_agent(slug: str, *, force: bool = False) -> Result:
 
 
 def install_agent_runtime(paths: config.Paths, slug: str) -> Result:
+    """Centralized-brain model: there is no per-container agent runtime to install.
+
+    The brain now reasons centrally in the ``laia-agora`` container; each user's
+    container runs only the thin ``laia-executor.service``, which is installed and
+    started by ``create-agent`` (see ``infra/lxd/scripts/create-agent.sh``). The old
+    per-container runtime (``services/laia-runtime`` + ``laia-agent.service``) was
+    archived in commit 64ba0c2e.
+
+    This step is kept as a name-stable, idempotent no-op so existing callers
+    (agora-backend orchestrator, ``provision-agent``, the T3/T6 e2e tests) keep
+    working: it just confirms the executor — the per-container runtime in the
+    current model — is active. ``paths`` is accepted for signature stability.
+    """
+    del paths  # no longer needed: nothing to push into the container
     if not valid_slug(slug):
         return Result(["install-agent-runtime", slug], 2, "", f"Invalid employee slug: {slug}\n")
     name = container_name(slug)
     if not container_exists(slug):
         return Result(["install-agent-runtime", slug], 1, "", f"Container not found: {name}\n")
-    if not paths.agent_runtime_root.exists():
-        return Result(
-            ["install-agent-runtime", slug],
-            1,
-            "",
-            f"Runtime source not found: {paths.agent_runtime_root}\n",
-        )
-    _remove_pycache(paths.agent_runtime_root)
-    _remove_pycache(paths.laia_root / "workspace_store")
-
-    commands = [
-        # Estructura de directorios
-        ["lxc", "exec", name, "--", "mkdir", "-p",
-         "/opt/laia/agent", "/opt/laia/data", "/opt/laia/logs",
-         "/opt/laia/runtime", "/opt/laia/workspaces/personal",
-         "/opt/laia/data/tasks/inbox", "/opt/laia/data/tasks/done",
-         "/opt/laia/data/tasks/failed"],
-        # Usuario sin privilegios
-        ["lxc", "exec", name, "--", "sh", "-lc",
-         "id -u laia-agent >/dev/null 2>&1 || "
-         "useradd --system --home /opt/laia --shell /usr/sbin/nologin laia-agent"],
-        # Instalar código del runtime
-        ["lxc", "exec", name, "--", "rm", "-rf", "/opt/laia/agent", "/tmp/laia-runtime"],
-        ["lxc", "file", "push", "-r", "-p", str(paths.agent_runtime_root), f"{name}/tmp"],
-        ["lxc", "exec", name, "--", "mv", "/tmp/laia-runtime", "/opt/laia/agent"],
-        # Vendor: workspace_store
-        ["lxc", "exec", name, "--", "mkdir", "-p", "/opt/laia/agent/vendor"],
-        ["lxc", "file", "push", "-r", "-p",
-         str(paths.laia_root / "workspace_store"), f"{name}/opt/laia/agent/vendor"],
-        ["lxc", "exec", name, "--", "find", "/opt/laia/agent", "-type", "d", "-name", "__pycache__", "-prune", "-exec", "rm", "-rf", "{}", "+"],
-        # Virtual environment (instalado como root, ejecutado por laia-agent)
-        ["lxc", "exec", name, "--", "python3", "-m", "venv", "/opt/laia/runtime/venv"],
-        # Systemd service
-        ["lxc", "exec", name, "--", "cp",
-         "/opt/laia/agent/systemd/laia-agent.service",
-         "/etc/systemd/system/laia-agent.service"],
-        # healthcheck
-        ["lxc", "exec", name, "--", "cp",
-         "/opt/laia/agent/healthcheck.sh", "/opt/laia/healthcheck.sh"],
-        ["lxc", "exec", name, "--", "chmod", "+x",
-         "/opt/laia/healthcheck.sh", "/opt/laia/agent/healthcheck.sh"],
-        # Configuración del agente
-        ["lxc", "exec", name, "--", "sh", "-lc", _agent_json_script(slug, name)],
-        # Permisos: agent/ y runtime/ ejecutable pero no escribible por el runtime
-        ["lxc", "exec", name, "--", "chown", "-R", "root:laia-agent",
-         "/opt/laia/agent", "/opt/laia/runtime"],
-        ["lxc", "exec", name, "--", "chmod", "-R", "u=rwX,g=rX,o=",
-         "/opt/laia/agent", "/opt/laia/runtime"],
-        # data/, logs/, workspaces/ escritura exclusiva del runtime
-        ["lxc", "exec", name, "--", "chown", "-R", "laia-agent:laia-agent",
-         "/opt/laia/data", "/opt/laia/logs", "/opt/laia/workspaces"],
-        ["lxc", "exec", name, "--", "chmod", "0750",
-         "/opt/laia/data", "/opt/laia/logs", "/opt/laia/workspaces/personal"],
-        # agent.json: legible por laia-agent, no modificable
-        ["lxc", "exec", name, "--", "chmod", "0640", "/opt/laia/agent.json"],
-        ["lxc", "exec", name, "--", "chown", "root:laia-agent", "/opt/laia/agent.json"],
-        # Activar servicio
-        ["lxc", "exec", name, "--", "systemctl", "daemon-reload"],
-        ["lxc", "exec", name, "--", "systemctl", "enable", "laia-agent.service"],
-        ["lxc", "exec", name, "--", "systemctl", "restart", "laia-agent.service"],
-        ["lxc", "exec", name, "--", "/opt/laia/healthcheck.sh"],
-    ]
-    output: list[str] = []
-    for command in commands:
-        result = run(command, check=False)
-        output.append(f"$ {' '.join(command)}\n{result.stdout}{result.stderr}")
-        if not result.ok:
-            return Result(["install-agent-runtime", slug], result.returncode, "\n".join(output), "")
-    return Result(["install-agent-runtime", slug], 0, "\n".join(output), "")
+    result = run(["lxc", "exec", name, "--", "systemctl", "is-active", "laia-executor.service"], check=False)
+    output = f"$ lxc exec {name} -- systemctl is-active laia-executor.service\n{result.stdout}{result.stderr}"
+    if result.stdout.strip() != "active":
+        return Result(["install-agent-runtime", slug], 1, output, "laia-executor.service is not active\n")
+    return Result(["install-agent-runtime", slug], 0, output, "")
 
 
 def init_agent_workspace(slug: str) -> Result:
+    """Centralized-brain model: the private ``workspace.db`` is created lazily by the
+    executor's workspace tools (``services/laia-executor``, root
+    ``/var/lib/laia/workspace``) on first use — no explicit init via the archived
+    ``laia_agent`` runtime is needed. Kept as a name-stable check that the workspace
+    bind-mount is present in the container.
+    """
     name = container_name(slug)
     if not container_exists(slug):
         return Result(["init-agent-workspace", slug], 1, "", f"Container not found: {name}\n")
-    commands = [
-        ["lxc", "exec", name, "--", "runuser", "-u", "laia-agent", "--", "env", "PYTHONPATH=/opt/laia/agent/src", "/opt/laia/runtime/venv/bin/python", "-m", "laia_agent", "--workspace-init"],
-        ["lxc", "exec", name, "--", "test", "-s", "/opt/laia/workspaces/personal/workspace.db"],
-        ["lxc", "exec", name, "--", "sh", "-lc", "PYTHONPATH=/opt/laia/agent/src /opt/laia/runtime/venv/bin/python - <<'PY'\nfrom laia_agent.config import load_config\nfrom laia_agent.workspace import workspace_status\nimport json\nprint(json.dumps(workspace_status(load_config()), indent=2, sort_keys=True))\nPY"],
-    ]
-    output = []
-    for command in commands:
-        result = run(command, check=False)
-        output.append(f"$ {' '.join(command)}\n{result.stdout}{result.stderr}")
-        if not result.ok:
-            return Result(["init-agent-workspace", slug], result.returncode, "\n".join(output), "")
-    return Result(["init-agent-workspace", slug], 0, "\n".join(output), "")
+    result = run(["lxc", "exec", name, "--", "test", "-d", "/var/lib/laia/workspace"], check=False)
+    output = f"$ lxc exec {name} -- test -d /var/lib/laia/workspace\n{result.stdout}{result.stderr}"
+    if not result.ok:
+        return Result(["init-agent-workspace", slug], result.returncode, output, "workspace bind-mount /var/lib/laia/workspace missing\n")
+    return Result(["init-agent-workspace", slug], 0, output, "")
 
 
 def init_agent_profile(slug: str) -> Result:
+    """Centralized-brain model: the agent profile (persona, instructions, enabled
+    skills) lives centrally in ``agora.db`` and is applied by the central brain, not
+    in per-container files under ``/opt/laia/data/profile`` (archived in 64ba0c2e).
+    Kept as a name-stable no-op so ``provision-agent`` keeps working.
+    """
     name = container_name(slug)
     if not container_exists(slug):
         return Result(["init-agent-profile", slug], 1, "", f"Container not found: {name}\n")
-    commands = [
-        ["lxc", "exec", name, "--", "runuser", "-u", "laia-agent", "--", "env", "PYTHONDONTWRITEBYTECODE=1", "PYTHONPATH=/opt/laia/agent/src", "/opt/laia/runtime/venv/bin/python", "-m", "laia_agent", "--profile-init"],
-        ["lxc", "exec", name, "--", "test", "-s", "/opt/laia/data/profile/persona.md"],
-        ["lxc", "exec", name, "--", "test", "-s", "/opt/laia/data/profile/instructions.md"],
-        ["lxc", "exec", name, "--", "test", "-s", "/opt/laia/data/profile/skills.json"],
-        ["lxc", "exec", name, "--", "test", "-s", "/opt/laia/data/profile/preferences.json"],
-    ]
-    output = []
-    for command in commands:
-        result = run(command, check=False)
-        output.append(f"$ {' '.join(command)}\n{result.stdout}{result.stderr}")
-        if not result.ok:
-            return Result(["init-agent-profile", slug], result.returncode, "\n".join(output), "")
-    return Result(["init-agent-profile", slug], 0, "\n".join(output), "")
+    return Result(["init-agent-profile", slug], 0, "profile is managed centrally in agora.db (no per-container init)\n", "")
 
 
 def get_agent_profile(slug: str) -> Result:
@@ -336,9 +277,9 @@ def agent_status(slug: str) -> Result:
     if not container_exists(slug):
         return Result(["agent-status", slug], 1, "", f"Container not found: {name}\n")
     checks = [
-        ["lxc", "exec", name, "--", "systemctl", "is-active", "laia-agent.service"],
-        ["lxc", "exec", name, "--", "cat", "/opt/laia/data/status.json"],
-        ["lxc", "exec", name, "--", "tail", "-n", "20", "/opt/laia/logs/agent.log"],
+        ["lxc", "exec", name, "--", "systemctl", "is-active", "laia-executor.service"],
+        ["lxc", "exec", name, "--", "curl", "-sf", "--max-time", "5", "http://localhost:9091/health"],
+        ["lxc", "exec", name, "--", "journalctl", "-u", "laia-executor.service", "-n", "20", "--no-pager"],
     ]
     output = []
     returncode = 0
@@ -354,20 +295,14 @@ def verify_agent(slug: str) -> Result:
     name = container_name(slug)
     if not container_exists(slug):
         return Result(["verify-agent", slug], 1, "", f"Container not found: {name}\n")
+    # Centralized-brain model: a healthy user container = the thin executor is up
+    # and serving /health, with its private-workspace bind-mount present. The old
+    # per-container checks (laia-agent.service, /opt/laia/runtime venv, profile
+    # files under /opt/laia/data/profile) were archived in 64ba0c2e.
     checks = [
-        ["lxc", "exec", name, "--", "systemctl", "is-active", "laia-agent.service"],
-        ["lxc", "exec", name, "--", "/opt/laia/healthcheck.sh"],
-        ["lxc", "exec", name, "--", "python3", "-m", "pip", "--version"],
-        ["lxc", "exec", name, "--", "/opt/laia/runtime/venv/bin/python", "-m", "pip", "--version"],
-        ["lxc", "exec", name, "--", "test", "-s", "/opt/laia/data/profile/persona.md"],
-        ["lxc", "exec", name, "--", "test", "-s", "/opt/laia/data/profile/instructions.md"],
-        ["lxc", "exec", name, "--", "test", "-s", "/opt/laia/data/profile/skills.json"],
-        ["lxc", "exec", name, "--", "test", "-s", "/opt/laia/data/profile/preferences.json"],
-        ["lxc", "exec", name, "--", "runuser", "-u", "laia-agent", "--", "env", "PYTHONDONTWRITEBYTECODE=1", "PYTHONPATH=/opt/laia/agent/src", "/opt/laia/runtime/venv/bin/python", "-c", "from laia_agent.config import load_config; from laia_agent.profile import get_profile; p=get_profile(load_config()); assert p['persona'] and p['instructions']; print('profile-ok')"],
-        ["lxc", "exec", name, "--", "test", "-s", "/opt/laia/workspaces/personal/workspace.db"],
-        ["lxc", "exec", name, "--", "runuser", "-u", "laia-agent", "--", "env", "PYTHONDONTWRITEBYTECODE=1", "PYTHONPATH=/opt/laia/agent/src", "/opt/laia/runtime/venv/bin/python", "-c", "from laia_agent.config import load_config; from laia_agent.workspace import workspace_status; s=workspace_status(load_config()); assert s['exists'] and s['node_count'] >= 1; print('workspace-ok')"],
-        ["lxc", "exec", name, "--", "curl", "-4", "-I", "--max-time", "8", "http://ports.ubuntu.com/ubuntu-ports/dists/jammy/InRelease"],
-        ["lxc", "exec", name, "--", "curl", "-sf", "--max-time", "5", "http://localhost:9090/health"],
+        ["lxc", "exec", name, "--", "systemctl", "is-active", "laia-executor.service"],
+        ["lxc", "exec", name, "--", "curl", "-sf", "--max-time", "5", "http://localhost:9091/health"],
+        ["lxc", "exec", name, "--", "test", "-d", "/var/lib/laia/workspace"],
     ]
     output = []
     for args in checks:
@@ -385,36 +320,11 @@ def _csv_first_column_contains(output: str, expected: str) -> bool:
     return False
 
 
-def _remove_pycache(root: Path) -> None:
-    if not root.exists():
-        return
-    for path in root.rglob("__pycache__"):
-        shutil.rmtree(path, ignore_errors=True)
-
-
 def _systemctl_agent(slug: str, action: str) -> Result:
     name = container_name(slug)
     if not container_exists(slug):
         return Result([action + "-agent", slug], 1, "", f"Container not found: {name}\n")
-    return run(["lxc", "exec", name, "--", "systemctl", action, "laia-agent.service"], check=False)
-
-
-def _agent_json_script(slug: str, name: str) -> str:
-    return f"""cat > /opt/laia/agent.json <<'JSON'
-{{
-  "employee": "{slug}",
-  "container": "{name}",
-  "root": "/opt/laia",
-  "agent_dir": "/opt/laia/agent",
-  "data_dir": "/opt/laia/data",
-  "logs_dir": "/opt/laia/logs",
-  "workspace": "/opt/laia/workspaces/personal/workspace.db",
-  "heartbeat_interval": 5,
-  "status": "runtime-installed"
-}}
-JSON
-chmod 0644 /opt/laia/agent.json
-"""
+    return run(["lxc", "exec", name, "--", "systemctl", action, "laia-executor.service"], check=False)
 
 
 # ── fleet / composite operations ───────────────────────────────────────────
@@ -456,25 +366,17 @@ def fleet_status() -> list[dict]:
         slug = row["name"].removeprefix("agent-") if row["name"].startswith("agent-") else row["name"].removeprefix("laia-")
         service = "unknown"
         try:
-            svc = run(["lxc", "exec", row["name"], "--", "systemctl", "is-active", "laia-agent.service"], check=False)
+            svc = run(["lxc", "exec", row["name"], "--", "systemctl", "is-active", "laia-executor.service"], check=False)
             service = svc.stdout.strip()
         except Exception:
             pass
         health = ""
         try:
-            hc = run(["lxc", "exec", row["name"], "--", "curl", "-sf", "--max-time", "3", "http://localhost:9090/health"], check=False)
+            hc = run(["lxc", "exec", row["name"], "--", "curl", "-sf", "--max-time", "3", "http://localhost:9091/health"], check=False)
             if hc.ok:
                 import json as _json
                 hd = _json.loads(hc.stdout)
-                health = hd.get("service", "")
-        except Exception:
-            pass
-        status_json = {}
-        try:
-            sj = run(["lxc", "exec", row["name"], "--", "cat", "/opt/laia/data/status.json"], check=False)
-            if sj.ok:
-                import json as _json
-                status_json = _json.loads(sj.stdout)
+                health = hd.get("status", "")
         except Exception:
             pass
         rows.append({
@@ -485,8 +387,6 @@ def fleet_status() -> list[dict]:
             "snapshots": row["snapshots"],
             "service": service,
             "health": health,
-            "runtime_status": status_json.get("status", "unknown"),
-            "version": status_json.get("version", ""),
         })
     return rows
 
