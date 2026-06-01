@@ -98,9 +98,17 @@ hardening. **P0 a cerrar (cuasi-prerequisito de la ventana de prod):**
 | S1 | Resto del plan (Fail2Ban F10, TLS/reverse-proxy F9, drift de copias legacy F2) + protocolos de mantenimiento | según `security-hardening-plan.md` |
 **DoD Fase S**: los 4 P0 cerrados y verificados; `workflow/security.md` actualizado.
 
-### FASE 1 — Pre-prod hardening 🔴 (desbloquea la ventana)
+### FASE 1 — Pre-prod hardening ✅ (CERRADA 2026-06-01, claude-a)
 *Owner: C (Codex) + B (Claude-2) en paralelo; revisa A; audita Q.*
-Los 5 follow-ups del runbook de deploy v0.2.0 (§2.2 del roadmap de integraciones) + reconciliaciones:
+Los 5 follow-ups del runbook de deploy v0.2.0 (§2.2 del roadmap de integraciones) + reconciliaciones.
+**Auditoría 2026-06-01 (claude-a)**: 5/7 ya estaban hechos en el código (1.1 `rel_ensure_safe_directory`
+en `release.sh`; 1.2 `assert_rollback_dry_run_or_skip` tolera <2 versiones; 1.3 flag `--skip-frontend`
+existe; 1.4 `fact_ensure_operational_dirs` crea `state`+`users`; 1.5 `setup-prod-dirs.sh` ya usa
+`users`). **1.6 y 1.7 arreglados** en `wip/claude-a/preprod-followups`: `preflight.sh`/`smoke-test.sh`
+default v1 `~/.laia/state` → v2 `/srv/laia/state` (auth.json NO se tocó: su lógica espera 644 v1 y
+cambiarla reabriría el secreto 0600); `watchdog` declarado en `.laia-core/pyproject.toml` (runtime de
+`laia-pathd`, no solo tests). **Probado**: suite `infra/pathd/tests` 53/53 verde con las deps instaladas;
+`test_preflight.sh`/`test_rebuild_state.sh`/`test_flags.sh` (26) verdes.
 | # | Tarea | Owner | DoD |
 |---|---|---|---|
 | 1.1 | `laia-release` corre como root → añadir `git config --global --add safe.directory` (en el propio script) | C | deploy en VM sin warning de dubious ownership |

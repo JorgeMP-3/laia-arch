@@ -15,6 +15,36 @@ Formato:
 
 ---
 
+## 2026-06-01 — Fase 1 pre-prod cerrada + verificación de hardening P0 en vivo (claude-a)
+
+Auditoría y cierre de la **Fase 1** del roadmap a producción (`_inbox/roadmap-v2-to-production.md`).
+**No se tocó prod ni código de producción crítico** — solo scripts dev/ops y declaración de deps.
+
+- **5/7 follow-ups ya estaban hechos** en el código (los docs iban por detrás): 1.1 `safe.directory`
+  en `release.sh`, 1.2 assert de `--dry-run` tolera <2 versiones, 1.3 flag `--skip-frontend`,
+  1.4 factory crea `/srv/laia/{state,users}`, 1.5 `setup-prod-dirs.sh` ya usa `users`.
+- **1.6 — reconciliado al layout v2**: `infra/dev/preflight.sh` y `infra/dev/smoke-test.sh` pasan su
+  default de state del v1 `~/.laia/state` al v2 `/srv/laia/state` (override `LAIA_STATE_DIR` intacto).
+  **`AUTH_JSON_HOST` NO se tocó**: su lógica espera 644 (bind v1) y apuntarla al secreto v2 (0600)
+  reabriría el agujero recién cerrado — eso es trabajo del rediseño del cutover, no de este slice.
+- **1.7 — `watchdog` declarado** en `.laia-core/pyproject.toml` como dependencia de runtime (el unit
+  `laia-pathd.service` corre en el venv de `.laia-core` y usa watchdog para inotify; degrada a polling
+  si falta). `pytest-asyncio` ya estaba en el extra `dev`.
+- **Verificado**: confirmado que la suite `infra/pathd/tests` fallaba SOLO por `ModuleNotFoundError`
+  (`pytest_asyncio`/`watchdog`); con las deps instaladas → **53/53 verde** (incl. `test_watcher_e2e`).
+  `test_preflight.sh`, `test_rebuild_state.sh`, `test_flags.sh` (26 PASS) verdes.
+- **Hardening P0 verificado EN VIVO** (en rama `recover-inbox-drafts`): SSH (`passwordauthentication no`,
+  `permitrootlogin no`, `allowusers laia-arch`) y UFW (default deny incoming, solo LAN+tailscale+puentes;
+  nada expuesto a internet) ya aplicados. Reboot del host confirmado (kernel `7.0.0-22`). Docs de
+  seguridad (`security.md` + plan) actualizados.
+- **Higiene git**: 5 ramas `wip/*` totalmente mergeadas archivadas (bundle en
+  `~/archive/merged-wip-branches-2026-06-01.bundle`) y borradas local+remoto; worktrees `c3`/`d1-tests`
+  desregistrados (carpetas preservadas).
+
+**Abierto / siguiente**: **ventana de cutover v1→v2 (Fase 2, HITL Jorge+Lead)** — único bloqueante real
+que queda para v2 en prod. Opcional (decisión de Jorge, no bloqueante): rotación precautoria de tokens
++ password admin Nextcloud (P0.4). Fase 1 DoD pendiente solo de su validación end-to-end en la VM.
+
 ## 2026-06-01 — Sesión Lead: merges #40/#41, validación en VM, review #39, ops servidor (claude-a)
 
 Coordinación y cierre de los dos primeros tracks del roadmap V2. **No se tocó prod** (el cutover
