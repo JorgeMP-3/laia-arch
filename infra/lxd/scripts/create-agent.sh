@@ -38,7 +38,6 @@ CONTAINER="${AGENT_CONTAINER_PREFIX:-agent-}${SLUG}"
 PROFILE="${PROFILE:-laia-employee}"
 API_PORT="${API_PORT:-9091}"
 HOST_USER_ROOT="${HOST_USER_ROOT:-/srv/laia/users}"
-LXD_UID_OFFSET="${LXD_UID_OFFSET:-100000}"
 
 if ! [[ "$SLUG" =~ ^[a-z0-9][a-z0-9_-]{1,30}$ ]]; then
   echo "Invalid slug: $SLUG (must match ^[a-z0-9][a-z0-9_-]{1,30}$ — letters, digits, '_' or '-')" >&2
@@ -75,10 +74,14 @@ if [[ ! -d "$USER_DIR" ]]; then
   fi
   echo "Creating host data dirs under $USER_DIR ..."
   mkdir -p "$USER_DIR/home" "$USER_DIR/plugins" "$USER_DIR/workspace"
-  # LXD unprivileged root inside container maps to uid LXD_UID_OFFSET on the host
-  # (default 100000). Owning the bind sources with that uid lets the in-container
-  # user write freely.
-  chown -R "${LXD_UID_OFFSET}:${LXD_UID_OFFSET}" "$USER_DIR"
+  # The bind-mount disk devices below are attached with shift=true (idmapped
+  # mounts), so LXD maps the host owner through the container's idmap on the fly:
+  # dirs owned by host root (0) — as created here by this root-run script — appear
+  # as root inside the container and are writable by the executor (which runs as
+  # root in the container). We deliberately do NOT chown to a guessed host uid
+  # offset: a hardcoded offset (100000) that did not match this LXD's real idmap
+  # base (1000000) silently broke writability and stopped tool-calls landing in
+  # the user's data zone (see problems.md: user-data-zone-not-writable-idmap-mismatch).
   chmod -R 0755 "$USER_DIR"
 fi
 
@@ -96,13 +99,16 @@ lxc init "$IMAGE" "$CONTAINER" -p default -p "$PROFILE"
 echo "Attaching bind mounts ..."
 lxc config device add "$CONTAINER" home disk \
     source="${USER_DIR}/home" \
-    path=/home/user
+    path=/home/user \
+    shift=true
 lxc config device add "$CONTAINER" plugins disk \
     source="${USER_DIR}/plugins" \
-    path=/opt/laia/plugins
+    path=/opt/laia/plugins \
+    shift=true
 lxc config device add "$CONTAINER" workspace disk \
     source="${USER_DIR}/workspace" \
-    path=/var/lib/laia/workspace
+    path=/var/lib/laia/workspace \
+    shift=true
 
 echo "Starting $CONTAINER ..."
 lxc start "$CONTAINER"
