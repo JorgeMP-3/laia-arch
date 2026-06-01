@@ -41,6 +41,7 @@ Detalle de la mentalidad y cuándo subir/bajar el rigor: `workflow/ai-mindset.md
 - Trabaja en branch `wip/<agente>/<tarea>` (nunca commits directos a `main`). Conventional Commits.
 - Reutiliza lo que existe (código, skills, utilidades) antes de crear nuevo.
 - Al cerrar turno, actualiza lo que aplique: `workflow/changelog.md` (cambio material), `workflow/problems.md` (bug descubierto), `workflow/security.md` (credenciales/permisos/red/secrets).
+- **Handoffs y artefactos de trabajo van al REPO, nunca a `/tmp`.** El doc de handoff consolidado se guarda en `workflow/handoffs/<fecha>-<agente>.md` (no en el dir temporal del OS — es efímero y se pierde). Esto **override** el default de la skill `handoff`. El handoff canónico sigue siendo la memoria en git (`changelog.md`/`problems.md`/`security.md`); el doc en `handoffs/` es el resumen complementario.
 
 ### Pregunta primero
 - Acciones destructivas o difíciles de revertir: `push --force`, `reset --hard`, `clean -fd`, `rm -rf`, drop/reset de `agora.db`/`workspace.db`.
