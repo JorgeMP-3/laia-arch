@@ -309,36 +309,33 @@ class AgentOrchestrator:
         return self._exec_python(slug, script, timeout=30)
 
     def get_agent_status(self, slug: str) -> dict:
-        """Get agent runtime status from inside the container."""
+        """Get the user container's runtime status.
+
+        Centralized-brain model: the per-container runtime is the thin executor, so
+        health = ``laia-executor.service`` active + its ``/health`` endpoint responding
+        on port 9091. The old per-container brain artifacts (``laia-agent.service``,
+        ``/opt/laia/healthcheck.sh``, ``/opt/laia/data/status.json``) were archived in
+        commit 64ba0c2e.
+        """
         self._validate_slug(slug)
         container = self._container_for_slug(slug)
         health = subprocess.run(
-            ["lxc", "exec", container, "--", "/opt/laia/healthcheck.sh"],
-            capture_output=True, text=True, timeout=15,
-        )
-        status_json = subprocess.run(
             ["lxc", "exec", container, "--",
-             "cat", "/opt/laia/data/status.json"],
-            capture_output=True, text=True, timeout=10,
+             "curl", "-sf", "--max-time", "5", "http://localhost:9091/health"],
+            capture_output=True, text=True, timeout=15,
         )
         service = subprocess.run(
             ["lxc", "exec", container, "--",
-             "systemctl", "is-active", "laia-agent.service"],
+             "systemctl", "is-active", "laia-executor.service"],
             capture_output=True, text=True, timeout=10,
         )
-        status_data = {}
-        if status_json.returncode == 0:
-            try:
-                status_data = json.loads(status_json.stdout)
-            except json.JSONDecodeError:
-                pass
         lxd = self._lxd_live()
         live = lxd.get(container, {})
         return {
             "ok": health.returncode == 0,
             "slug": slug,
             "container": container,
-            "runtime": status_data.get("status", "unknown"),
+            "runtime": "laia-executor",
             "healthcheck": health.stdout.strip(),
             "lxd_state": live.get("state", "unknown"),
             "ipv4": live.get("ipv4", ""),

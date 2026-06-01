@@ -117,9 +117,9 @@ def build_parser() -> argparse.ArgumentParser:
     upgrade.set_defaults(func=cmd_upgrade_all)
 
     for cmd_name, help_text, action_slug in (
-        ("restart-agent", "Restart laia-agent.service inside one container", "restart"),
-        ("stop-agent", "Stop laia-agent.service inside one container", "stop"),
-        ("start-agent", "Start laia-agent.service inside one container", "start"),
+        ("restart-agent", "Restart laia-executor.service inside one container", "restart"),
+        ("stop-agent", "Stop laia-executor.service inside one container", "stop"),
+        ("start-agent", "Start laia-executor.service inside one container", "start"),
         ("agent-status", "Show runtime status and recent logs", "status"),
     ):
         item = sub.add_parser(cmd_name, help=help_text)
@@ -177,7 +177,7 @@ def cmd_create_agent(args: argparse.Namespace, paths: config.Paths) -> int:
                 "image": args.image,
                 "snapshot": args.snapshot,
                 "status": "verified",
-                "workspace": "/opt/laia/workspaces/personal/workspace.db",
+                "workspace": "/var/lib/laia/workspace/workspace.db",
             },
         )
     return verify.returncode
@@ -193,10 +193,10 @@ def cmd_install_agent_runtime(args: argparse.Namespace, paths: config.Paths) -> 
             {
                 "slug": args.slug,
                 "container": lxd.container_name(args.slug),
-                "status": "runtime-installed",
-                "runtime": "laia-runtime",
-                "service": "laia-agent.service",
-                "workspace": "/opt/laia/workspaces/personal/workspace.db",
+                "status": "executor-ready",
+                "runtime": "laia-executor",
+                "service": "laia-executor.service",
+                "workspace": "/var/lib/laia/workspace/workspace.db",
             },
         )
     return result.returncode
@@ -213,7 +213,7 @@ def cmd_init_agent_workspace(args: argparse.Namespace, paths: config.Paths) -> i
                 "slug": args.slug,
                 "container": lxd.container_name(args.slug),
                 "workspace_status": "initialized",
-                "workspace": "/opt/laia/workspaces/personal/workspace.db",
+                "workspace": "/var/lib/laia/workspace/workspace.db",
             },
         )
     return result.returncode
@@ -292,7 +292,7 @@ def cmd_verify_agent(args: argparse.Namespace, paths: config.Paths) -> int:
                 "slug": args.slug,
                 "container": lxd.container_name(args.slug),
                 "status": "verified",
-                "workspace": "/opt/laia/workspaces/personal/workspace.db",
+                "workspace": "/var/lib/laia/workspace/workspace.db",
             },
         )
     return result.returncode
@@ -330,10 +330,10 @@ def cmd_fleet_status(_args: argparse.Namespace, _paths: config.Paths) -> int:
     if not rows:
         print("No LAIA agent containers found.")
         return 0
-    print(f"{'SLUG':12s} {'CONTAINER':18s} {'LXD':10s} {'IP':14s} {'SERVICE':10s} {'RUNTIME':12s} {'VERSION'}")
-    print("-" * 90)
+    print(f"{'SLUG':12s} {'CONTAINER':18s} {'LXD':10s} {'IP':14s} {'EXECUTOR':10s} {'HEALTH'}")
+    print("-" * 80)
     for r in rows:
-        print(f"{r['slug']:12s} {r['container']:18s} {r['lxd_state']:10s} {r['ipv4']:14s} {r['service']:10s} {r['runtime_status']:12s} {r.get('version', ''):10s}")
+        print(f"{r['slug']:12s} {r['container']:18s} {r['lxd_state']:10s} {r['ipv4']:14s} {r['service']:10s} {r.get('health', ''):10s}")
     return 0
 
 
