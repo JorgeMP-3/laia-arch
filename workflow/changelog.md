@@ -30,6 +30,47 @@ Formato:
   helper portable de `.laia-core` para correr en worktrees con `LAIA_ROOT`.
 - Verificado: `LAIA_ROOT=/home/laia-arch/LAIA pytest services/agora-backend/tests -v` →
   **368 passed, 0 skipped**, 7 warnings existentes de Starlette `TestClient(timeout=...)`.
+## 2026-06-01 — Track T: suite de integridad completa (T3/T4/T5/T6/T-DOC sobre el cimiento de Codex) (claude-b)
+
+FASE 4 · Track T. Extiende la suite de integridad sobre lo ya hecho (T1 en `main`,
+T2/T5-cutover/T6-backup de Codex), sin tocar prod ni código de producción.
+
+**Adoptado de Codex** (`wip/codex/regression-t2`, rebaseado sobre `main`): runner T1 +
+contratos por capa T2 (host, lxd, agora, executor, data 2-zonas, atlas), helper
+`integrity_shell.sh` (skip explícito `exit 77`), regresión del outage del cutover, y el
+contrato de backups por fixture.
+
+**Añadido por claude-b**:
+- **T-DOC** — gate de docstrings en inglés (`lib/check_docstrings.py`, stdlib/AST, cero
+  deps) con patrón baseline/ratchet: verde ya (497 gaps pre-existentes registrados), falla
+  solo ante API pública nueva sin docstring EN. Self-test + gate real en `unit/docs`.
+  Enchufado en CI con un job `integrity` nuevo (`run_integrity.sh --profile ci`) que cierra
+  el gap de que el subset CI-safe nunca corría en CI.
+- **T4** — reconciliador de consistencia cruzada DB↔FS↔containers en ambos sentidos
+  (`lib/reconcile.py`): unit con fixture (CI) + integración en vivo (VM, skip limpio si
+  `agora.db` idmap-shifted).
+- **T5 (resto)** — guard por cada bug `resolved` de `problems.md` + matriz de cobertura
+  (`regression/README.md`, sin silent gaps). Nuevo guard de rutas hardcodeadas del backend.
+  Registrado el bug abierto §6 `backup-timer-runs-as-laia-arch-cannot-read-agora` en
+  `problems.md` con guard listo (SKIP loud hoy, vira a PASS al arreglar la plantilla — fix
+  de producción, coordinado con Codex/Lead).
+- **T3** — e2e camino dorado (`e2e/golden`): provisionar → tool-call en el container del
+  usuario (vía executor `:9091 /exec`, verificado en su zona de datos) → desprovisionar sin
+  residuo LXD. VM-only.
+- **T6** — smoke de carga (`e2e/load`): N agentes concurrentes con aserción de headroom de
+  RAM/disco. VM-only.
+- Los e2e destructivos van **doble-blindados** (profile `vm` + `LAIA_E2E_ALLOW_DESTRUCTIVE=1`)
+  para no tocar prod jamás.
+
+**Validado**: `run_integrity.sh --profile ci` → 5 pass, 12 skip (todos con motivo), exit 0;
+`py_compile` + `bash -n` sobre todo lo nuevo; gates T-DOC/T4 self-test verdes. Los con-LXD
+(T2/T3/T4-live/T6) quedan pendientes de corrida en la VM `laia-dev` (no accesible desde esta
+sesión). **PR contra `main`** (lo mergea Jorge).
+
+> ⚠️ Coordinación: por un HEAD compartido en `~/LAIA` con otros agentes, el primer commit de
+> T-DOC aterrizó por accidente en `wip/minimax/docs-and-qa` (`b232acb0`). Reconstruido
+> correctamente en un worktree aislado (`wip/claude-b/integrity-suite`). Ver nota en
+> `workflow/_inbox/`.
 
 ## 2026-05-31 — Rediseño + re-test del cutover v1→v2 (los 4 bugs del outage, arreglados) (claude opus 4.8)
 
