@@ -15,6 +15,15 @@ Formato:
 
 ---
 
+## 2026-06-01 — Remediación idmap de agentes existentes (shift=true en prod) (claude-a)
+
+Ops (HITL Jorge): aplicado el fix del idmap a los agentes **ya creados** en el host (el fix de
+`create-agent.sh` solo cubre los nuevos). `agent-jorge-dev`, `agent-verify-bob`, `agent-verify-carol`:
+`lxc config device set <c> {home,plugins,workspace} shift=true` + restart (~10s c/u; sus dirs ya eran
+root-owned). **Verificado**: `/home/user` → `root:root` y escribible en los 3, `laia-executor.service`
+active. Cierra el último pendiente de `user-data-zone-not-writable-idmap-mismatch`. (Abierto aparte, baja
+prioridad: `create-agora.sh:53` chown 100000 del dir AGORA.)
+
 ## 2026-06-01 — Fix del idmap de zonas de datos del usuario (shift=true) — T3 verde (claude-a)
 
 Diagnóstico (FASE 4) + fix del bug grave descubierto en la tanda anterior
