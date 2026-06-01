@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Regenera scripts/INDEX.md desde scripts globales y workspaces/{ws}/code/scripts/.
+# Regenerates scripts/INDEX.md from global scripts and workspaces/{ws}/code/scripts/.
 
 from __future__ import annotations
 
@@ -95,7 +95,7 @@ def scan_workspace_scripts(ws_name: str) -> list[tuple[str, str]]:
 
 
 def render_section(name: str, entries: list[tuple[str, str]], empty_label: str) -> list[str]:
-    lines = [f"## {name}", "", "| Script | Descripción |", "|--------|-------------|"]
+    lines = [f"## {name}", "", "| Script | Description |", "|--------|-------------|"]
     if entries:
         for rel_path, description in entries:
             safe_description = description.replace("|", "\\|")

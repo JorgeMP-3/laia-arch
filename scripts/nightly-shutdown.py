@@ -106,11 +106,11 @@ def sync_workspaces() -> dict:
 
 
 def set_rtc_wake() -> bool:
-    """Programa el RTC para despertar a WAKE_HOUR:WAKE_MINUTE mañana."""
+    """Program the RTC to wake up at WAKE_HOUR:WAKE_MINUTE tomorrow."""
     try:
         import math
         now = datetime.now()
-        # Calcular timestamp de la próxima ocurrencia de WAKE_HOUR:WAKE_MINUTE
+        # Calculate timestamp for the next occurrence of WAKE_HOUR:WAKE_MINUTE
         from datetime import timedelta
         wake = now.replace(hour=WAKE_HOUR, minute=WAKE_MINUTE, second=0, microsecond=0)
         if wake <= now:

@@ -36,7 +36,7 @@ LAIA_ROOT = laia_root()
 WORKSPACES_DIR = workspaces_dir()
 INIT_SCRIPT = LAIA_ROOT / "scripts" / "init-workspace-git.sh"
 
-# Workspaces cuyo código vive fuera de su propia carpeta workspaces/X/code/
+# Workspaces whose code lives outside their own workspaces/X/code/ folder
 EXCLUDED_WORKSPACES = {"laia-arch"}
 
 # ─── WorkspaceGitManager ──────────────────────────────────────────────────────

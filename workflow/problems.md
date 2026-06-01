@@ -399,3 +399,39 @@ añade una línea `- **Resuelto**: 2026-MM-DD en commit <hash>`.
 - **Workaround**: dejar todo en default y rezar.
 - **Owner**: sin asignar.
 - **Estado**: open.
+
+---
+
+## monitor-dead-code-if-not-true (open)
+
+- **Descubierto**: 2026-06-01 por minimax (QA).
+- **Síntoma**: FleetMonitor checks never run — `if not True: continue` at line 74 makes entire for-loop body unreachable. Monitor is completely ineffective.
+- **Causa raíz sospechada**: leftover debug guard that should have been removed.
+- **Reproducción**: `services/agora-backend/app/monitor.py:74` — `if not True:` is always False, so `continue` executes every iteration, skipping all agent checks.
+- **Workaround**: none — monitoring silently does nothing.
+- **Owner**: sin asignar (suggest Codex or Claude-a).
+- **Estado**: open.
+
+---
+
+## main-websocket-silent-exceptions (open)
+
+- **Descubierto**: 2026-06-01 por minimax (QA).
+- **Síntoma**: WebSocket `_push()` task (main.py:1601-1603) has bare `except Exception: pass` and `except WebSocketDisconnect: pass` — all exceptions silently swallowed. Clients can hang with no error feedback.
+- **Causa raíz sospechada**: missing error handling/logging in async WebSocket handler.
+- **Reproducción**: cause a WebSocket error during push — no exception raised, no log entry.
+- **Workaround**: none — failures invisible to operators.
+- **Owner**: sin asignar (suggest Codex).
+- **Estado**: open.
+
+---
+
+## main-config-cache-silent-exceptions (open)
+
+- **Descubierto**: 2026-06-01 por minimax (QA).
+- **Síntoma**: Lines 226-232 in main.py have empty `try` blocks with `pass` — silently swallows any exception when clearing `_LOAD_CONFIG_CACHE`. Import failures or attribute errors are masked.
+- **Causa raíz sospechada**: error masking during config cache invalidation at startup.
+- **Reproducción**: corrupt the cached config or cause an import error — no exception surfaces.
+- **Workaround**: none — startup failures hidden.
+- **Owner**: sin asignar (suggest Codex).
+- **Estado**: open.

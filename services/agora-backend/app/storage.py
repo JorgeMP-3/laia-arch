@@ -214,11 +214,11 @@ class AgoraStore:
             )
             self.db.conn.commit()
 
-        # LAIA coordinator — siempre presente, también en DBs migradas.
-        # Sin agent_id → no provisiona container; vive dentro de
-        # laia-agora. role=agora_admin para que sus tools internos
-        # puedan leer events/users; el endpoint /api/laia/chat valida
-        # que solo admins puedan dirigirse a ella.
+        # LAIA coordinator — always present, even in migrated DBs.
+        # No agent_id → does not provision a container; lives inside
+        # laia-agora. role=agora_admin so internal tools can read
+        # events/users; /api/laia/chat endpoint validates that only
+        # admins can send messages to it.
         existing = self.db.conn.execute(
             "SELECT 1 FROM users WHERE id = ?", (LAIA_USER_ID,),
         ).fetchone()

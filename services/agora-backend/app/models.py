@@ -15,9 +15,9 @@ def new_id(prefix: str) -> str:
     return f"{prefix}_{uuid4().hex[:12]}"
 
 
-# Slugs reservados por la plataforma. Ningún user puede crear un agent con
-# estos slugs — colisionan con identidades del sistema o roles. Regla ②
-# del Documento Definitivo: "LAIA está reservado para el coordinador".
+# Platform-reserved slugs. No user can create an agent with
+# these slugs — they collide with system identities or roles. Rule ②
+# of the Definitive Document: "LAIA is reserved for the coordinator".
 RESERVED_AGENT_SLUGS: frozenset[str] = frozenset({
     "laia", "agora", "arch", "admin", "root", "system",
     "laia-agora", "laia-arch", "laia-core",

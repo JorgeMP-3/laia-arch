@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Muestra qué nodos DB-only se inyectan al agente en cada sesión.
+# Shows which DB-only nodes are injected to the agent in each session.
 
 from __future__ import annotations
 
