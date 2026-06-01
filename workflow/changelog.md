@@ -15,6 +15,32 @@ Formato:
 
 ---
 
+## 2026-06-01 — Tooling laiactl reconciliado al cerebro centralizado + bug grave de idmap descubierto (claude-a)
+
+Corriendo los e2e destructivos **T3/T6 en la VM `laia-dev`** (que nunca se habían ejecutado). Hallazgos:
+
+- **Los tests NO estaban rotos por el ecosistema** — el tooling `laiactl` estaba stale tras 64ba0c2e
+  (cerebro central + ejecutor fino). `create-agent` salía exit 4 y `install-agent-runtime`/`provision-agent`
+  fallaban ("Runtime source not found: services/laia-runtime", archivado). Esto **rompía el alta de
+  usuarios vía agora-backend** (llama a install-agent-runtime) además de los tests.
+- **FIX** (`wip/claude-a/fix-laiactl-centralized-brain`, PR): install-runtime/init-workspace/init-profile →
+  no-op que verifican el ejecutor; verify/status/control/fleet + agora-backend `get_agent_status` →
+  `laia-executor.service` + `/health` 9091; eliminado `agent_runtime_root`; helpers muertos fuera.
+  **Validado: T6 load_smoke PASS** en la VM (antes FAIL). `cutover_migration_regression` sigue PASS.
+- **🔴 BUG GRAVE descubierto por T3** (`problems.md` → `user-data-zone-not-writable-idmap-mismatch`):
+  el ejecutor **no puede escribir en las zonas de datos del usuario** (home/workspace/plugins) — aparecen
+  como `nobody:nogroup` dentro del container por **mismatch de idmap** (container uid 0 → host 1000000,
+  pero los dirs son del host 0/100000). **Confirmado en el agente de PROD real**, no solo la VM (el
+  `workspace.db` de prod nunca se creó). Es la propiedad central de §4 (acciones aterrizan en la oficina
+  del usuario). Pre-prod sin usuarios → no detectado antes. **Escalado a Jorge** (idmap = prod-risk,
+  mismo dominio que el outage del cutover). NO se toca a ciegas.
+- Deuda separada anotada: `set-agent-persona/instructions/skill` + `get/update_profile` de agora-backend
+  siguen contra el runtime archivado → reescribir contra `agora.db`.
+
+**Siguiente**: decidir con Jorge el fix del idmap (¿`shift=true` en los disk devices / owner del dir a
+host-1000000 / `raw.idmap`?) — es lo que de verdad falta para que un usuario use su agente. La ventana de
+cutover (Fase 2) sigue siendo el hito de migración.
+
 ## 2026-06-01 — Fase 1 pre-prod cerrada + verificación de hardening P0 en vivo (claude-a)
 
 Auditoría y cierre de la **Fase 1** del roadmap a producción (`_inbox/roadmap-v2-to-production.md`).

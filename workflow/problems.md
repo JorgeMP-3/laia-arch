@@ -30,6 +30,46 @@ añade una línea `- **Resuelto**: 2026-MM-DD en commit <hash>`.
 
 ---
 
+## user-data-zone-not-writable-idmap-mismatch (open)
+
+- **Descubierto**: 2026-06-01 por claude-a (Lead), al correr el e2e T3 golden-path tras arreglar el tooling.
+- **Síntoma**: en un container de usuario, el ejecutor (root en el container) **no puede escribir en
+  sus zonas de datos** (`/home/user`, `/var/lib/laia/workspace`, `/opt/laia/plugins`): `Permission
+  denied`. Dentro del container los tres bind-mounts aparecen como `nobody:nogroup` (65534). Confirmado
+  **en el agente de PROD real `agent-jorge-dev`** (host), no solo en la VM. Corrobora que el
+  `workspace.db` del agente de prod nunca se creó (dir vacío).
+- **Causa raíz sospechada**: **mismatch de idmap**. El container mapea uid 0 → host **1000000**
+  (`volatile.idmap.current` Hostid=1000000), pero los dirs `/srv/laia/users/<slug>/{home,workspace,plugins}`
+  son del host **0:0** (o 100000 en la VM) → caen fuera del rango idmap → `nobody` dentro → no escribibles.
+  Falta o bien `shift=true`/idmapped-mount en los `disk` devices, o bien que `create-agent.sh` cree los
+  dirs con el owner que mapea a root del container (host uid 1000000), o `raw.idmap`. Mismo dominio que
+  el outage del cutover (idmap/owner exactos).
+- **Reproducción**: `infra/laiactl create-agent t3x`; `curl -H "Authorization: Bearer <token>" -X POST
+  -d '{"tool":"bash","args":{"command":"echo hi > /home/user/x"},"request_id":"r"}' http://<ip>:9091/exec`
+  → `/exec` responde `ok:true` con stderr `Permission denied`; el fichero no aparece en
+  `/srv/laia/users/t3x/home/`. (Lo automatiza el e2e T3 `tests/integration/e2e/golden/test_golden_path_e2e.sh`.)
+- **Workaround**: ninguno. (Pre-prod: aún sin usuarios reales, por eso no se había detectado; sería
+  bloqueante en cuanto un usuario use su agente.)
+- **Owner**: sin asignar — **escalado a Jorge** (idmap = prod-risk, no tocar a ciegas; ver [[project-cutover-redesign]]).
+- **Estado**: open.
+
+## laiactl-tooling-stale-vs-centralized-brain (resolved)
+
+- **Descubierto**: 2026-06-01 por claude-a (Lead), al correr T3/T6.
+- **Síntoma**: `laiactl create-agent` salía exit 4; `install-agent-runtime`/`provision-agent` fallaban
+  ("Runtime source not found: services/laia-runtime"). Rompía el alta de usuarios vía agora-backend
+  (que llama a `install-agent-runtime`) y los e2e T3/T6.
+- **Causa raíz**: tras 64ba0c2e (cerebro central + ejecutor fino), el tooling seguía provisionando el
+  modelo viejo (`laia-agent.service`, `services/laia-runtime` archivado, venv `/opt/laia/runtime`).
+- **Reproducción**: `infra/laiactl provision-agent <slug>` → FAILED at step 'install-runtime'.
+- **Owner**: claude-a.
+- **Estado**: resolved.
+- **Resuelto**: 2026-06-01 en `wip/claude-a/fix-laiactl-centralized-brain` — install-runtime/init-workspace/
+  init-profile → no-op que verifican el ejecutor; verify/status/control/fleet + agora-backend
+  get_agent_status → `laia-executor.service` + `/health` 9091; eliminado `agent_runtime_root`. Validado:
+  **T6 load_smoke PASS** en la VM. (Deuda separada: comandos set-agent-persona/instructions/skill +
+  get/update_profile siguen contra el runtime archivado → reescribir contra `agora.db`.)
+
 ## ui-prod-layer-rota-v0.11.0-necesita-remake-v0.2.0 (open)
 
 - **Descubierto**: 2026-05-30 por claude opus 4.8 (Lead) + Jorge, al intentar abrir la consola admin para chatear.
