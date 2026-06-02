@@ -317,3 +317,36 @@ def test_session_id_defaults_to_user_scoped():
         user=user, agent=agent, message="m2", session_id=None,
     )))
     assert captured_sids[0] == captured_sids[1] == f"u-{user.id}"
+
+
+def test_budget_check_error_fails_closed(monkeypatch):
+    """Regresión (auditoría 2026-06-02): un error del storage en el pre-check
+    de budget se trataba como 'no excedido' (fail-open) — un error de infra
+    se convertía en gasto sin límite. Ahora el turno se rechaza."""
+    from app import storage as storage_mod
+
+    def _boom(_user_id):
+        raise RuntimeError("sqlite timeout")
+
+    monkeypatch.setattr(storage_mod.store, "budget_exceeded", _boom)
+    events = asyncio.run(_collect(chat_engine.chat_stream(
+        user=_build_user(), agent=_build_agent(), message="hola", session_id=None,
+    )))
+    assert len(events) == 1
+    assert events[0]["type"] == "error"
+    assert events[0]["code"] == "budget_check_failed"
+
+
+def test_budget_exceeded_rejects_turn(monkeypatch):
+    """Contrato: con el budget excedido, el turno no llega al LLM."""
+    from app import storage as storage_mod
+
+    monkeypatch.setattr(
+        storage_mod.store, "budget_exceeded", lambda _uid: (True, "daily cap"),
+    )
+    events = asyncio.run(_collect(chat_engine.chat_stream(
+        user=_build_user(), agent=_build_agent(), message="hola", session_id=None,
+    )))
+    assert len(events) == 1
+    assert events[0]["type"] == "error"
+    assert events[0]["code"] == "budget_exceeded"

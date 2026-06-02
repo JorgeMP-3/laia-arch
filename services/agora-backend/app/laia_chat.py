@@ -174,7 +174,12 @@ async def _stream(*, message: str, session_id: str | None,
                 ai.tool_complete_callback = lambda call_id, name, args, result: _push(
                     {"type": "tool", "name": name, "status": "complete"})
             except Exception:
-                pass  # placeholder agents have no slots
+                # Mismo criterio que chat_engine: perder el streaming es
+                # degradación silenciosa — que quede rastro en el log.
+                logger.warning(
+                    "laia-chat: callbacks de streaming no asignados (actor %s)",
+                    actor.id, exc_info=True,
+                )
             try:
                 result = ai.run_conversation(message)
             except Exception as exc:
@@ -187,7 +192,13 @@ async def _stream(*, message: str, session_id: str | None,
                     llm_config=cfg, run_output=result, kind="laia-chat",
                 )
             except Exception:
-                pass
+                # No abortamos el stream (la respuesta ya se generó), pero un
+                # fallo aquí es uso SIN facturar — revenue perdido en silencio
+                # si no se loguea. (Auditoría 2026-06-02.)
+                logger.exception(
+                    "laia-chat: record_usage_for_session falló — uso sin "
+                    "facturar (actor %s, session %s)", actor.id, sid,
+                )
             payload: dict[str, Any] = {"type": "done"}
             if isinstance(result, dict):
                 payload["response"] = result.get("response") or result.get("final_response") or ""
