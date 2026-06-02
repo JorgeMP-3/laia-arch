@@ -52,7 +52,6 @@ LAIA/
 │   └── pathd/               ← Path resolution daemon (Atlas v2)
 │
 ├── docs/                    ← Architecture docs and diagrams
-├── workflow/                ← Internal changelog, coordination, plans
 └── workspace_store/         ← Shared workspace library (SQLite + FTS5)
 ```
 
@@ -126,7 +125,7 @@ ls infra/                # installer, orchestrator, pathd
 | **LAIA Agent product** | [`.laia-core/README.md`](.laia-core/README.md) — install, features, quick start |
 | **Develop LAIA Agent** | [`.laia-core/CONTRIBUTING.md`](.laia-core/CONTRIBUTING.md) — dev setup, architecture, code style |
 | **Platform (AGORA) development** | [`services/agora-backend/`](services/agora-backend/) — FastAPI backend |
-| **Architecture & ADRs** | [`workflow/arch-layout.md`](workflow/arch-layout.md) — disk layout, migration contract |
+| **Architecture & ADRs** | `~/laia-developers/workflow-main/arch-layout.md` — disk layout, migration contract |
 | **System diagrams** | [`docs/map.svg`](docs/map.svg) — visual architecture |
 | **Auto-generated reference** | [`docs/db-export/`](docs/db-export/) — technical detail per subsystem (do not edit) |
 

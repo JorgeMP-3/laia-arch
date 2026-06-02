@@ -4,8 +4,8 @@
 > **dentro del host de producción** (`doyouwin-server`), con layout idéntico a prod, donde
 > se ensaya `laia-install` / `laia-release` / `laia-clone` sin tocar lo que da servicio.
 >
-> Corresponde al **slice B1** de [`workflow/plans/estabilizacion/slices.md`](../../workflow/plans/estabilizacion/slices.md)
-> y al módulo **M5** del [plan técnico](../../workflow/plans/estabilizacion/2026-05-29-estabilizacion-plan-tecnico.md).
+> Corresponde al **slice B1** de [`~/laia-developers/workflow-main/plans/estabilizacion/slices.md`](~/laia-developers/workflow-main/plans/estabilizacion/slices.md)
+> y al módulo **M5** del [plan técnico](~/laia-developers/workflow-main/plans/estabilizacion/2026-05-29-estabilizacion-plan-tecnico.md).
 > La migración del Bloque C (C3) se apoya en este documento.
 >
 > **Autor:** Coder-Opus (Claude Code) · **Fecha:** 2026-05-29 · **Host:** `doyouwin-server`

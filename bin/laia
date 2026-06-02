@@ -153,7 +153,7 @@ main() {
         >>"$log_dir/laia-wizard.log" 2>/dev/null || true
       # TTY reattach is owned by install.sh (curl|bash hand-off) plus
       # __main__._reattach_tty() (last line of defense). NEVER add another
-      # /dev/tty redirect here — see workflow/problems.md::wizard-clone-tty.
+      # /dev/tty redirect here — see ~/laia-developers/workflow-main/problems.md::wizard-clone-tty.
       if [[ "$sub" == "wizard" ]]; then
         exec "$py" -m laia_cli.install_wizard "$@"
       else

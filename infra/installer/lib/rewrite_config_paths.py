@@ -29,7 +29,7 @@ def rewrite(text: str, live: str) -> str:
     #   - OPERATIONAL runtime state (state_db, response_store) → /srv/laia/arch,
     #     the ARCH runtime home, alongside config.yaml/.env.paths/state.
     # This reverses the earlier T.14.1 decision (everything → LAIA_HOME), which
-    # the 2026-05-29 v2 lock superseded — see workflow/arch-data-layout.md.
+    # the 2026-05-29 v2 lock superseded — see ~/laia-developers/workflow-main/arch-data-layout.md.
     arch = "/srv/laia/arch"
     key_value = {
         "laia_root":         "/opt/laia",
