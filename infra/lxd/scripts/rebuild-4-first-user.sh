@@ -256,7 +256,8 @@ cat > "$USER_STATE" <<EOF
   "laia_root": "$REPO"
 }
 EOF
-chmod 0644 "$USER_STATE"
+# 0600: el state lleva password y api_token del usuario.
+chmod 0600 "$USER_STATE"
 chown "$ORIG_USER:$(id -gn "$ORIG_USER")" "$USER_STATE" 2>/dev/null || true
 ok "state guardado en $USER_STATE"
 

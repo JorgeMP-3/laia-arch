@@ -224,7 +224,9 @@ cat > "$STATE_FILE" <<EOF
   "api_url": "http://${CONTAINER_IP}:${CONTAINER_PORT}"
 }
 EOF
-chmod 0644 "$STATE_FILE"
+# 0600: vive en el mismo STATE_DIR que los state per-user (que llevan
+# api_token/password); el chown deja al operador como único lector.
+chmod 0600 "$STATE_FILE"
 chown "$ORIG_USER:$(id -gn "$ORIG_USER")" "$STATE_FILE" 2>/dev/null || true
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -245,6 +247,9 @@ if (( ${#USER_STATE_FILES[@]} > 0 )); then
     tmp="$f.tmp.$$"
     if jq --arg url "$NEW_AGORA_URL" '.agora_api_url = $url' "$f" > "$tmp" 2>/dev/null; then
       mv "$tmp" "$f"
+      # El tmp nace con el umask de root (≈0644) y el mv lo arrastra:
+      # re-aplicar 0600 — estos files llevan api_token y password.
+      chmod 0600 "$f"
       chown "$ORIG_USER:$(id -gn "$ORIG_USER")" "$f" 2>/dev/null || true
       ok "$(basename "$f") → $NEW_AGORA_URL"
     else
