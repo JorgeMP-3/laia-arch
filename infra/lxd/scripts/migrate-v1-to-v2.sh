@@ -4,7 +4,7 @@
 # runtime, /srv/laia/arch/secrets for credentials, read by laia-agora via the
 # C2 raw.idmap mount). Slice C3 · module M6 · decision T2.
 #
-# Design contract (see workflow/plans/estabilizacion/ T2 and slices.md C3):
+# Design contract (see ~/laia-developers/workflow-main/plans/estabilizacion/ T2 and slices.md C3):
 #   1. BACKUP one-shot first (tar of /srv/laia + ~/.laia + ~/LAIA-ARCH to
 #      $BACKUP_ROOT; optional `lxc snapshot` when run inside the dev VM).
 #   2. Create /srv/laia/arch{,/secrets} with perms (laia-arch:laia-arch 0750;

@@ -6,7 +6,7 @@
 |---|---|
 | [LAIA_ECOSYSTEM.md](../LAIA_ECOSYSTEM.md) | Canonical vision — what LAIA is, the three entities, the hard rules, the roadmap |
 | [System map](map.svg) | Visual architecture diagram — hosts, containers, data flows |
-| [Disk layout & migration](../workflow/arch-layout.md) | Where everything lives on disk (`/opt`, `/srv`, `~/.laia`), permissions, the `laia-clone` contract |
+| [Disk layout & migration](~/laia-developers/workflow-main/arch-layout.md) | Where everything lives on disk (`/opt`, `/srv`, `~/.laia`), permissions, the `laia-clone` contract |
 
 ## For Contributors
 
@@ -14,7 +14,7 @@
 |---|---|
 | [LAIA Agent README](../.laia-core/README.md) | Product overview — what LAIA Agent is, install, quick start, features |
 | [LAIA Agent CONTRIBUTING](../.laia-core/CONTRIBUTING.md) | Dev setup, architecture overview, code style, testing, adding tools/skills |
-| [Project map](../workflow/project-map.md) | Full filesystem map of the repo — every directory, every binary, what each file does |
+| [Project map](~/laia-developers/workflow-main/project-map.md) | Full filesystem map of the repo — every directory, every binary, what each file does |
 
 ## Reference
 
@@ -31,6 +31,6 @@ These documents are for the development team:
 | Document | What it covers |
 |---|---|
 | [AGENTS.md](../AGENTS.md) | Entry point for AI assistants working in this repo |
-| [workflow/changelog.md](../workflow/changelog.md) | Material changes log |
-| [workflow/problems.md](../workflow/problems.md) | Known bugs and their status |
-| [workflow/security.md](../workflow/security.md) | Security findings and actions |
+| [workflow-main/changelog.md](~/laia-developers/workflow-main/changelog.md) | Material changes log |
+| [workflow-main/problems.md](~/laia-developers/workflow-main/problems.md) | Known bugs and their status |
+| [workflow-main/security.md](~/laia-developers/workflow-main/security.md) | Security findings and actions |

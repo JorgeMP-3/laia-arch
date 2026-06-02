@@ -1,6 +1,6 @@
 # Regresión de bugs (Track T · T5)
 
-Por cada bug `resolved` de `workflow/problems.md` debe existir **un test que lo
+Por cada bug `resolved` de `~/laia-developers/workflow-main/problems.md` debe existir **un test que lo
 fije** (que no vuelva nunca). Esta tabla es la matriz de cobertura: ningún bug
 resuelto queda sin guard, y los gaps (bugs aún abiertos, o cubiertos fuera de
 esta carpeta) están **documentados, no silenciados**.
