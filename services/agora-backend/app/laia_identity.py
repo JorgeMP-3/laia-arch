@@ -16,7 +16,10 @@ from __future__ import annotations
 LAIA_USER_ID = "user_laia"
 LAIA_USERNAME = "laia"
 LAIA_DISPLAY_NAME = "LAIA"
-LAIA_TOKEN = "laia-coordinator-token"
+
+# LAIA_TOKEN eliminado (2026-06-02): era un bearer agora_admin estático y
+# público en el repo, sin ningún consumidor en el código. El seed genera
+# ahora un token aleatorio por instalación (storage._ensure_seed_data).
 
 
 LAIA_SOUL = """\
