@@ -13,6 +13,10 @@ TS=$(date +%Y%m%d-%H%M%S)
 STATE_SRC="${LAIA_STATE_ROOT:-${LAIA_ROOT}/.laia/state}"
 AGORA_DATA="${AGORA_DATA_DIR:-/srv/laia/agora}"
 
+# Sin esto, el primer cp/tar falla contra un destino inexistente
+# (/srv/laia/backups no se crea en ningún otro sitio).
+mkdir -p "${BACKUP_ROOT}/state" "${BACKUP_ROOT}/workspace"
+
 # ── 1. State JSON ─────────────────────────────────────────────────────────────
 STATE_DST="${BACKUP_ROOT}/state/${TS}-agents.json"
 if [[ -f "${STATE_SRC}/agents.json" ]]; then
@@ -21,9 +25,27 @@ if [[ -f "${STATE_SRC}/agents.json" ]]; then
 fi
 
 # ── 2. AGORA data (users, tasks, events) ─────────────────────────────────────
+# Sin `|| true` ni `2>/dev/null`: si un paso falla, el script ABORTA (set -e)
+# con el error visible. Un backup que falla en silencio y reporta verde es
+# exactamente el patrón del outage del cutover 2026-05-30.
 if [[ -d "$AGORA_DATA" ]]; then
+  AGORA_DB="${AGORA_DATA}/agora.db"
+  if [[ -f "$AGORA_DB" ]]; then
+    command -v sqlite3 >/dev/null 2>&1 \
+      || { echo "ERROR: sqlite3 no instalado — copiar una SQLite EN USO sin .backup produce un artefacto corrupto." >&2; exit 1; }
+    DB_DST="${BACKUP_ROOT}/state/${TS}-agora.db"
+    # `.backup` = snapshot consistente de la DB en uso (incluye el -wal);
+    # un tar/cp del archivo vivo puede capturar media transacción.
+    sqlite3 -readonly "$AGORA_DB" ".timeout 5000" ".backup '$DB_DST'"
+    echo "  agoradb → $DB_DST"
+  fi
   AGORA_DST="${BACKUP_ROOT}/state/${TS}-agora-data.tar.gz"
-  tar -czf "$AGORA_DST" -C "$(dirname "$AGORA_DATA")" "$(basename "$AGORA_DATA")" 2>/dev/null || true
+  # El resto del dir, sin la DB viva ni sus journals (van aparte, arriba).
+  tar -czf "$AGORA_DST" -C "$(dirname "$AGORA_DATA")" \
+    --exclude="$(basename "$AGORA_DATA")/agora.db" \
+    --exclude="$(basename "$AGORA_DATA")/agora.db-wal" \
+    --exclude="$(basename "$AGORA_DATA")/agora.db-shm" \
+    "$(basename "$AGORA_DATA")"
   echo "  agora   → $AGORA_DST"
 fi
 
