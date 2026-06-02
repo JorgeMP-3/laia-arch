@@ -1,4 +1,7 @@
-fastapi>=0.115
-uvicorn[standard]>=0.30
-pydantic>=2.8
-httpx>=0.28
+# Política supply-chain (adoptada de Hermes upstream, 2026-06-02): toda dependencia
+# con cota superior (>=floor,<techo) — ver ~/laia-developers/AGENTS.md §Reglas de diseño.
+# fastapi/uvicorn/httpx: pre-1.0 con API estable → techo <1 (excepción reviewer).
+fastapi>=0.115,<1
+uvicorn[standard]>=0.30,<1
+pydantic>=2.8,<3
+httpx>=0.28,<1

@@ -5,4 +5,4 @@
 # the backend image build doesn't inherit GUI deps.
 textual>=0.80,<2
 httpx>=0.27,<1
-PyYAML>=6
+PyYAML>=6,<7
