@@ -1,0 +1,27 @@
+[Unit]
+Description=LAIA resource & host-invariant monitor (laia-resourced — v1: solo monitor+aviso, NO muta)
+Documentation=file://${LAIA_INSTALL_PREFIX}/infra/resourced/README.md
+After=network-online.target snap.lxd.daemon.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=${LAIA_USER}
+Group=${LAIA_USER}
+ExecStart=${LAIA_INSTALL_PREFIX}/infra/resourced/bin/laia-resourced --state-dir /srv/laia/state/resourced --tick 30s
+Restart=on-failure
+RestartSec=5
+Nice=10
+IOSchedulingClass=idle
+# Hardening: v1 NO muta nada — solo lee (/proc, nvidia-smi, socket LXD) y ESCRIBE
+# su estado en /srv/laia/state. Todo lo demás, read-only / sin acceso.
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/srv/laia/state
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
