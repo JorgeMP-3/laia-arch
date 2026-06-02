@@ -11,7 +11,7 @@
 ## Contexto del ecosistema
 
 **Canónico (visión): `LAIA_ECOSYSTEM.md`** (este repo) — **no se edita sin Jorge.**
-ANTES DE HACER NADA EN LAIA, léelo (o el resumen: `~/laia-developers/LAIA_ECOSYSTEM-primer.md`).
+ANTES DE HACER NADA EN LAIA, léelo (también accesible como `~/laia-developers/LAIA_ECOSYSTEM.md`, symlink auto-actualizado).
 
 ## Tracker e historia de LAIA → `~/laia-developers/workflow-main/`
 
