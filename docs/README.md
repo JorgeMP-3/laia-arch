@@ -31,6 +31,6 @@ These documents are for the development team:
 | Document | What it covers |
 |---|---|
 | [AGENTS.md](../AGENTS.md) | Entry point for AI assistants working in this repo |
-| [workflow-main/changelog.md](~/laia-developers/workflow-main/changelog.md) | Material changes log |
-| [workflow-main/problems.md](~/laia-developers/workflow-main/problems.md) | Known bugs and their status |
-| [workflow-main/security.md](~/laia-developers/workflow-main/security.md) | Security findings and actions |
+| [workflow-main/CHANGELOG.md](~/laia-developers/workflow-main/CHANGELOG.md) | Material changes log |
+| [workflow-main/PROBLEMS.md](~/laia-developers/workflow-main/PROBLEMS.md) | Known bugs and their status |
+| [workflow-main/SECURITY.md](~/laia-developers/workflow-main/SECURITY.md) | Security findings and actions |

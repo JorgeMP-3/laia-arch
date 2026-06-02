@@ -2,7 +2,7 @@
 # Verifies that when SSH key auth fails and no --ssh-pass-file was supplied,
 # laia-clone dies with a clear message and exit 3 — it MUST NOT fall back to
 # reading from /dev/tty (the old behavior crashed VMs running curl|sudo bash
-# with "/dev/tty: No such device or address"; see ~/laia-developers/workflow-main/problems.md::
+# with "/dev/tty: No such device or address"; see ~/laia-developers/workflow-main/PROBLEMS.md::
 # wizard-clone-tty).
 set -u
 
