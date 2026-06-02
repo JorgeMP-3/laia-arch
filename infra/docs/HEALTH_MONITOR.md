@@ -83,7 +83,7 @@ Requisitos para que el veredicto sea fiable en prod (ver caveats abajo):
 ## Caveats de D2 detectados en el ensayo (VM `laia-dev`, 2026-05-30)
 
 El monitor reporta **fielmente lo que dice D2**; D2 tiene supuestos de entorno que
-conviene conocer (registrados en `~/laia-developers/workflow-main/problems.md`):
+conviene conocer (registrados en `~/laia-developers/workflow-main/PROBLEMS.md`):
 
 1. **Privilegios LXD**: D2 hace `lxc list/info`. Si el usuario que lo corre no ve
    el container (no está en el grupo `lxd`), D2 marca "container no existe" →

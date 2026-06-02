@@ -11,14 +11,14 @@
 ## Contexto del ecosistema
 
 **Canónico (visión): `LAIA_ECOSYSTEM.md`** (este repo) — **no se edita sin Jorge.**
-ANTES DE HACER NADA EN LAIA, léelo (o el resumen: `~/laia-developers/LAIA_ECOSYSTEM-primer.md`).
+ANTES DE HACER NADA EN LAIA, léelo (también accesible como `~/laia-developers/LAIA_ECOSYSTEM.md`, symlink auto-actualizado).
 
 ## Tracker e historia de LAIA → `~/laia-developers/workflow-main/`
 
 El workflow de este proyecto vivía en `~/LAIA/workflow/` y se movió íntegro (2026-06-01):
 
-- Bugs → `problems.md` · Planes/PRDs → `plans/` · Bitácora → `changelog.md` · Seguridad →
-  `security.md` · Drafts → `_inbox/` · Handoffs → `handoffs/` · Índice → `00-start-here.md`.
+- Bugs → `PROBLEMS.md` · Planes/PRDs → `plans/` · Bitácora → `CHANGELOG.md` · Seguridad →
+  `SECURITY.md` · Drafts → `_inbox/` · Handoffs → `handoffs/` · Índice → `00-start-here.md`.
 - Flujo dev→test→prod explicado → `dev-workflow.md` · runbook de release → `release-flow.md`.
 - **Cierre de turno** (obligatorio): las entradas van a esos ficheros de `workflow-main`, no a `/tmp`.
 
