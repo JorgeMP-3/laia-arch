@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import time
 from pathlib import Path
 
@@ -88,3 +89,38 @@ def test_status_lookup_by_pid():
     st = _parse(process_tools.process_status(name_or_pid=str(pid)))
     assert st["ok"] is True
     assert st["process"]["pid"] == pid
+
+
+def _fds_pointing_to(path: Path) -> list[str]:
+    """fds of THIS process whose target is `path` (via /proc/self/fd)."""
+    held = []
+    for fd in os.listdir("/proc/self/fd"):
+        try:
+            target = os.readlink(f"/proc/self/fd/{fd}")
+        except OSError:
+            continue
+        if target == str(path):
+            held.append(fd)
+    return held
+
+
+def test_start_does_not_leak_parent_fd():
+    """Regresión (auditoría 2026-06-02, executor-log-fh-fd-leak): el padre
+    guardaba el fh del log abierto para siempre — un fd por process_start
+    hasta reventar `ulimit -n`. El hijo escribe por su PROPIO descriptor
+    (dup de Popen), así que el padre debe cerrar su copia tras el spawn."""
+    out = _parse(process_tools.process_start(command="echo captured", name="fdcheck"))
+    assert out["ok"] is True
+    log_path = Path(out["process"]["log_path"])
+
+    # El executor (este proceso) no retiene ningún fd hacia el log.
+    assert _fds_pointing_to(log_path) == []
+
+    # Y el output del hijo sigue llegando al log (no se perdió nada
+    # por cerrar la copia del padre).
+    deadline = time.time() + 5
+    while time.time() < deadline:
+        if log_path.exists() and "captured" in log_path.read_text():
+            break
+        time.sleep(0.05)
+    assert "captured" in log_path.read_text()
