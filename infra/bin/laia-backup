@@ -14,6 +14,29 @@ BACKUP_DIR="${LAIA_BACKUP_DIR:-/mnt/data/laia-backups}"
 TIMESTAMP=$(date +%Y%m%d-%H%M%S)
 RETENTION_DEFAULT_DAYS=14
 
+# Contador global de fallos: el script DEBE salir non-zero si algún paso
+# falló, o el timer de systemd reporta verde sobre un backup incompleto
+# (falso-verde — el mismo patrón del outage 2026-05-30).
+FAILURES=0
+fail() { echo -e "  ${RED}FAIL${RESET} $*"; FAILURES=$((FAILURES + 1)); }
+
+# _backup_sqlite <src.db> <out.db> — snapshot consistente de una DB EN USO.
+# `.backup` usa la API de backup de SQLite: incluye lo pendiente del -wal y
+# nunca captura media transacción. Un `cp` del archivo vivo puede salir
+# corrupto y pierde el WAL entero.
+_backup_sqlite() {
+    local src="$1" out="$2"
+    if ! command -v sqlite3 &>/dev/null; then
+        fail "$src (sqlite3 no instalado — un cp de la DB viva saldría corrupto)"
+        return 0
+    fi
+    if sqlite3 -readonly "$src" ".timeout 5000" ".backup '$out'"; then
+        echo -e "  ${GREEN}OK${RESET} $(basename "$out") ($(du -h "$out" | cut -f1))"
+    else
+        fail "$src"
+    fi
+}
+
 usage() {
     echo "uso: laia-backup <que>"
     echo ""
@@ -38,9 +61,7 @@ backup_agora() {
     echo -e "${BOLD}AGORA DB...${RESET}"
     local agora_db="${AGORA_DB:-${LAIA_AGORA_DIR_OVERRIDE:-/srv/laia/agora}/agora.db}"
     if [[ -f "$agora_db" ]]; then
-        cp "$agora_db" "$BACKUP_DIR/agora_${TIMESTAMP}.db" && \
-            echo -e "  ${GREEN}OK${RESET} agora_${TIMESTAMP}.db ($(du -h "$BACKUP_DIR/agora_${TIMESTAMP}.db" | cut -f1))" || \
-            echo -e "  ${RED}FAIL${RESET}"
+        _backup_sqlite "$agora_db" "$BACKUP_DIR/agora_${TIMESTAMP}.db"
     else
         echo -e "  ${DIM}no encontrado: $agora_db${RESET}"
     fi
@@ -52,10 +73,11 @@ _backup_tree() {
     echo -e "${BOLD}${label}...${RESET}"
     if [[ -d "$src" ]]; then
         local out="$BACKUP_DIR/${prefix}_${TIMESTAMP}.tar.gz"
-        if tar -czf "$out" -C "$(dirname "$src")" "$(basename "$src")" 2>/dev/null; then
+        # Sin 2>/dev/null: el porqué de un fallo tiene que llegar al journal.
+        if tar -czf "$out" -C "$(dirname "$src")" "$(basename "$src")"; then
             echo -e "  ${GREEN}OK${RESET} ${prefix}_${TIMESTAMP}.tar.gz ($(du -h "$out" | cut -f1))"
         else
-            echo -e "  ${RED}FAIL${RESET} $src"
+            fail "$src"
         fi
     else
         echo -e "  ${DIM}no encontrado: $src${RESET}"
@@ -74,9 +96,7 @@ backup_workspaces() {
         local ws_name; ws_name=$(basename "$ws_dir")
         local db="$ws_dir/workspace.db"
         if [[ -f "$db" ]]; then
-            cp "$db" "$BACKUP_DIR/${ws_name}_${TIMESTAMP}.db" && \
-                echo -e "  ${GREEN}OK${RESET} $ws_name" || \
-                echo -e "  ${RED}FAIL${RESET} $ws_name"
+            _backup_sqlite "$db" "$BACKUP_DIR/${ws_name}_${TIMESTAMP}.db"
         fi
     done
 }
@@ -86,10 +106,11 @@ backup_agents() {
     if ! command -v lxc &>/dev/null; then
         echo -e "  ${RED}LXD no disponible${RESET}"; return 0
     fi
-    for name in $(lxc list --format csv 2>/dev/null | cut -d',' -f1 | grep '^laia-'); do
+    # agent-* es el prefijo canónico; laia-* el legacy (laia-agora incluido).
+    for name in $(lxc list --format csv 2>/dev/null | cut -d',' -f1 | grep -E '^(laia|agent)-'); do
         lxc snapshot "$name" "backup-${TIMESTAMP}" 2>/dev/null && \
             echo -e "  ${GREEN}OK${RESET} $name" || \
-            echo -e "  ${RED}FAIL${RESET} $name"
+            fail "$name"
     done
 }
 
@@ -128,3 +149,8 @@ case "$what" in
     clean)      clean_backups "${1:-$RETENTION_DEFAULT_DAYS}" ;;
     *)          usage ;;
 esac
+
+if [[ "$FAILURES" -gt 0 ]]; then
+    echo -e "${RED}${FAILURES} paso(s) de backup fallaron — revisa arriba.${RESET}" >&2
+    exit 1
+fi
