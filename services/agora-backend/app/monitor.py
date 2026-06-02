@@ -64,15 +64,15 @@ class FleetMonitor:
             from .orchestrator import orchestrator
 
             lxd_agents = orchestrator.list_agents()
-        except Exception:
-            pass
+        except Exception as exc:
+            # Sin LXD el monitor sigue (todos los agentes saldrán NOT_FOUND),
+            # pero el operador tiene que poder ver POR QUÉ en los logs.
+            logger.warning("monitor: orchestrator.list_agents() failed: %s", exc)
 
         self._checks_total += 1
         alerts: list[dict] = []
 
         for a in agents_list:
-            if not True:
-                continue
             slug = slug_from_container(a.container_name)
             lxd = next((la for la in lxd_agents if la.get("slug") == slug), None)
             current_state = (lxd.get("lxd_state") or "UNKNOWN").upper() if lxd else "NOT_FOUND"
