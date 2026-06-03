@@ -24,10 +24,19 @@ func ServiceStates(ctx context.Context, r run.Runner, services []config.Service,
 }
 
 func serviceAlive(ctx context.Context, r run.Runner, s config.Service, lxcStates map[string]string) string {
+	// lxcStates == nil means "lxd was unreachable" (lxc list failed):
+	// we could not MEASURE, which is unknown — NOT down. Deploy lesson
+	// (2026-06-03): the first deployed build conflated both and painted
+	// 7 healthy containers red when the unit sandbox blocked the lxc
+	// client. A non-nil map where the container is missing is different:
+	// lxd answered and the container is gone → down for real.
 	switch s.Liveness.Kind {
 	case config.LivenessLXC:
-		// "Running" is the only "ok" state. Missing from the map,
-		// Stopped, Error, Starting, anything else → down. The
+		if lxcStates == nil {
+			return "unknown"
+		}
+		// "Running" is the only "ok" state. Missing from the (valid)
+		// map, Stopped, Error, Starting, anything else → down. The
 		// evaluator maps missing critical → red, which is what we
 		// want (a critical container that vanished IS down).
 		if lxcStates[s.Liveness.Container] == "Running" {
@@ -37,6 +46,9 @@ func serviceAlive(ctx context.Context, r run.Runner, s config.Service, lxcStates
 	case config.LivenessSystemd:
 		return combineUnits(hostUnitStates(ctx, r, s.Liveness.Units))
 	case config.LivenessLXCSystemd:
+		if lxcStates == nil {
+			return "unknown"
+		}
 		// Short-circuit: do NOT poke a stopped container.
 		if lxcStates[s.Liveness.Container] != "Running" {
 			return "unknown"

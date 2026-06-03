@@ -116,7 +116,11 @@ func shortErr(err error) string {
 	if err == nil {
 		return ""
 	}
-	// Do not put the full string: it may include the lxc binary path
-	// or arguments. "could not run the probe" + a hint is enough.
-	return "could not run the probe"
+	// Deploy lesson (2026-06-03): hiding the cause behind a generic
+	// "could not run the probe" cost real diagnosis time when the unit
+	// sandbox blocked snap-confine. The probe command carries no
+	// secrets (lxc exec + a public URL), so the message passes through
+	// via the same policy as shortRunnerErr (timeout classified,
+	// length capped).
+	return shortRunnerErr(err).Error()
 }
