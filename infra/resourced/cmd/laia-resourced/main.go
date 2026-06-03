@@ -32,9 +32,11 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
+	"github.com/JorgeMP-3/laia-arch/infra/resourced/internal/alert"
 	"github.com/JorgeMP-3/laia-arch/infra/resourced/internal/build"
 	"github.com/JorgeMP-3/laia-arch/infra/resourced/internal/collect"
 	"github.com/JorgeMP-3/laia-arch/infra/resourced/internal/config"
@@ -85,10 +87,26 @@ func main() {
 	// the contract.
 	runner := run.Real(run.DefaultTimeout)
 
+	// Alerter: events.jsonl + optional Telegram push. The sender is
+	// nil if Telegram is disabled in the config (events still journaled
+	// with PushSkipped="disabled").
+	var sender alert.Sender
+	if cfg.Alerts.Telegram.Enabled {
+		sender = alert.NewTelegram(cfg.Alerts.Telegram.SecretsFile)
+	}
+	eventsPath := filepath.Join(*stateDir, "events.jsonl")
+	alerter := alert.New(alert.AlertsConfig{
+		ThrottleMinutes: cfg.Alerts.ThrottleMinutes,
+		Host:            host,
+	}, eventsPath, sender)
+
 	var ticks uint64
 	// Carry-forward state: only in memory. Restart → lost (documented
 	// in spec §3). Conservative behavior: re-alerts.
 	var prevEgress state.Dimension
+	// Previous tick dimensions map, for the Alerter (transitions).
+	// nil on the first tick, which means "everything was ok before".
+	var prevDims map[string]state.Dimension
 
 	snapshot := func() {
 		ticks++
@@ -96,7 +114,11 @@ func main() {
 		// 1. Config hot-reload (fail-safe: keep previous on failure).
 		if rerr := watcher.Reload(); rerr != nil {
 			log.Printf("WARN: hot-reload of %s failed: %v (keeping previous)", *cfgPath, rerr)
-			// S2 will emit 'config' warn event
+			// Emit a config/warn event so the operator sees the failure
+			// in events.jsonl (S2 deliverable).
+			alerter.Process(prevDims, map[string]state.Dimension{
+				"config": {Light: state.LightWarn, Detail: "hot-reload failed: " + rerr.Error(), CheckedAt: time.Now().UTC()},
+			})
 		}
 		cfg = watcher.Current()
 
@@ -119,6 +141,10 @@ func main() {
 		// prod, dev_idle. Each slice only modifies its branch; the
 		// rest stays as is.)
 
+		// 4. Alert: transitions vs the previous tick. First tick has
+		// prevDims == nil; the alerter treats missing keys as ok.
+		alerter.Process(prevDims, dims)
+
 		// 3. Compose Status v2 + atomic write.
 		st := state.Status{
 			Schema:     state.SchemaVersion,
@@ -135,6 +161,8 @@ func main() {
 		if werr := state.WriteJSON(*stateDir, state.StatusFile, st); werr != nil {
 			log.Printf("WARN: could not write state: %v", werr)
 		}
+
+		prevDims = dims
 	}
 
 	snapshot() // first tick immediate (state available at startup)
