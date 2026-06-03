@@ -29,6 +29,7 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	"log"
 	"os"
 	"os/signal"
@@ -41,6 +42,8 @@ import (
 	"github.com/JorgeMP-3/laia-arch/infra/resourced/internal/collect"
 	"github.com/JorgeMP-3/laia-arch/infra/resourced/internal/config"
 	"github.com/JorgeMP-3/laia-arch/infra/resourced/internal/evaluate"
+	"github.com/JorgeMP-3/laia-arch/infra/resourced/internal/idle"
+	"github.com/JorgeMP-3/laia-arch/infra/resourced/internal/journal"
 	"github.com/JorgeMP-3/laia-arch/infra/resourced/internal/run"
 	"github.com/JorgeMP-3/laia-arch/infra/resourced/internal/state"
 )
@@ -99,6 +102,27 @@ func main() {
 		ThrottleMinutes: cfg.Alerts.ThrottleMinutes,
 		Host:            host,
 	}, eventsPath, sender)
+
+	// Idle tracker: in-memory, restarts at zero each daemon restart
+	// (documented in internal/idle). We pick the first class=dev
+	// service that has idle configured. In v1 that is laia-dev.
+	// If the policy does not include one, the tracker is nil and
+	// the dev_idle dimension is omitted from the Status.
+	var idleSvc *config.Service
+	for i := range cfg.Services {
+		s := &cfg.Services[i]
+		if s.Class == "dev" && s.Idle != nil {
+			idleSvc = s
+			break
+		}
+	}
+	var idleTracker *idle.Tracker
+	if idleSvc != nil {
+		idleTracker = idle.New()
+		log.Printf("idle shadow enabled on %s (load_below=%.2f for_minutes=%d)",
+			idleSvc.Liveness.Container, idleSvc.Idle.LoadBelow, idleSvc.Idle.ForMinutes)
+	}
+	decisionsPath := filepath.Join(*stateDir, "decisions.jsonl")
 
 	var ticks uint64
 	// Carry-forward state: only in memory. Restart → lost (documented
@@ -182,6 +206,63 @@ func main() {
 			Services: cfg.Services, States: serviceStates,
 		}, now)
 		dims["prod"] = prodDim
+
+		// 2f. Idle shadow (laia-dev). The dimension is purely
+		// informational: it never affects Overall (Overall skips
+		// dev_idle by name). If the collector errors (e.g., VM not
+		// running, lxc not in PATH), dev_idle is unknown and the
+		// tracker resets — rule 5 of §S5.
+		if idleSvc != nil {
+			activity, iactErr := collect.DevActivity(ctx, runner, idleSvc.Liveness.Container, "")
+			if iactErr != nil {
+				dims["dev_idle"] = state.Dimension{
+					Light:     state.LightUnknown,
+					Detail:    "could not measure laia-dev activity: " + iactErr.Error(),
+					CheckedAt: now,
+				}
+				if idleTracker != nil {
+					idleTracker.Reset()
+				}
+			} else {
+				idleNow := evaluate.IdleNow(activity, idleSvc.Idle.LoadBelow)
+				// Build the dimension (always informational).
+				d := state.Dimension{
+					CheckedAt: now,
+					Metrics: map[string]int64{
+						"ssh_users":       int64(activity.SSHUsers),
+						"tailscale_conns": int64(activity.TailscaleConns),
+					},
+				}
+				d.Metrics["load1_x100"] = int64(activity.Load1 * 100)
+				if idleNow {
+					// Detail depends on whether the threshold is crossed
+					// (the tracker holds the streak; the dimension just
+					// shows current state).
+					if idleTracker.Idle() != nil {
+						streakMin := int(now.Sub(*idleTracker.Idle()).Minutes())
+						d.Light = state.LightOK
+						d.Detail = fmt.Sprintf("idle %dm (would have suspended) — shadow", streakMin)
+					} else {
+						d.Light = state.LightOK
+						d.Detail = "active (or idle streak just started)"
+					}
+				} else {
+					d.Light = state.LightOK
+					d.Detail = fmt.Sprintf("active (ssh=%d ts=%d load=%.2f)", activity.SSHUsers, activity.TailscaleConns, activity.Load1)
+				}
+				dims["dev_idle"] = d
+
+				// Update the tracker; it may return a Decision to log.
+				if dec := idleTracker.Update(now, activity, *idleSvc.Idle, idleNow, nil); dec != nil {
+					// Inject the would_free_mb from the service config
+					// so the audit can sum it.
+					dec.WouldFreeMB = idleSvc.WouldFreeMB
+					if jerr := journal.Append(decisionsPath, dec); jerr != nil {
+						log.Printf("WARN: could not write decision: %v", jerr)
+					}
+				}
+			}
+		}
 
 		// Stash services for the Status write below.
 
