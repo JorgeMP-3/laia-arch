@@ -137,9 +137,18 @@ func main() {
 		}
 		dims["egress"] = prevEgress
 
-		// (S3..S5 will add their dimensions here: ram, vram, disk,
-		// prod, dev_idle. Each slice only modifies its branch; the
-		// rest stays as is.)
+		// 2b. RAM: read /proc/meminfo and apply the budget thresholds.
+		// The collector takes the path as an arg (injectable for
+		// tests). The real path is /proc/meminfo.
+		if avail, err := collect.MemAvailableMB("/proc/meminfo"); err != nil {
+			dims["ram"] = evaluate.RAMUnknown(now, err)
+		} else {
+			dims["ram"] = evaluate.RAM(avail, cfg.Budget, now)
+		}
+
+		// (S4..S5 will add their dimensions here: vram, disk, prod,
+		// dev_idle. Each slice only modifies its branch; the rest
+		// stays as is.)
 
 		// 4. Alert: transitions vs the previous tick. First tick has
 		// prevDims == nil; the alerter treats missing keys as ok.
