@@ -212,10 +212,10 @@ func realMain(args []string) int {
 	}
 }
 
-// cmdStatus lands in S5; the stub keeps the CLI surface complete.
-func cmdStatus(_ context.Context, _ *devmode.Deps) int {
-	fmt.Fprintln(os.Stderr, "dev-run: status llega en S5")
-	return 2
+func cmdStatus(ctx context.Context, d *devmode.Deps) int {
+	out, code := d.Status(ctx)
+	fmt.Print(out)
+	return code
 }
 
 // stdinIsTTY uses the char-device bit (stdlib only — no x/term dep):
