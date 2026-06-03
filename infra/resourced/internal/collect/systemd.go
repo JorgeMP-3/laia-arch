@@ -7,18 +7,36 @@ import (
 	"github.com/JorgeMP-3/laia-arch/infra/resourced/internal/run"
 )
 
-// SystemdActive runs `systemctl is-active <unit>` and maps the exit
-// code to a lifecycle string:
+// mapIsActive translates a `systemctl is-active` result into the alive
+// vocabulary, by EXIT CODE ONLY — stdout lies: a NONEXISTENT unit
+// prints "inactive" with exit 4, byte-identical stdout to a real
+// inactive unit (exit 3). Verified on doyouwin-server, 2026-06-03:
 //
-//	0  → "ok"      (active)
-//	3  → "down"    (inactive)
-//	4  → "down"    (failed)
-//	*  → "unknown" (not-found, invalid arg, no permission, etc.)
+//	is-active tts-server.service             → "active",   exit 0
+//	is-active unidad-inexistente-xyz.service → "inactive", exit 4
 //
-// "unknown" is the right choice for "we could not determine liveness"
-// rather than "down" — we do not want to alarm because systemctl was
-// missing or the user has no access. The evaluator treats unknown
-// distinctly from down (down → red, unknown → unknown).
+// Mapping (spec §S4 table):
+//
+//	0 → ok; 3 → down (inactive AND failed are real, known states);
+//	anything else (4 = no such unit; 1/2 = usage/permission) → unknown.
+//
+// The distinction matters operationally: a typo in a config unit name
+// must surface as "could not measure" (unknown), NEVER as a false red
+// that pushes a Telegram alarm.
+func mapIsActive(code int) string {
+	switch code {
+	case 0:
+		return "ok"
+	case 3:
+		return "down"
+	default:
+		return "unknown"
+	}
+}
+
+// SystemdActive runs `systemctl is-active <unit>` and maps the result
+// via mapIsActive (see its comment for the exit-code table and why
+// stdout is deliberately ignored).
 func SystemdActive(ctx context.Context, r run.Runner, unit string) (string, error) {
 	if r == nil {
 		return "unknown", fmt.Errorf("systemctl is-active: no runner")
@@ -32,14 +50,7 @@ func SystemdActive(ctx context.Context, r run.Runner, unit string) (string, erro
 		// alarming (the alive value already does that).
 		return "unknown", fmt.Errorf("systemctl is-active %s: %w", unit, shortRunnerErr(res.Err))
 	}
-	switch res.ExitCode {
-	case 0:
-		return "ok", nil
-	case 3, 4:
-		return "down", nil
-	default:
-		return "unknown", nil
-	}
+	return mapIsActive(res.ExitCode), nil
 }
 
 // LXCSystemdActive is SystemdActive inside an LXD container. We do
@@ -57,12 +68,5 @@ func LXCSystemdActive(ctx context.Context, r run.Runner, container, unit, contai
 	if res.Err != nil {
 		return "unknown", fmt.Errorf("lxc exec systemctl %s in %s: %w", unit, container, shortRunnerErr(res.Err))
 	}
-	switch res.ExitCode {
-	case 0:
-		return "ok", nil
-	case 3, 4:
-		return "down", nil
-	default:
-		return "unknown", nil
-	}
+	return mapIsActive(res.ExitCode), nil
 }

@@ -120,7 +120,9 @@ func TestServiceStatesLXCSystemdContainerRunningUnitDown(t *testing.T) {
 		}},
 	}
 	lxcStates := map[string]string{"laia-edge": "Running"}
-	r := runTable{"lxc": {ExitCode: 4, Stdout: "failed"}}.runner()
+	// systemd reality: a unit in "failed" state exits 3 (exit 4 is
+	// "no such unit" → unknown). Verified on the host, 2026-06-03.
+	r := runTable{"lxc": {ExitCode: 3, Stdout: "failed"}}.runner()
 	got := ServiceStates(testCtx(), r, svcs, lxcStates)
 	if got["cloudflared"] != "down" {
 		t.Errorf("got %q want down (cloudflared failed in Running container)", got["cloudflared"])

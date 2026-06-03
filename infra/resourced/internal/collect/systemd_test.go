@@ -28,7 +28,12 @@ func TestSystemdActiveTabla(t *testing.T) {
 	}{
 		{"exit 0 → ok", run.Result{ExitCode: 0, Stdout: "active"}, "ok"},
 		{"exit 3 (inactive) → down", run.Result{ExitCode: 3, Stdout: "inactive"}, "down"},
-		{"exit 4 (failed) → down", run.Result{ExitCode: 4, Stdout: "failed"}, "down"},
+		// exit 4 = "no such unit", and stdout says "inactive" — byte-
+		// identical to a real inactive unit (verified on the host,
+		// 2026-06-03). The mapping must trust the exit code only: a
+		// typo'd unit is unknown, not a false red alarm.
+		{"exit 4 (no such unit) → unknown (stdout lies)", run.Result{ExitCode: 4, Stdout: "inactive"}, "unknown"},
+		{"exit 3 stdout failed → down (failed is a real state)", run.Result{ExitCode: 3, Stdout: "failed"}, "down"},
 		{"exit 1 (not found) → unknown", run.Result{ExitCode: 1, Stdout: "inactive"}, "unknown"},
 		{"exit 2 (invalid) → unknown", run.Result{ExitCode: 2}, "unknown"},
 		{"runner timeout → unknown (err logged, not bubbled as fatal)", run.Result{Err: errors.New("timeout")}, "unknown"},
@@ -74,7 +79,9 @@ func TestLXCSystemdActiveRunning(t *testing.T) {
 
 func TestLXCSystemdActiveDownInRunningContainer(t *testing.T) {
 	// cloudflared service is failed inside laia-edge (Running) → down.
-	r := runTable{"lxc": {ExitCode: 4, Stdout: "failed"}}.runner()
+	// systemd reality: a unit in "failed" state exits 3 (exit 4 is
+	// "no such unit" → unknown). Verified on the host, 2026-06-03.
+	r := runTable{"lxc": {ExitCode: 3, Stdout: "failed"}}.runner()
 	got, _ := LXCSystemdActive(testCtx(), r, "laia-edge", "cloudflared.service", "Running")
 	if got != "down" {
 		t.Errorf("got %q want down", got)
