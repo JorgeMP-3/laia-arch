@@ -1,0 +1,25 @@
+# dev-targets.yaml — registry of projects for dev-run.
+#
+# dev-run reads this on every invocation. There are NO defaults: if
+# this file is missing, dev-run exits with an error (the file is the
+# authorization to mount/exec). The "dev cage" is the dev_instances
+# list below: dev-run may mount/exec/stop only those instances. A
+# prod target is never in this list — deploy goes through a separate
+# switch.
+dev_instances: [laia-test, laia-dev]
+
+projects:
+  doyouwin-odoo:
+    source: /home/laia-arch/PROYECTS/doyouwin-odoo
+    dev_target: laia-test
+    mount_path: /mnt/proyecto
+    test_cmd: "echo 'sin suite aún — define test_cmd'; exit 1"
+    prod_target: laia-finance
+    deploy_cmd: "bin/deploy-branding.sh"
+  resourced:
+    source: /home/laia-arch/LAIA
+    dev_target: laia-dev
+    mount_path: /mnt/laia
+    test_cmd: "cd /mnt/laia/infra/resourced && go test ./..."
+    build_cmd: "cd /mnt/laia/infra/resourced && CGO_ENABLED=0 go build ./..."
+    # no prod_target: deploy rejected for this project (it goes through laia-release)
