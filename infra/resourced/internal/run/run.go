@@ -68,10 +68,17 @@ func Real(timeout time.Duration) Runner {
 		if cerr := cctx.Err(); cerr != nil {
 			return Result{ExitCode: -1, Err: fmt.Errorf("%w", cerr)}
 		}
-		// The process ran and exited != 0: reliable exit code.
+		// The process ran and exited != 0: reliable exit code and
+		// Err = nil — this is the CONTRACT stated on Result and what
+		// every collector is written against ("the command failed" is
+		// mappable via ExitCode; Err means "we could not measure").
+		// Review finding 2026-06-03: this returned Err here, so with
+		// the real Runner a `curl` exit 6 (egress DOWN) or an
+		// `is-active` exit 3 (unit down) collapsed into unknown —
+		// fake-based tests (Err=nil) masked it.
 		var ee *exec.ExitError
 		if errors.As(err, &ee) {
-			return Result{Stdout: string(out), ExitCode: ee.ExitCode(), Err: err}
+			return Result{Stdout: string(out), ExitCode: ee.ExitCode()}
 		}
 		// Other error: binary not found, EACCES, etc.
 		return Result{ExitCode: -1, Err: err}

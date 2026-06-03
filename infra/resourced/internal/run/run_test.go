@@ -32,10 +32,15 @@ func TestRealEcho(t *testing.T) {
 // ProbeOK/Down is a known exit code.
 func TestRealExitCodeNoZero(t *testing.T) {
 	r := Real(time.Second)
-	// /bin/sh -c 'exit 7' → ExitCode 7, Err non-nil
+	// /bin/sh -c 'exit 7' → ExitCode 7 and Err NIL: the process ran, so
+	// the failure is expressed via ExitCode (collectors map it in their
+	// tables: curl 6 → egress down, is-active 3 → unit down). Err is
+	// reserved for "could not measure" (timeout, missing binary). The
+	// original version of this test blessed the opposite behavior and
+	// masked a real bug (review, 2026-06-03).
 	res := r(context.Background(), "/bin/sh", "-c", "exit 7")
-	if res.Err == nil {
-		t.Fatalf("Err: expected non-nil for exit 7")
+	if res.Err != nil {
+		t.Fatalf("Err: expected nil for a clean non-zero exit, got %v", res.Err)
 	}
 	if res.ExitCode != 7 {
 		t.Errorf("ExitCode: got %d want 7", res.ExitCode)
