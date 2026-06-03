@@ -146,9 +146,44 @@ func main() {
 			dims["ram"] = evaluate.RAM(avail, cfg.Budget, now)
 		}
 
-		// (S4..S5 will add their dimensions here: vram, disk, prod,
-		// dev_idle. Each slice only modifies its branch; the rest
-		// stays as is.)
+		// 2c. VRAM: nvidia-smi via the Runner. In the VM there is no
+		// GPU → collector errors → unknown. In the host it returns
+		// real MB.
+		if used, total, free, gerr := collect.GPU(ctx, runner); gerr != nil {
+			dims["vram"] = evaluate.VRAMUnknown(now, gerr)
+		} else {
+			dims["vram"] = evaluate.VRAM(used, total, free, cfg.Budget.VRAMMinFreeMB, now)
+		}
+
+		// 2d. Disk: one statfs per configured path. Aggregate via
+		// evaluate.Disk (worst path wins).
+		diskResults := make([]evaluate.DiskResult, 0, len(cfg.Budget.DiskPaths))
+		for _, p := range cfg.Budget.DiskPaths {
+			pct, mb, derr := collect.DiskFree(p)
+			diskResults = append(diskResults, evaluate.DiskResult{
+				Path: p, FreePct: pct, FreeMB: mb, Err: derr,
+			})
+		}
+		dims["disk"] = evaluate.Disk(diskResults, cfg.Budget.DiskWarnFreePct, cfg.Budget.DiskRedFreePct, now)
+
+		// 2e. Prod: lxc list once, then per-service alive (lxc/systemd/lxc_systemd).
+		// If lxc list fails entirely, mark every critical lxc-based
+		// service as unknown; systemd-based services still probe via
+		// the Runner.
+		var lxcStates map[string]string
+		if ls, lerr := collect.LXCStates(ctx, runner); lerr != nil {
+			log.Printf("WARN: lxc list failed: %v (marking lxc-based services unknown)", lerr)
+			lxcStates = map[string]string{}
+		} else {
+			lxcStates = ls
+		}
+		serviceStates := collect.ServiceStates(ctx, runner, cfg.Services, lxcStates)
+		prodDim, services := evaluate.Prod(evaluate.ProdInput{
+			Services: cfg.Services, States: serviceStates,
+		}, now)
+		dims["prod"] = prodDim
+
+		// Stash services for the Status write below.
 
 		// 4. Alert: transitions vs the previous tick. First tick has
 		// prevDims == nil; the alerter treats missing keys as ok.
@@ -166,6 +201,7 @@ func main() {
 			Tick:       ticks,
 			Overall:    evaluate.Overall(dims),
 			Dimensions: dims,
+			Services:   services,
 		}
 		if werr := state.WriteJSON(*stateDir, state.StatusFile, st); werr != nil {
 			log.Printf("WARN: could not write state: %v", werr)
