@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/JorgeMP-3/laia-arch/infra/devrun/internal/config"
+	"github.com/JorgeMP-3/laia-arch/infra/devrun/internal/deploy"
 	"github.com/JorgeMP-3/laia-arch/infra/devrun/internal/devmode"
 	"github.com/JorgeMP-3/laia-arch/infra/devrun/internal/run"
 )
@@ -211,14 +212,32 @@ func realMain(args []string) int {
 	}
 }
 
-// cmdStatus and cmdDeploy land in S5 and S4; stubs keep S3 shippable
-// with the suite green and the CLI surface complete.
+// cmdStatus lands in S5; the stub keeps the CLI surface complete.
 func cmdStatus(_ context.Context, _ *devmode.Deps) int {
 	fmt.Fprintln(os.Stderr, "dev-run: status llega en S5")
 	return 2
 }
 
-func cmdDeploy(_ context.Context, _ *devmode.Deps, _ cli, _ config.Project) int {
-	fmt.Fprintln(os.Stderr, "dev-run: deploy llega en S4")
-	return 2
+// stdinIsTTY uses the char-device bit (stdlib only — no x/term dep):
+// pipes and redirections drop it, interactive terminals have it.
+func stdinIsTTY() bool {
+	fi, err := os.Stdin.Stat()
+	return err == nil && fi.Mode()&os.ModeCharDevice != 0
+}
+
+func cmdDeploy(ctx context.Context, d *devmode.Deps, c cli, p config.Project) int {
+	dd := &deploy.Deps{
+		Cfg:    d.Cfg,
+		R:      d.R,
+		Stream: deploy.Streamer(devmode.RealStreamer),
+		In:     os.Stdin,
+		Out:    os.Stderr,
+		DryRun: c.dryRun,
+		IsTTY:  stdinIsTTY,
+	}
+	code, err := deploy.Run(ctx, dd, c.project, p, c.sha)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "dev-run: %v\n", err)
+	}
+	return code
 }
