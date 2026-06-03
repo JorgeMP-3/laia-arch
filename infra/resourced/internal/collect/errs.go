@@ -1,13 +1,27 @@
 package collect
 
-import "errors"
+import (
+	"context"
+	"errors"
+)
 
-// shortRunnerErr summarizes a run.Result error to a short hint. The
-// full error may include the full lxc path or the binary path, which
-// we do not want to leak in dimension Detail (operator-facing).
+// shortRunnerErr keeps Runner errors useful for diagnosis while staying
+// one line. Deploy lesson (2026-06-03): the previous version collapsed
+// everything to "runner failed", which hid that snap-confine was being
+// blocked by the systemd sandbox — the operator-facing Detail must say
+// WHY a collector could not measure. Runner commands (lxc, systemctl,
+// nvidia-smi) carry no secrets in their error messages, so passing the
+// message through is safe; we only classify timeouts and cap length.
 func shortRunnerErr(err error) error {
 	if err == nil {
 		return nil
 	}
-	return errors.New("runner failed")
+	if errors.Is(err, context.DeadlineExceeded) {
+		return errors.New("timeout")
+	}
+	msg := err.Error()
+	if len(msg) > 120 {
+		msg = msg[:120] + "…"
+	}
+	return errors.New(msg)
 }

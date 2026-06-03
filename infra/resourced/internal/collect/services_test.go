@@ -128,3 +128,45 @@ func TestServiceStatesLXCSystemdContainerRunningUnitDown(t *testing.T) {
 		t.Errorf("got %q want down (cloudflared failed in Running container)", got["cloudflared"])
 	}
 }
+
+// TestServiceStatesLXDUnreachable: a NIL lxcStates map means "lxd was
+// unreachable" (lxc list failed) → lxc-based services are unknown
+// ("could not measure"), NEVER down. Deploy lesson 2026-06-03: the
+// first deployed build passed an empty map and painted 7 healthy
+// containers red when the unit sandbox blocked the snap lxc client.
+func TestServiceStatesLXDUnreachable(t *testing.T) {
+	svcs := []config.Service{
+		{Name: "laia-agora", Class: "critical",
+			Liveness: config.Liveness{Kind: config.LivenessLXC, Container: "laia-agora"}},
+		{Name: "cloudflared", Class: "critical",
+			Liveness: config.Liveness{Kind: config.LivenessLXCSystemd, Container: "laia-edge", Units: []string{"cloudflared.service"}}},
+		{Name: "tts-server", Class: "critical",
+			Liveness: config.Liveness{Kind: config.LivenessSystemd, Units: []string{"tts-server.service"}}},
+	}
+	r := runTable{"systemctl": {ExitCode: 0, Stdout: "active"}}.runner()
+	got := ServiceStates(testCtx(), r, svcs, nil) // nil = lxd unreachable
+	if got["laia-agora"] != "unknown" {
+		t.Errorf("lxc service with nil map: got %q want unknown", got["laia-agora"])
+	}
+	if got["cloudflared"] != "unknown" {
+		t.Errorf("lxc_systemd service with nil map: got %q want unknown", got["cloudflared"])
+	}
+	// systemd services do not depend on lxd: still measured normally.
+	if got["tts-server"] != "ok" {
+		t.Errorf("systemd service with nil map: got %q want ok", got["tts-server"])
+	}
+}
+
+// TestServiceStatesEmptyMapMeansVanished: an EMPTY (non-nil) map means
+// lxd answered and the container is not there → down for real.
+func TestServiceStatesEmptyMapMeansVanished(t *testing.T) {
+	svcs := []config.Service{
+		{Name: "laia-agora", Class: "critical",
+			Liveness: config.Liveness{Kind: config.LivenessLXC, Container: "laia-agora"}},
+	}
+	r := runTable{}.runner()
+	got := ServiceStates(testCtx(), r, svcs, map[string]string{})
+	if got["laia-agora"] != "down" {
+		t.Errorf("vanished container: got %q want down", got["laia-agora"])
+	}
+}

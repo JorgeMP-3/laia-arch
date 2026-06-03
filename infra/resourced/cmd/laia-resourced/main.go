@@ -220,10 +220,14 @@ func main() {
 		// If lxc list fails entirely, mark every critical lxc-based
 		// service as unknown; systemd-based services still probe via
 		// the Runner.
+		// nil map = "lxd unreachable" → ServiceStates marks every
+		// lxc-based service unknown (an EMPTY map would mean "lxd
+		// answered and no containers exist" → down, the opposite).
+		// Deploy lesson 2026-06-03: the first build passed {} here and
+		// painted 7 healthy containers red under a sandboxed unit.
 		var lxcStates map[string]string
 		if ls, lerr := collect.LXCStates(ctx, runner); lerr != nil {
-			log.Printf("WARN: lxc list failed: %v (marking lxc-based services unknown)", lerr)
-			lxcStates = map[string]string{}
+			log.Printf("WARN: lxc list failed: %v (lxc-based services → unknown)", lerr)
 		} else {
 			lxcStates = ls
 		}
