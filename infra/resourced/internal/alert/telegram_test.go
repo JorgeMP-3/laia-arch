@@ -161,3 +161,30 @@ func TestTelegramDefaultBaseURL(t *testing.T) {
 		t.Errorf("unexpected construction error: %q", err.Error())
 	}
 }
+
+// TestTelegramTransportErrorNoToken: a TRANSPORT error (connection
+// refused) produces a *url.Error whose message embeds the full request
+// URL — including the bot token. This is review finding F1: the error
+// must come back redacted, because it lands in Event.PushErr →
+// events.jsonl (0644).
+func TestTelegramTransportErrorNoToken(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	base := srv.URL
+	srv.Close() // → connection refused on Send
+
+	tg := &Telegram{
+		BaseURL:     base,
+		SecretsFile: writeSecrets(t),
+		HTTPC:       &http.Client{},
+	}
+	err := tg.Send(context.Background(), "x")
+	if err == nil {
+		t.Fatalf("expected transport error against closed server")
+	}
+	if strings.Contains(err.Error(), testToken) {
+		t.Errorf("transport error leaks the bot token: %q", err.Error())
+	}
+	if !strings.Contains(err.Error(), "***") {
+		t.Errorf("expected redaction marker in error, got %q", err.Error())
+	}
+}

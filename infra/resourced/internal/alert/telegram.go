@@ -68,13 +68,21 @@ func (t *Telegram) Send(ctx context.Context, text string) error {
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL, strings.NewReader(form.Encode()))
 	if err != nil {
-		return fmt.Errorf("telegram: build request: %w", err)
+		// A malformed BaseURL surfaces here and the error message
+		// embeds the full URL (with the token). Redact before return.
+		return errors.New("telegram: build request: " + redactToken(err.Error(), token))
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return fmt.Errorf("telegram: do request: %w", err)
+		// Transport failures are *url.Error, whose Error() embeds the
+		// FULL request URL — i.e. the bot token. This message ends up
+		// in Event.PushErr → events.jsonl (0644), so it MUST be
+		// redacted. ReplaceAll (vs. reconstructing the error) is
+		// defense in depth: whatever shape the wrapped error has, the
+		// token never leaves this function.
+		return errors.New("telegram: request failed: " + redactToken(err.Error(), token))
 	}
 	defer resp.Body.Close()
 
@@ -83,4 +91,14 @@ func (t *Telegram) Send(ctx context.Context, text string) error {
 		return fmt.Errorf("telegram: HTTP %d", resp.StatusCode)
 	}
 	return nil
+}
+
+// redactToken removes the bot token from msg. Every error path that
+// could carry a URL-bearing error (build request, transport) must pass
+// through here before the message can reach logs or events.jsonl.
+func redactToken(msg, token string) string {
+	if token == "" {
+		return msg
+	}
+	return strings.ReplaceAll(msg, token, "***")
 }
