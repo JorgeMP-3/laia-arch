@@ -58,6 +58,17 @@ func main() {
 	)
 	flag.Parse()
 
+	// Tick precedence (review finding F6): an EXPLICIT --tick flag wins
+	// (operator override for tests/debug); otherwise tick_seconds from
+	// the config governs — editable without redeploy, applied on
+	// hot-reload by resetting the ticker (see the loop at the bottom).
+	tickFlagSet := false
+	flag.Visit(func(f *flag.Flag) {
+		if f.Name == "tick" {
+			tickFlagSet = true
+		}
+	})
+
 	// v1 guardrail: the binary REJECTS enforce. Autonomy is enabled in a
 	// later version after the month's verdict — not by an accidental
 	// flag. config.Validate repeats this check.
@@ -77,8 +88,17 @@ func main() {
 		log.Printf("WARN: no config at %s — using defaults", *cfgPath)
 	}
 	cfg := watcher.Current()
+
+	// effectiveTick resolves the F6 precedence at any point in time
+	// (the config may change between ticks via hot-reload).
+	effectiveTick := func() time.Duration {
+		if tickFlagSet {
+			return *tick
+		}
+		return watcher.Current().TickDuration()
+	}
 	log.Printf("laia-resourced %s starting (mode=%s tick=%s state=%s host=%s pid=%d services=%d probe-every=%d)",
-		build.Version, *mode, *tick, *stateDir, host, os.Getpid(),
+		build.Version, *mode, effectiveTick(), *stateDir, host, os.Getpid(),
 		len(cfg.Services), cfg.Egress.ProbeEveryTicks)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -131,19 +151,25 @@ func main() {
 	// Previous tick dimensions map, for the Alerter (transitions).
 	// nil on the first tick, which means "everything was ok before".
 	var prevDims map[string]state.Dimension
+	// Config-health transitions (review finding F3): tracked in its own
+	// prev map — separate from the watchlist dims so `config` never
+	// enters status.json nor Overall, but still obeys the S2 contract
+	// (only TRANSITIONS emit events). A YAML that stays broken emits
+	// ONE warn event, and ONE recovery event when fixed — not one per
+	// tick.
+	prevCfgDim := map[string]state.Dimension{}
 
 	snapshot := func() {
 		ticks++
 
 		// 1. Config hot-reload (fail-safe: keep previous on failure).
+		cfgDim := state.Dimension{Light: state.LightOK, Detail: "policy ok", CheckedAt: time.Now().UTC()}
 		if rerr := watcher.Reload(); rerr != nil {
 			log.Printf("WARN: hot-reload of %s failed: %v (keeping previous)", *cfgPath, rerr)
-			// Emit a config/warn event so the operator sees the failure
-			// in events.jsonl (S2 deliverable).
-			alerter.Process(prevDims, map[string]state.Dimension{
-				"config": {Light: state.LightWarn, Detail: "hot-reload failed: " + rerr.Error(), CheckedAt: time.Now().UTC()},
-			})
+			cfgDim = state.Dimension{Light: state.LightWarn, Detail: "hot-reload failed: " + rerr.Error(), CheckedAt: time.Now().UTC()}
 		}
+		alerter.Process(prevCfgDim, map[string]state.Dimension{"config": cfgDim})
+		prevCfgDim = map[string]state.Dimension{"config": cfgDim}
 		cfg = watcher.Current()
 
 		now := time.Now().UTC()
@@ -296,7 +322,8 @@ func main() {
 		return
 	}
 
-	t := time.NewTicker(*tick)
+	curTick := effectiveTick()
+	t := time.NewTicker(curTick)
 	defer t.Stop()
 	for {
 		select {
@@ -305,6 +332,15 @@ func main() {
 			return
 		case <-t.C:
 			snapshot()
+			// F6: the hot-reload inside snapshot() may have changed
+			// tick_seconds. Apply it without restart — unless the
+			// operator pinned --tick explicitly (effectiveTick then
+			// always returns the flag and this is a no-op).
+			if d := effectiveTick(); d != curTick {
+				log.Printf("tick %s → %s (config hot-reload)", curTick, d)
+				t.Reset(d)
+				curTick = d
+			}
 		}
 	}
 }
