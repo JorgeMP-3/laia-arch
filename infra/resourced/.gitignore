@@ -1,0 +1,2 @@
+# Binarios compilados (build artifacts); se generan con `go build -o bin/`.
+/bin/

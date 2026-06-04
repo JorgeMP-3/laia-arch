@@ -1,0 +1,30 @@
+[Unit]
+Description=LAIA resource & host-invariant monitor (laia-resourced — v1: solo monitor+aviso, NO muta)
+Documentation=file://${LAIA_INSTALL_PREFIX}/infra/resourced/README.md
+After=network-online.target snap.lxd.daemon.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=${LAIA_USER}
+Group=${LAIA_USER}
+ExecStart=${LAIA_INSTALL_PREFIX}/infra/resourced/bin/laia-resourced --state-dir /srv/laia/state/resourced
+Restart=on-failure
+RestartSec=5
+Nice=10
+IOSchedulingClass=idle
+# Hardening: LIMITADO a propósito (lección del deploy 2026-06-03). El daemon
+# invoca `lxc`, que en este host es el snap de LXD, y snap-confine es
+# incompatible con el sandbox de systemd, verificado empíricamente:
+#   - NoNewPrivileges=true  → "snap-confine ... cap_dac_override not found"
+#   - ProtectHome=true      → no puede crear ~/snap ni su runtime dir
+#   - PrivateTmp=true       → oculta /tmp/snap-private-tmp (lo exige snapd)
+#   - ProtectSystem=full    → bloquea los mounts de snap-confine
+# El daemon ya es read-only por diseño y corre como usuario sin privilegios.
+# TODO(v1.1): hablar con el socket unix de LXD por API (sin cliente snap) y
+# restaurar el sandbox completo.
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
