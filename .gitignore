@@ -74,3 +74,12 @@ workspaces/
 
 # Symlinks
 hermes-agent
+
+# Re-include the laia-core cron PACKAGE (product code). The wholesale
+# `.laia-core/` ignore above silently swallowed it once (rsync/git dropped it
+# in the laia-hermes -> laia-arch migration; PROBLEMS#laia-core-cron-package)
+# and would swallow any NEW file added to it. Order matters: these negations
+# must stay AFTER the `cron/` and `.laia-core/` patterns.
+!.laia-core/
+.laia-core/*
+!.laia-core/cron/
