@@ -19,10 +19,11 @@ ANTES DE HACER NADA EN LAIA, léelo (o el resumen: `~/laia-developers/LAIA_ECOSY
 **Proveniencia del core**: `.laia-core/` (el runtime del agente) es un fork de **Hermes Agent
 v0.11.0** (Nous Research, MIT — `github.com/NousResearch/hermes-agent`), renombrado en masa
 `hermes`→`laia` (~1.350 refs). **NO es un fork git**: no hay remote upstream; el código
-original quedó en `origin/archive/hermes-upstream`. Upstream sigue muy activo (v0.12+) →
-integrar mejoras suyas = **cherry-pick adaptado, nunca merge ciego** (estrategia:
-`.plans/PLAN_SYNC_UPSTREAM_HERMES_v0.14.md`). El install viejo de prod (`/opt/laia-v0.11.0`)
-se llama "era-Hermes" por esto.
+original quedó en `origin/archive/hermes-upstream`. **Política hacia upstream (FIJA, Jorge
+2026-06-04): estabilizar y divergir** — solo piezas puntuales de alto valor por cherry-pick
+selectivo, **nunca `git merge` upstream**; detalle y backlog en `AGENTS.md` §4 (doctrina) y
+`workflow-main/plans/2026-06-04-upstream-sync-hermes.md`. El install viejo de prod
+(`/opt/laia-v0.11.0`) se llama "era-Hermes" por esto.
 
 ## Tracker e historia de LAIA → `~/laia-developers/workflow-main/`
 
