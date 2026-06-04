@@ -1,3 +1,6 @@
-fastapi>=0.115.0
-uvicorn[standard]>=0.32.0
-python-multipart>=0.0.12
+# Ceilings per supply-chain Tier 1 (doctrine gate, PR #55): floor what we
+# need, cap before the next major so a hijacked/breaking release cannot
+# walk in through a bare `pip install -r`.
+fastapi>=0.115.0,<1.0
+uvicorn[standard]>=0.32.0,<1.0
+python-multipart>=0.0.12,<0.1

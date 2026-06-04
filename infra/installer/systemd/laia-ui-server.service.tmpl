@@ -1,7 +1,8 @@
 [Unit]
-Description=LAIA UI Server (ARCH Admin)
-After=laia-gateway.service
-Wants=laia-gateway.service
+Description=LAIA ARCH console (operator-only web UI on loopback/Tailscale)
+# No dependency on laia-gateway: the console talks to its own FastAPI backend;
+# the old Wants= chained it to a unit that no longer runs (v0.11 model).
+After=network.target
 X-LaiaPathDeps=ui_server,ui_backend,laia_venv
 
 [Service]
@@ -14,9 +15,18 @@ EnvironmentFile=-/srv/laia/arch/.env.paths
 WorkingDirectory=${LAIA_INSTALL_PREFIX}/.laia-core/laia-ui-server/backend
 Environment=HOME=${LAIA_USER_HOME}
 Environment=LAIA_HOME=${LAIA_HOME}
-ExecStart=${LAIA_INSTALL_PREFIX}/.laia-core/venv/bin/uvicorn main:app --host 0.0.0.0 --port 8077
+Environment=LAIA_UI_HOST=127.0.0.1
+# Operator console: LOOPBACK ONLY (users must never reach ARCH —
+# LAIA_ECOSYSTEM). Remote operator access goes through Tailscale on the
+# host, never a laia-edge vhost. The old --host 0.0.0.0 exposed
+# unauthenticated PTY terminals to the LAN.
+ExecStart=${LAIA_INSTALL_PREFIX}/.laia-core/venv/bin/python -m uvicorn main:app --host 127.0.0.1 --port 8077
 Restart=on-failure
 RestartSec=3
+# Deliberately NO ProtectSystem/NoNewPrivileges sandbox: the console spawns
+# operator PTY terminals (Command Center) and bwrap — those lockdowns break
+# them (and the snap pitfall 2026-06-03 if a terminal runs lxc).
+# Containment = User non-root + loopback bind.
 
 [Install]
 WantedBy=multi-user.target
