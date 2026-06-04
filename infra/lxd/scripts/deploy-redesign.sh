@@ -168,9 +168,10 @@ cat <<EOF | tee "$STATE_FILE" >/dev/null
   "laia_root": "$REPO"
 }
 EOF
-chmod 0644 "$STATE_FILE"
-# El owner del repo (laia-hermes) debe poder leer + sobreescribir desde
-# scripts SIN sudo en el siguiente paso.
+# 0600: el state lleva api_token y está en /tmp (world-traversable).
+chmod 0600 "$STATE_FILE"
+# El owner del repo debe poder leer + sobreescribir desde scripts SIN sudo
+# en el siguiente paso — con 0600 sigue pudiendo: es el owner del archivo.
 chown "$(stat -c %U "$REPO"):$(stat -c %G "$REPO")" "$STATE_FILE" 2>/dev/null || true
 ok "estado guardado en $STATE_FILE"
 

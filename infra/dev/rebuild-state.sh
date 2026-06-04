@@ -68,7 +68,8 @@ json_write() {
   local file="$1"
   shift
   jq -n "$@" > "$file" || die "no pude escribir JSON $file"
-  chmod 0644 "$file" 2>/dev/null || true
+  # 0600: los state files llevan api_token (y password en los per-user).
+  chmod 0600 "$file" 2>/dev/null || true
   if command -v chown >/dev/null 2>&1; then
     chown "$ORIG_USER:$(id -gn "$ORIG_USER" 2>/dev/null || echo "$ORIG_USER")" "$file" 2>/dev/null || true
   fi

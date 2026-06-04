@@ -102,7 +102,8 @@ EOF
     # deploy-redesign.sh sobreescribe /tmp/laia-redesign-state.json — lo copiamos
     # a su nombre per-user para no perderlo cuando el siguiente deploy corra.
     sudo cp /tmp/laia-redesign-state.json "$PER_USER_STATE_FILE"
-    sudo chmod 644 "$PER_USER_STATE_FILE"
+    # 600: el state lleva api_token; el chown de abajo nos hace owner.
+    sudo chmod 600 "$PER_USER_STATE_FILE"
     sudo chown "$(id -u):$(id -g)" "$PER_USER_STATE_FILE" 2>/dev/null || true
   fi
   STATE_FILE_TO_USE="$PER_USER_STATE_FILE"
