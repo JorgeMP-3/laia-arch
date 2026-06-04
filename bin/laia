@@ -51,6 +51,12 @@ SUBCOMMANDS
     status      Show host-side LAIA status (services, version, paths)
     auth        Manage pooled LLM provider credentials (writes /srv/laia/arch/secrets)
 
+AGENT CLI (forwarded to .laia-core — anything not listed above)
+    laia                Interactive chat with the agent (no args)
+    setup               Interactive setup wizard for credentials/providers
+    chat, login, logout, model, skills, plugins, gateway, …
+                        Forwarded verbatim to the laia-core Python CLI
+
 OPTIONS
     --help, -h        Show this help
     --version, -v     Show installed LAIA version
@@ -78,10 +84,35 @@ print_version() {
   fi
 }
 
+# exec_agent_cli — hand off to the .laia-core Python CLI (interactive chat,
+# setup, auth, login, model, skills, plugins, gateway, …). Ported from the
+# v0.11 dispatcher (PROBLEMS#dispatcher-v020-sin-passthrough-al-cli-python):
+# `laia` with no args drops into the agent CLI, and any subcommand this
+# dispatcher does not recognize as a host-op is forwarded verbatim. Python
+# resolution mirrors the `auth` case above (venv first, module invocation).
+exec_agent_cli() {
+  local core_dir="$LAIA_ROOT/.laia-core"
+  if [[ ! -d "$core_dir/laia_cli" ]]; then
+    log_error "Agent CLI not found: $core_dir/laia_cli"
+    log_error "Re-run 'sudo laia install' (or 'sudo laia release') to provision .laia-core."
+    exit 4
+  fi
+  local py="python3"
+  if [[ -x "$core_dir/venv/bin/python" ]]; then
+    py="$core_dir/venv/bin/python"
+  elif [[ -x "/opt/laia/.laia-core/venv/bin/python" ]]; then
+    py="/opt/laia/.laia-core/venv/bin/python"
+  fi
+  export LAIA_ROOT
+  export PYTHONPATH="$core_dir${PYTHONPATH:+:$PYTHONPATH}"
+  exec "$py" -m laia_cli.main "$@"
+}
+
 main() {
   if [[ $# -eq 0 ]]; then
-    print_help
-    exit 0
+    # No args → drop into the agent CLI (interactive chat by default), as in
+    # v0.11. `laia --help` keeps showing this dispatcher's help.
+    exec_agent_cli
   fi
 
   case "$1" in
@@ -161,10 +192,11 @@ main() {
       fi
       ;;
     *)
-      log_error "Unknown subcommand: $1"
-      printf '\n' >&2
-      print_help >&2
-      exit 2
+      # Not a host-op subcommand → forward to the .laia-core Python CLI
+      # (chat, setup, login, model, skills, plugins, gateway, status of the
+      # agent, …). Same contract as the v0.11 dispatcher: the agent CLI owns
+      # everything the installer layer does not claim.
+      exec_agent_cli "$@"
       ;;
   esac
 }
