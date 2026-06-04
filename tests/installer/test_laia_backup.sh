@@ -110,6 +110,33 @@ assert "laia-backup source/output has no legacy Hermes coupling" \
   "$(! grep -qi "$LEGACY_HERMES_NAME" "$BACKUP_BIN" "$TMPDIR_TEST/backup-all.out" "$TMPDIR_TEST/backup-clean.out" 2>/dev/null && echo 0 || echo 1)"
 
 echo
+echo "-> D1 laia-backup all fails loudly when a source is missing"
+# Fail-loud contract (problems.md: backup-timer-runs-as-laia-arch-cannot-read-agora):
+# a missing/unreadable source must turn the run red, never a silent green.
+FAILDIR="$TMPDIR_TEST/fail-loud"
+mkdir -p "$FAILDIR/backups"
+if LAIA_BACKUP_DIR="$FAILDIR/backups" AGORA_DB="$FAILDIR/nonexistent/agora.db" \
+   timeout 30 "$BACKUP_BIN" all >"$TMPDIR_TEST/backup-fail.out" 2>&1; then
+  assert "all exits non-zero when agora.db is missing" 1
+else
+  assert "all exits non-zero when agora.db is missing" 0
+fi
+assert "users artifact still produced on partial failure" \
+  "$(contains_file_matching "$FAILDIR/backups" '(^|/)users?[^/]*\.tar\.gz$' && echo 0 || echo 1)"
+assert "arch artifact still produced on partial failure" \
+  "$(contains_file_matching "$FAILDIR/backups" '(^|/)arch[^/]*\.tar\.gz$' && echo 0 || echo 1)"
+
+echo
+echo "-> D1 artifacts are not world-readable"
+# umask 077: artifacts can contain production secrets (arch/secrets in the tar).
+# Only check files the tool created (the clean-section fixtures use the test's umask).
+LOOSE_ARTIFACTS="$(find "$LAIA_BACKUP_DIR" "$FAILDIR/backups" -type f \
+  \( -name 'agora_*' -o -name 'users_*' -o -name 'arch_*' \) \
+  \( -perm -g+r -o -perm -o+r \) 2>/dev/null)"
+assert "tool-created artifacts are 0600 (no group/world read)" \
+  "$([[ -z "$LOOSE_ARTIFACTS" ]] && echo 0 || echo 1)"
+
+echo
 echo "=================================================="
 printf "  PASS: %d   FAIL: %d\n" "$PASS" "$FAIL"
 if [[ "$FAIL" -gt 0 ]]; then
