@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import json
+import logging
+import os
+import secrets
 import sys
 import threading
 import uuid
@@ -14,9 +17,13 @@ from .models import (
     new_id, now_iso,
 )
 from .laia_identity import (
-    LAIA_USER_ID, LAIA_USERNAME, LAIA_DISPLAY_NAME, LAIA_TOKEN,
+    LAIA_USER_ID, LAIA_USERNAME, LAIA_DISPLAY_NAME,
     LAIA_SOUL, LAIA_INSTRUCTIONS,
 )
+from .security import hash_password
+
+
+logger = logging.getLogger(__name__)
 
 
 def _row_to_dict(row) -> dict:
@@ -201,10 +208,34 @@ class AgoraStore:
         cur = self.db.conn.execute("SELECT count(*) FROM users")
         if cur.fetchone()[0] == 0:
             ts = now_iso()
+            # Credenciales del admin seed: overridables por env SIEMPRE; los
+            # literales dev-admin/dev-admin-token solo existen en AGORA_ENV=dev
+            # (tests y scripts de infra/dev dependen de ellos). En cualquier
+            # otro env un arranque limpio JAMÁS deja credenciales conocidas:
+            # eso era admin instantáneo para cualquiera con red interna.
+            # (Auditoría 2026-06-02, prod-db-seeds-hardcoded-jorge-credentials.)
+            username = os.environ.get("AGORA_ADMIN_USERNAME", "jorge")
+            password = os.environ.get("AGORA_ADMIN_PASSWORD") or ""
+            token = os.environ.get("AGORA_ADMIN_TOKEN") or ""
+            if settings.env == "dev":
+                password = password or "dev-admin"
+                token = token or "dev-admin-token"
+            elif not password:
+                # No se imprime: una password en el journal es un leak. El
+                # operador define AGORA_ADMIN_PASSWORD antes del primer boot
+                # o la resetea vía installer (factory.sh).
+                password = secrets.token_urlsafe(24)
+                logger.warning(
+                    "seed: AGORA_ADMIN_PASSWORD no definido (AGORA_ENV=%s) — "
+                    "admin %r creado con password aleatoria NO mostrada. "
+                    "Definela por env o resetea con el installer.",
+                    settings.env, username,
+                )
             self.db.conn.execute(
                 "INSERT INTO users (id, username, display_name, role, agent_id, token, password, active, created_at, updated_at) "
                 "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                ("user_jorge", "jorge", "Jorge", "agora_admin", "agent_jorge", "dev-admin-token", "dev-admin", 1, ts, ts),
+                ("user_jorge", username, username.capitalize(), "agora_admin",
+                 "agent_jorge", token or None, hash_password(password), 1, ts, ts),
             )
             self.db.conn.execute(
                 "INSERT INTO agents (id, user_id, container_name, status, workspace_path, created_at, updated_at) "
@@ -228,8 +259,12 @@ class AgoraStore:
                 "INSERT INTO users (id, username, display_name, role, agent_id, "
                 "token, password, active, created_at, updated_at) "
                 "VALUES (?, ?, ?, ?, NULL, ?, NULL, 1, ?, ?)",
+                # Token aleatorio por instalación. El literal anterior
+                # ("laia-coordinator-token") era un bearer agora_admin
+                # público en el repo y sin NINGÚN consumidor en el código —
+                # mismo agujero que dev-admin-token. (Auditoría 2026-06-02.)
                 (LAIA_USER_ID, LAIA_USERNAME, LAIA_DISPLAY_NAME,
-                 "agora_admin", LAIA_TOKEN, ts, ts),
+                 "agora_admin", secrets.token_urlsafe(32), ts, ts),
             )
             self.db.conn.execute(
                 "INSERT INTO agent_areas "
@@ -245,13 +280,12 @@ class AgoraStore:
     # ── users ──────────────────────────────────────────────────────────────
 
     def users(self) -> list[User]:
+        # Sin self-heal de tokens: la versión anterior re-inyectaba el literal
+        # "dev-admin-token" a jorge en cada lectura si su token estaba vacío —
+        # rotar el token a mano era imposible. Un admin sin token estático
+        # usa /api/login (JWT); el bearer es opt-in vía AGORA_ADMIN_TOKEN.
         rows = self.db.conn.execute("SELECT * FROM users WHERE active = 1 ORDER BY created_at").fetchall()
-        users = [_user_from_row(r) for r in rows]
-        for user in users:
-            if user.username == "jorge" and not user.token:
-                user.token = "dev-admin-token"
-                self.save_user(user)
-        return users
+        return [_user_from_row(r) for r in rows]
 
     def all_users(self) -> list[User]:
         rows = self.db.conn.execute("SELECT * FROM users ORDER BY created_at").fetchall()
