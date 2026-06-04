@@ -3,10 +3,10 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 VENV="${LAIA_VENV:-$HOME/LAIA/.laia-core/venv}"
 
-# Build frontend if it exists
+# Build frontend if it exists (pnpm is the LAIA convention)
 if [ -d "$SCRIPT_DIR/frontend" ]; then
   echo "Building frontend..."
-  cd "$SCRIPT_DIR/frontend" && npm run build
+  cd "$SCRIPT_DIR/frontend" && pnpm run build
   cd "$SCRIPT_DIR"
 fi
 

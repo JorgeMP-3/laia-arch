@@ -25,22 +25,24 @@ uses it** — users never reach ARCH (`LAIA_ECOSYSTEM.md`).
 ## Build (reproducible, supply-chain-checked)
 
 No Node on the host (host-minimal): build inside the dev VM `laia-dev` via
-`dev-run ui-arch build`, or manually on any trusted box:
+`dev-run ui-arch build`, or manually on any trusted box. **pnpm** is the LAIA
+convention (corepack ships it with Node 22):
 
 ```bash
 cd frontend
-npm ci --ignore-scripts   # lockfile sha512 integrity; no lifecycle scripts
-npm audit                 # must be 0 vulnerabilities
-npm run build             # -> frontend/dist (served by the backend)
+pnpm install --ignore-scripts --frozen-lockfile  # lock integrity; no lifecycle scripts
+pnpm audit                                       # must be 0 vulnerabilities
+pnpm run build                                   # -> frontend/dist (served by the backend)
 ```
 
-The committed `package-lock.json` pins every transitive dep by sha512. `dist/`
-is a build artifact (not committed); it is produced at build time and shipped
-to `/opt/laia/.laia-core/laia-ui-server/frontend/dist` on deploy.
+The committed `pnpm-lock.yaml` pins every transitive dep with integrity
+hashes. `dist/` is a build artifact (not committed); it is produced at build
+time and shipped to `/opt/laia/.laia-core/laia-ui-server/frontend/dist` on
+deploy.
 
-> History: the lockfile carried two phantom package names (`laia-parser`,
-> `laia-estree`) — collateral of the wholesale `hermes`→`laia` rename of the
-> fork, which pointed at non-existent npm packages (fail-safe, not an attack).
-> Restored to their real upstream names (`hermes-parser`, `hermes-estree`,
-> Babel deps) 2026-06-04, and `react-router` bumped 7.14.2→7.16.0 to clear a
-> DoS advisory (not reachable here — SPA, no SSR `__manifest`).
+> History (2026-06-04): the old npm lockfile carried two phantom package names
+> (`laia-parser`, `laia-estree`) — collateral of the wholesale `hermes`→`laia`
+> rename of the fork, pointing at non-existent npm packages (fail-safe, not an
+> attack). Replaced wholesale by a fresh pnpm resolution from package.json
+> (audit-clean, `react-router` 7.16.0 clearing a DoS advisory that was not
+> reachable here anyway — SPA, no SSR `__manifest`).
