@@ -6,15 +6,30 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
-User=${LAIA_USER}
-Group=${LAIA_USER}
+# Must run as root: /srv/laia/agora is drwx------ owned by the container uid
+# (1000999) — as ${LAIA_USER} the nightly run would go "green" WITHOUT agora.db
+# (problems.md: backup-timer-runs-as-laia-arch-cannot-read-agora).
+# Compensating sandbox below: the whole FS is read-only except the two paths
+# the job actually needs to write.
+User=root
+Group=root
 Environment=LAIA_ROOT=${LAIA_INSTALL_PREFIX}
 # Nightly full backup, then prune to the 14-day retention window.
 ExecStart=${LAIA_INSTALL_PREFIX}/infra/bin/laia-backup all
 ExecStart=${LAIA_INSTALL_PREFIX}/infra/bin/laia-backup clean 14
 Nice=10
 IOSchedulingClass=idle
-ProtectSystem=full
+ProtectSystem=strict
+ProtectHome=read-only
+# Destination for artifacts; '-' = don't fail namespace setup if missing
+# (the script then fails loudly on mkdir instead of a cryptic unit error).
+ReadWritePaths=-/mnt/data/laia-backups
+# sqlite3 .backup opens the LIVE DB and needs to take locks / touch -wal/-shm
+# next to it; without write access here the consistent-snapshot path breaks.
+ReadWritePaths=-/srv/laia/agora
+# NOTE (pitfall 2026-06-03): this sandbox breaks snap-confine. `all` never
+# invokes snaps, but if ExecStart is ever pointed at `laia-backup agents`
+# (lxc snapshots), relax ProtectSystem/NoNewPrivileges first.
 NoNewPrivileges=true
 StandardOutput=journal
 StandardError=journal
