@@ -162,14 +162,16 @@ refs:
   agora_api:
     type: service
     host: 127.0.0.1
-    port: 8088
+    port: 8000
     protocol: http
-    health_path: /health
-    description: "API REST de LAIA-AGORA (80+ endpoints, auth JWT)"
+    health_path: /api/health
+    optional: true
+    repair_hint: "el backend vive DENTRO del container: curl http://$(lxc list laia-agora -c4 --format csv | awk '{print $1}'):8000/api/health"
+    description: "API REST de LAIA-AGORA (auth JWT). Escucha en el container laia-agora:8000 — este check host-side solo ve localhost, por eso es optional (el 127.0.0.1:8088 anterior era topología pre-container)"
 
   executor_api:
     type: service
-    host: agent-jorge
+    host: agent-jorge-dev
     port: 9091
     protocol: http
     health_path: /health
@@ -227,10 +229,10 @@ refs:
 
   jorge_container:
     type: container
-    value: agent-jorge
+    value: agent-jorge-dev
     optional: true
-    repair_hint: "lxc start agent-jorge"
-    description: "Contenedor del PA-AGORA de Jorge"
+    repair_hint: "lxc start agent-jorge-dev"
+    description: "Contenedor del PA-AGORA de Jorge (slug real: jorge-dev)"
 
   # ── Sockets Unix ─────────────────────────────────────────────────────────
 
@@ -238,8 +240,8 @@ refs:
     type: socket
     value: ${ref.laia_home}/pathd.sock
     optional: true
-    repair_hint: "systemctl --user start laia-pathd"
-    description: "Socket JSON-RPC del daemon laia-pathd"
+    repair_hint: "sudo systemctl restart laia-pathd  (unit de sistema, no --user; tras el cutover v2 el socket converge aquí al reiniciar)"
+    description: "Socket JSON-RPC del daemon laia-pathd (target v2; hasta el primer restart post-cutover puede seguir en ~/LAIA-ARCH/pathd.sock)"
 
   # ── Ficheros de env (secrets) ─────────────────────────────────────────────
 
@@ -248,7 +250,6 @@ refs:
     path: /srv/laia/agora/.env
     optional: true
     keys:
-      - AGORA_JWT_SECRET
       - AGORA_DB_PATH
     repair_hint: "sudo install -d -m755 /srv/laia/agora && sudo touch /srv/laia/agora/.env && sudo chmod 600 /srv/laia/agora/.env"
-    description: "Secrets del backend AGORA (JWT, DB path — dentro del contenedor)"
+    description: "Env del backend AGORA (dentro del contenedor). AGORA_JWT_SECRET ya NO se exige aquí: el backend lo auto-persiste (env -> fichero -> generar; config.py) — definir el env var solo para rotación controlada"

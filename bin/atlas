@@ -2,7 +2,7 @@
 """atlas — LAIA reference registry control center.
 
 Usage:
-  atlas init [--force]            Bootstrap ~/.laia/atlas.yaml from template
+  atlas init [--force]            Bootstrap atlas.yaml (en el config home v2) from template
   atlas get <name>                 Resolve a reference
   atlas check <name>              Health check a single reference
   atlas list [--type T] [--json]  List all references
@@ -276,7 +276,7 @@ def _doctor_fix(results: dict, args: argparse.Namespace) -> None:
             continue
 
         # 3. No automated fix available
-        print(f"      {_C.DIM}no automated repair — edit ~/.laia/atlas.yaml "
+        print(f"      {_C.DIM}no automated repair — edit the active atlas.yaml "
               f"or add a repair_hint{_C.RST}")
 
 
@@ -343,7 +343,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     if n_warn:
         parts.append(f"{_C.YEL}{n_warn} optional offline{_C.RST}  ({', '.join(warn)})")
     print("\n".join(parts))
-    print(f"{_C.DIM}  Edit ~/.laia/atlas.yaml to fix values.{_C.RST}")
+    print(f"{_C.DIM}  Edit {_laia_config_home() / 'atlas.yaml'} to fix values.{_C.RST}")
     return 1
 
 
