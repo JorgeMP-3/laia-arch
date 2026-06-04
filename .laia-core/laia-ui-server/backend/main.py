@@ -2532,4 +2532,11 @@ if FRONTEND_DIST.exists():
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", "8077")))
+    # ARCH console is operator-only (LAIA_ECOSYSTEM: users never see ARCH).
+    # Default bind is loopback; reach it remotely via Tailscale on the host.
+    # The old 0.0.0.0 default exposed unauthenticated terminals to the LAN.
+    uvicorn.run(
+        app,
+        host=os.environ.get("LAIA_UI_HOST", "127.0.0.1"),
+        port=int(os.environ.get("PORT", "8077")),
+    )
