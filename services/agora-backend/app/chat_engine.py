@@ -210,7 +210,14 @@ async def chat_stream(
         from .storage import store as _store
         exceeded, reason = _store.budget_exceeded(user.id)
     except Exception:
-        exceeded, reason = False, None
+        # Fail-CLOSED: si el storage no puede responder, rechazamos el turno.
+        # El fallback anterior (exceeded=False) convertía un error de infra
+        # en gasto sin límite — un usuario pasado de budget seguía chateando
+        # mientras la DB tosiera. (Auditoría 2026-06-02.)
+        logger.exception("budget check failed for user %s — failing closed", user.id)
+        yield _sse({"type": "error", "code": "budget_check_failed",
+                    "message": "budget check unavailable — try again in a moment"})
+        return
     if exceeded:
         yield _sse({"type": "error", "code": "budget_exceeded",
                     "message": f"budget exceeded: {reason}"})
@@ -352,7 +359,13 @@ async def chat_stream(
                     )
                 )
             except Exception:
-                pass  # placeholder agents may not have these slots
+                # Los placeholder agents pueden no tener estos slots, pero si
+                # un agente REAL llega aquí sin ellos el usuario pierde el
+                # streaming y los tool events — que quede rastro en el log.
+                logger.warning(
+                    "chat_stream: callbacks de streaming no asignados para %s",
+                    slug, exc_info=True,
+                )
 
             try:
                 # Pass turn_task_id so the AIAgent uses ours (not a uuid it
