@@ -466,7 +466,7 @@ def execute(state) -> Iterator[ProgressEvent]:
             "rows": [
                 ("Health endpoint", "curl -fsS http://127.0.0.1:8088/api/health"),
                 ("Containers",      "lxc list"),
-                ("Smoke completo",  "sudo bash /opt/laia/tests/installer/vm-smoke.sh"),
+                ("Smoke completo",  "sudo bash /opt/laia/infra/dev/vm-smoke.sh"),
                 ("Admin creds",     "cat $LAIA_HOME/.admin-credentials"),
             ],
         },
