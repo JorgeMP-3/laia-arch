@@ -4837,6 +4837,19 @@ class AIAgent:
                 if user_block:
                     prompt_parts.append(user_block)
 
+        # Environment probe (ported from upstream Hermes tools/env_probe.py):
+        # one compact line about local Python tooling anomalies (PEP 668,
+        # pip/python mismatches, uv), so the agent does not waste turns on
+        # trial-and-error. Probe failures must never break prompt building.
+        if getattr(self, "_environment_probe", True):
+            try:
+                from tools.env_probe import get_environment_probe_line
+                _probe_line = get_environment_probe_line()
+                if _probe_line:
+                    prompt_parts.append(_probe_line)
+            except Exception:
+                pass
+
         # External memory provider system prompt block (additive to built-in)
         if self._memory_manager:
             try:
