@@ -35,8 +35,8 @@ iptables -C FORWARD -i "$OUT_IF" -o "$BRIDGE" -m conntrack --ctstate RELATED,EST
 
 echo "LAIA LXD egress rules applied."
 
-if command -v lxc >/dev/null 2>&1 && lxc info laia-jorge >/dev/null 2>&1; then
-  echo "Testing laia-jorge egress..."
-  lxc exec laia-jorge -- ping -c 1 -W 3 1.1.1.1
-  lxc exec laia-jorge -- curl -4 -I --max-time 8 http://ports.ubuntu.com/ubuntu-ports/dists/jammy/InRelease
+if command -v lxc >/dev/null 2>&1 && lxc info agent-jorge-dev >/dev/null 2>&1; then
+  echo "Testing agent-jorge-dev egress..."
+  lxc exec agent-jorge-dev -- ping -c 1 -W 3 1.1.1.1
+  lxc exec agent-jorge-dev -- curl -4 -I --max-time 8 http://ports.ubuntu.com/ubuntu-ports/dists/jammy/InRelease
 fi

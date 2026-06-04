@@ -3,6 +3,10 @@ set -euo pipefail
 # laia-backup: sistema de backups del servidor LAIA (D1, layout v2).
 # Alcance del backup nocturno (`all`): agora.db + /srv/laia/users + /srv/laia/arch.
 # Destino por defecto: /mnt/data/laia-backups (otro disco físico).
+#
+# Fail-loud contract: a missing, unreadable or empty artifact makes the command
+# exit non-zero so the systemd unit goes red instead of reporting a false green
+# (problems.md: backup-timer-runs-as-laia-arch-cannot-read-agora).
 
 BOLD="\e[1m"; GREEN="\e[32m"; RED="\e[31m"; CYAN="\e[36m"; DIM="\e[2m"; RESET="\e[0m"
 if [[ -z "${LAIA_ROOT:-}" ]]; then
@@ -13,6 +17,13 @@ fi
 BACKUP_DIR="${LAIA_BACKUP_DIR:-/mnt/data/laia-backups}"
 TIMESTAMP=$(date +%Y%m%d-%H%M%S)
 RETENTION_DEFAULT_DAYS=14
+
+# Artifacts can contain production secrets (arch/secrets inside arch_*.tar.gz):
+# never world-readable. New files 0600, backup dir kept 0700.
+umask 077
+
+# Set to 1 by any failed backup step; the script exits non-zero at the end.
+FAILED=0
 
 usage() {
     echo "uso: laia-backup <que>"
@@ -33,33 +44,69 @@ usage() {
 
 what="$1"; shift
 mkdir -p "$BACKUP_DIR"
+# Best effort: read-only subcommands may run as a user that does not own the dir.
+chmod 700 "$BACKUP_DIR" 2>/dev/null || true
 
 backup_agora() {
     echo -e "${BOLD}AGORA DB...${RESET}"
     local agora_db="${AGORA_DB:-${LAIA_AGORA_DIR_OVERRIDE:-/srv/laia/agora}/agora.db}"
-    if [[ -f "$agora_db" ]]; then
-        cp "$agora_db" "$BACKUP_DIR/agora_${TIMESTAMP}.db" && \
-            echo -e "  ${GREEN}OK${RESET} agora_${TIMESTAMP}.db ($(du -h "$BACKUP_DIR/agora_${TIMESTAMP}.db" | cut -f1))" || \
-            echo -e "  ${RED}FAIL${RESET}"
-    else
-        echo -e "  ${DIM}no encontrado: $agora_db${RESET}"
+    local out="$BACKUP_DIR/agora_${TIMESTAMP}.db"
+    if [[ ! -f "$agora_db" || ! -r "$agora_db" ]]; then
+        echo -e "  ${RED}FAIL${RESET} no encontrado o ilegible: $agora_db"
+        FAILED=1; return 0
     fi
+    if command -v sqlite3 >/dev/null 2>&1 && head -c 16 "$agora_db" 2>/dev/null | grep -q 'SQLite format 3'; then
+        # Live sqlite DB: use the online backup API for a consistent snapshot.
+        # A plain cp of a hot DB can yield a torn copy that only fails on restore.
+        if ! sqlite3 "$agora_db" ".backup '$out'"; then
+            echo -e "  ${RED}FAIL${RESET} sqlite .backup: $agora_db"
+            rm -f "$out"; FAILED=1; return 0
+        fi
+        local ic
+        ic="$(sqlite3 "$out" 'PRAGMA integrity_check;' 2>&1 | head -1)"
+        if [[ "$ic" != "ok" ]]; then
+            echo -e "  ${RED}FAIL${RESET} integrity_check: $ic"
+            rm -f "$out"; FAILED=1; return 0
+        fi
+    else
+        # Not a sqlite file (e.g. test fixture) or sqlite3 missing: plain copy.
+        echo -e "  ${DIM}copia plana (sqlite3 ausente u origen no-sqlite)${RESET}"
+        if ! cp "$agora_db" "$out"; then
+            echo -e "  ${RED}FAIL${RESET} cp: $agora_db"
+            FAILED=1; return 0
+        fi
+    fi
+    if [[ ! -s "$out" ]]; then
+        echo -e "  ${RED}FAIL${RESET} artefacto vacio: $out"
+        FAILED=1; return 0
+    fi
+    echo -e "  ${GREEN}OK${RESET} agora_${TIMESTAMP}.db ($(du -h "$out" | cut -f1))"
 }
 
 # _backup_tree <label> <src_dir> <prefix> — tar.gz a $prefix_<ts>.tar.gz (origen intacto).
 _backup_tree() {
     local label="$1" src="$2" prefix="$3"
     echo -e "${BOLD}${label}...${RESET}"
-    if [[ -d "$src" ]]; then
-        local out="$BACKUP_DIR/${prefix}_${TIMESTAMP}.tar.gz"
-        if tar -czf "$out" -C "$(dirname "$src")" "$(basename "$src")" 2>/dev/null; then
-            echo -e "  ${GREEN}OK${RESET} ${prefix}_${TIMESTAMP}.tar.gz ($(du -h "$out" | cut -f1))"
-        else
-            echo -e "  ${RED}FAIL${RESET} $src"
-        fi
-    else
-        echo -e "  ${DIM}no encontrado: $src${RESET}"
+    if [[ ! -d "$src" ]]; then
+        echo -e "  ${RED}FAIL${RESET} no encontrado: $src"
+        FAILED=1; return 0
     fi
+    local out="$BACKUP_DIR/${prefix}_${TIMESTAMP}.tar.gz"
+    local rc=0
+    tar -czf "$out" -C "$(dirname "$src")" "$(basename "$src")" || rc=$?
+    # tar exit 1 = "file changed as we read it" (live tree): artifact is still
+    # complete enough for a nightly snapshot — warn, don't fail. >=2 is fatal.
+    if [[ "$rc" -ge 2 ]]; then
+        echo -e "  ${RED}FAIL${RESET} tar (exit $rc): $src"
+        rm -f "$out"; FAILED=1; return 0
+    elif [[ "$rc" -eq 1 ]]; then
+        echo -e "  ${DIM}aviso: ficheros cambiaron durante el tar (arbol vivo)${RESET}"
+    fi
+    if [[ ! -s "$out" ]]; then
+        echo -e "  ${RED}FAIL${RESET} artefacto vacio: $out"
+        FAILED=1; return 0
+    fi
+    echo -e "  ${GREEN}OK${RESET} ${prefix}_${TIMESTAMP}.tar.gz ($(du -h "$out" | cut -f1))"
 }
 
 backup_users() { _backup_tree "Usuarios"     "${LAIA_USERS_DIR_OVERRIDE:-/srv/laia/users}" "users"; }
@@ -122,9 +169,16 @@ case "$what" in
         backup_agora
         backup_users
         backup_arch
-        echo -e "\n${GREEN}Backups en: $BACKUP_DIR${RESET}"
+        if [[ "$FAILED" -ne 0 ]]; then
+            echo -e "\n${RED}BACKUP INCOMPLETO${RESET} — revisa los FAIL de arriba"
+        else
+            echo -e "\n${GREEN}Backups en: $BACKUP_DIR${RESET}"
+        fi
         ;;
     list)       list_backups ;;
     clean)      clean_backups "${1:-$RETENTION_DEFAULT_DAYS}" ;;
     *)          usage ;;
 esac
+
+# Fail-loud: any failed step above turns the whole run (and the systemd unit) red.
+[[ "$FAILED" -eq 0 ]] || exit 1
