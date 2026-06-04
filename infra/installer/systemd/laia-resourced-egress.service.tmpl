@@ -1,0 +1,13 @@
+[Unit]
+Description=LAIA LXD egress re-apply (NAT+FORWARD for lxdbr0 at boot)
+Documentation=file://${LAIA_INSTALL_PREFIX}/infra/resourced/README.md
+After=network-online.target snap.lxd.daemon.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=${LAIA_INSTALL_PREFIX}/infra/lxd/scripts/fix-egress-root.sh
+
+[Install]
+WantedBy=multi-user.target
