@@ -38,10 +38,10 @@ jobs:
       run:
         working-directory: services/agora-backend
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
 
       - name: Setup Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
@@ -76,7 +76,7 @@ jobs:
     name: Installer shell tests (host-free)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
       - name: Run host-free installer suite
         # INSTALLER_SKIP excluye el test que NO es host-free en un runner pelado
         # (pasan en local sólo por artefactos del host de dev). Se imprimen como
@@ -100,9 +100,9 @@ jobs:
     name: Integrity suite (CI profile)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5
         with:
           python-version: '3.11'
       - name: Run integrity runner (profile ci)
@@ -113,11 +113,26 @@ jobs:
         run: tests/integration/run_integrity.sh --profile ci --json integrity-ci.json
       - name: Upload integrity report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
         with:
           name: integrity-ci-report
           path: integrity-ci.json
           if-no-files-found: warn
+
+
+  # ── Doctrine gates (supply-chain + anti-secretos) ───────────────────────────
+  # Reglas verificables de la doctrina (~/laia-developers/AGENTS.md §Reglas de
+  # diseño, adoptadas de Hermes 2026-06-02): deps con techo, actions por SHA,
+  # sin secretos trackeados. Grep-based: corren en segundos.
+  doctrine-gates:
+    name: Doctrine gates (supply-chain, no-secrets)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+      - name: Supply-chain (deps con techo + actions por SHA)
+        run: scripts/check-supply-chain.sh
+      - name: Anti-secretos (archivos trackeados)
+        run: scripts/check-no-secrets.sh
 
   # ── Matriz de SKIP (no silent cap) ──────────────────────────────────────────
   # No corre tests: documenta en el propio run de CI qué suites quedan FUERA y
@@ -126,7 +141,7 @@ jobs:
     name: Coverage matrix (documented skips)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
       - name: Print run/skip matrix
         run: |
           echo "::notice title=CI corre::backend pytest (services/agora-backend, py3.11 + py3.14, LAIA_ROOT=checkout) + tests/installer/run_all.sh (shell/stubs, menos 1 excluido) + tests/integration/run_integrity.sh --profile ci (D2-ci, backup fixture, gate T-DOC)"
