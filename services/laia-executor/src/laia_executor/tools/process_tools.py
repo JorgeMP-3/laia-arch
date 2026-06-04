@@ -177,6 +177,12 @@ def process_start(
         log_fh.close()
         return json.dumps({"ok": False, "error": f"spawn failed: {exc}"})
 
+    # Popen dup'd the descriptor into the child: the child writes through
+    # its OWN fd, so the parent's copy is dead weight. Close it now —
+    # keeping it open leaked one fd per process_start until the executor
+    # hit `ulimit -n` and died (audit 2026-06-02, executor-log-fh-fd-leak).
+    log_fh.close()
+
     entry = {
         "name": final_name,
         "command": command,
@@ -187,14 +193,11 @@ def process_start(
         "returncode": None,
         "log_path": str(log_path),
         "popen": popen,
-        # Keep the fh; closing it now would lose buffered stdout. The OS
-        # will free it when the child exits and we close on cleanup.
-        "_log_fh": log_fh,
     }
     with _processes_lock:
         _processes[final_name] = entry
 
-    # Don't include the Popen / fh in the JSON response.
+    # Don't include the Popen handle in the JSON response.
     public = {k: v for k, v in entry.items() if not k.startswith("_") and k != "popen"}
     return json.dumps({"ok": True, "process": public}, ensure_ascii=False, default=str)
 
@@ -273,10 +276,6 @@ def _reset_for_tests() -> None:
         for entry in _processes.values():
             try:
                 entry["popen"].kill()
-            except Exception:
-                pass
-            try:
-                entry["_log_fh"].close()
             except Exception:
                 pass
         _processes.clear()
