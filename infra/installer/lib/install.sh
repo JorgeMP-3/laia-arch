@@ -344,7 +344,10 @@ inst_create_venvs() {
   if [[ -d "$INST_DEST/.laia-core" ]]; then
     emit_json_event step_start install:pip-core "Python deps: core venv"
     _inst_create_venv_at "$venv_core" "core"
-    _inst_pip_install_pkg "$venv_core" "$INST_DEST/.laia-core" ""
+    # install_wizard extra: ships Textual so `laia wizard/diagnose/setup`
+    # get the full TUI instead of the minimal fallback (the bare install
+    # left the venv without textual — laia-diagnose-v020-degradado).
+    _inst_pip_install_pkg "$venv_core" "$INST_DEST/.laia-core" "install_wizard"
     emit_json_event step_done install:pip-core "Python deps: core ready"
   else
     log_warn "$INST_DEST/.laia-core not found, skipping core venv"

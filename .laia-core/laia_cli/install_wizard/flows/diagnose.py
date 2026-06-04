@@ -209,7 +209,12 @@ def _write_diagnostic_bundle(root: Path) -> Path:
 
 def execute(_state) -> Iterator[ProgressEvent]:
     root = repo_root()
-    vm_smoke = root / "tests" / "installer" / "vm-smoke.sh"
+    # vm-smoke.sh lives in infra/dev/ since 2026-06-04 (so it ships inside
+    # the installed tree); fall back to its legacy tests/ path for older
+    # checkouts/installs.
+    vm_smoke = root / "infra" / "dev" / "vm-smoke.sh"
+    if not vm_smoke.is_file():
+        vm_smoke = root / "tests" / "installer" / "vm-smoke.sh"
     preflight = root / "infra" / "dev" / "preflight.sh"
 
     for label, path in (("vm-smoke", vm_smoke), ("preflight", preflight)):
