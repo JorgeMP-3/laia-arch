@@ -16,6 +16,14 @@
 **Canónico (visión): `LAIA_ECOSYSTEM.md`** (este repo) — **no se edita sin Jorge.**
 ANTES DE HACER NADA EN LAIA, léelo (o el resumen: `~/laia-developers/LAIA_ECOSYSTEM-primer.md`).
 
+**Proveniencia del core**: `.laia-core/` (el runtime del agente) es un fork de **Hermes Agent
+v0.11.0** (Nous Research, MIT — `github.com/NousResearch/hermes-agent`), renombrado en masa
+`hermes`→`laia` (~1.350 refs). **NO es un fork git**: no hay remote upstream; el código
+original quedó en `origin/archive/hermes-upstream`. Upstream sigue muy activo (v0.12+) →
+integrar mejoras suyas = **cherry-pick adaptado, nunca merge ciego** (estrategia:
+`.plans/PLAN_SYNC_UPSTREAM_HERMES_v0.14.md`). El install viejo de prod (`/opt/laia-v0.11.0`)
+se llama "era-Hermes" por esto.
+
 ## Tracker e historia de LAIA → `~/laia-developers/workflow-main/`
 
 - Bugs → `PROBLEMS.md` · Planes/PRDs → `plans/` · Bitácora → `CHANGELOG.md` · Seguridad →
