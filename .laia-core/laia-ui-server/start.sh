@@ -16,4 +16,5 @@ echo "Swagger docs:          http://localhost:8077/docs"
 echo ""
 
 cd "$SCRIPT_DIR/backend"
-"$VENV/bin/uvicorn" main:app --host 0.0.0.0 --port 8077 --reload
+# Loopback only — operator console, never exposed (see backend/main.py).
+"$VENV/bin/uvicorn" main:app --host "${LAIA_UI_HOST:-127.0.0.1}" --port 8077 --reload
