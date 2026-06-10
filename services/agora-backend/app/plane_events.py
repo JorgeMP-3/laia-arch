@@ -55,6 +55,14 @@ async def receive_plane_event(
     request: Request,
     authorization: str | None = Header(default=None),
 ) -> dict[str, Any]:
+    """Intake for Plane→AGORA events forwarded by the satellite bridge.
+
+    Authenticates a static Bearer token (constant-time compare) read from a
+    0600 file; returns 503 when the token is not provisioned (fail-closed,
+    never an open door), 401/403 on a missing/invalid token, and 413 when the
+    body exceeds the size cap. On success it records an ``Event(plane_event)``
+    and returns 202 — it never touches the agent engine directly.
+    """
     expected = _expected_token()
     if expected is None:
         # Provisioning gap is an operator problem, never an open door.
