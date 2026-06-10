@@ -1,0 +1,18 @@
+name: agora-plane-forwarder
+version: 0.1.0
+description: |
+  AGORA -> Plane outbound glue (S6 hybrid, approved 2026-06-10). Registers
+  the four `plane_*` tools so the orchestrator's LLM can act on the Doyouwin
+  Plane instance (create work items, comment, move state, attach links).
+  Thin by design: the REST contract lives in the satellite package
+  `laia_plane_bridge` (PlaneClient) — this plugin only adapts it to the tool
+  registry. Talks to Plane over the LXD bridge, never through the public edge.
+  Tools stay registered but fail with a clear error until the bot token is
+  provisioned at /etc/laia/plane-api-key (HITL).
+author: "workflow-DywDesign (S6 hybrid)"
+kind: backend
+provides_tools:
+  - plane_create_work_item
+  - plane_comment
+  - plane_update_state
+  - plane_attach

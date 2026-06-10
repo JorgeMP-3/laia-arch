@@ -83,3 +83,10 @@ hermes-agent
 !.laia-core/
 .laia-core/*
 !.laia-core/cron/
+# Re-include the agora-plane-forwarder plugin (product code, S6): tracked
+# plugins otherwise need `git add -f` and NEW files get silently swallowed
+# (same scar as the cron package above).
+!.laia-core/plugins/
+.laia-core/plugins/*
+!.laia-core/plugins/agora-plane-forwarder/
+.laia-core/plugins/agora-plane-forwarder/__pycache__/

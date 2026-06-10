@@ -303,11 +303,13 @@ from .admin import router as admin_router
 from .marketplace import router as marketplace_router
 from .webhooks import router as webhooks_router
 from .laia_chat import router as laia_chat_router
+from .plane_events import router as plane_events_router
 
 app.include_router(admin_router)
 app.include_router(marketplace_router)
 app.include_router(webhooks_router)
 app.include_router(laia_chat_router)
+app.include_router(plane_events_router)
 
 
 @app.middleware("http")
