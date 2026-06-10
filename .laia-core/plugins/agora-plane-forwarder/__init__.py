@@ -71,5 +71,6 @@ def register(ctx) -> None:
             schema=schema,
             handler=handler,
             check_fn=check_plane_available,
+            is_async=True,
             emoji=emoji,
         )
