@@ -2,8 +2,10 @@
 
 Four thin handlers over the satellite's ``laia_plane_bridge.client.PlaneClient``
 (the single source of truth for Plane's REST contract — S6 §3.1). Handlers are
-sync (tool-registry convention) and wrap the async client with ``asyncio.run``;
-every call emits one audit line on ``agora.plane.audit``.
+async and registered ``is_async=True``; the registry dispatches them as
+``entry.handler(args, **kwargs)`` and bridges to the sync path via
+``model_tools._run_async`` (same pattern as ``vision_analyze``), so there is no
+nested ``asyncio.run``. Every call emits one audit line on ``agora.plane.audit``.
 
 Config (read per call, so ops changes need no restart):
 - ``LAIA_PLANE_BASE_URL``   default ``http://10.99.0.56:80`` (LXD bridge — never the edge)
@@ -17,7 +19,6 @@ Until the token/package are provisioned the tools answer with a structured
 
 from __future__ import annotations
 
-import asyncio
 import json as _json
 import logging
 import os
@@ -97,19 +98,18 @@ def _make_client():
 _client_factory = _make_client
 
 
-def _call(tool: str, op_name: str, op, **audit_fields: Any) -> str:
-    """Run one async client op from a sync handler, with audit + errors."""
+async def _call(tool: str, op_name: str, op, **audit_fields: Any) -> str:
+    """Run one async client op, with audit + errors. Awaited by the registry
+    (``is_async=True``) — never spins its own event loop (would crash under the
+    gateway's running loop)."""
     if not check_plane_available():
         reason = _unavailable_reason()
         _audit.info("plane_tool tool=%s status=unavailable reason=%s", tool, reason)
         return tool_error(reason)
 
-    async def _run() -> Any:
-        async with _client_factory() as client:
-            return await op(client)
-
     try:
-        out = asyncio.run(_run())
+        async with _client_factory() as client:
+            out = await op(client)
     except PlaneClientError as exc:
         _audit.info("plane_tool tool=%s op=%s status=error err=%s",
                     tool, op_name, exc)
@@ -127,45 +127,52 @@ def _call(tool: str, op_name: str, op, **audit_fields: Any) -> str:
 
 # ── handlers ─────────────────────────────────────────────────────────────────
 
-def handle_plane_create_work_item(project_id: str = "", name: str = "",
-                                  description_html: str | None = None,
-                                  **_: Any) -> str:
+async def handle_plane_create_work_item(args: dict, **_: Any) -> str:
+    project_id = args.get("project_id", "")
+    name = args.get("name", "")
     if not project_id or not name:
         return tool_error("project_id and name are required")
-    return _call(
+    description_html = args.get("description_html")
+    return await _call(
         "plane_create_work_item", "create",
         lambda c: c.create_work_item(project_id, name,
                                      description_html=description_html),
         project=project_id)
 
 
-def handle_plane_comment(project_id: str = "", work_item_id: str = "",
-                         comment_html: str = "", **_: Any) -> str:
+async def handle_plane_comment(args: dict, **_: Any) -> str:
+    project_id = args.get("project_id", "")
+    work_item_id = args.get("work_item_id", "")
+    comment_html = args.get("comment_html", "")
     if not project_id or not work_item_id or not comment_html:
         return tool_error("project_id, work_item_id and comment_html are required")
-    return _call(
+    return await _call(
         "plane_comment", "comment",
         lambda c: c.add_comment(project_id, work_item_id, comment_html),
         project=project_id, work_item=work_item_id)
 
 
-def handle_plane_update_state(project_id: str = "", work_item_id: str = "",
-                              state_id: str = "", **_: Any) -> str:
+async def handle_plane_update_state(args: dict, **_: Any) -> str:
+    project_id = args.get("project_id", "")
+    work_item_id = args.get("work_item_id", "")
+    state_id = args.get("state_id", "")
     if not project_id or not work_item_id or not state_id:
         return tool_error("project_id, work_item_id and state_id are required")
-    return _call(
+    return await _call(
         "plane_update_state", "update",
         lambda c: c.update_work_item(project_id, work_item_id,
                                      {"state": state_id}),
         project=project_id, work_item=work_item_id, state=state_id)
 
 
-def handle_plane_attach(project_id: str = "", work_item_id: str = "",
-                        url: str = "", title: str | None = None,
-                        **_: Any) -> str:
+async def handle_plane_attach(args: dict, **_: Any) -> str:
+    project_id = args.get("project_id", "")
+    work_item_id = args.get("work_item_id", "")
+    url = args.get("url", "")
     if not project_id or not work_item_id or not url:
         return tool_error("project_id, work_item_id and url are required")
-    return _call(
+    title = args.get("title")
+    return await _call(
         "plane_attach", "attach",
         lambda c: c.add_link(project_id, work_item_id, url, title=title),
         project=project_id, work_item=work_item_id)

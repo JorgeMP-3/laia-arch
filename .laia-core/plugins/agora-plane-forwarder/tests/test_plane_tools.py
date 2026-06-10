@@ -82,12 +82,28 @@ def _load_tools(monkeypatch, tmp_path, *, with_bridge=True, token="tok-123"):
     return mod
 
 
+def _dispatch(handler, **fields):
+    """Invoke a handler exactly as ``tools.registry.dispatch`` does: the args
+    dict as a SINGLE positional (not kwargs) and the returned coroutine driven
+    to completion (handlers are async, registered ``is_async=True``).
+
+    Calling with kwargs — as the prior tests did — bypassed this contract and
+    hid B1 (the dict bound to ``project_id`` in prod). Tests = contracts (§7).
+    """
+    import asyncio
+    import inspect
+    result = handler(fields)
+    if inspect.iscoroutine(result):
+        return asyncio.run(result)
+    return result
+
+
 # ── availability gating ───────────────────────────────────────────────────────
 
 def test_unavailable_without_token(monkeypatch, tmp_path):
     mod = _load_tools(monkeypatch, tmp_path, token=None)
     assert mod.check_plane_available() is False
-    out = json.loads(mod.handle_plane_comment(
+    out = json.loads(_dispatch(mod.handle_plane_comment,
         project_id="p", work_item_id="w", comment_html="<p>x</p>"))
     assert "token" in out["error"]
 
@@ -95,7 +111,7 @@ def test_unavailable_without_token(monkeypatch, tmp_path):
 def test_unavailable_without_bridge_package(monkeypatch, tmp_path):
     mod = _load_tools(monkeypatch, tmp_path, with_bridge=False)
     assert mod.check_plane_available() is False
-    out = json.loads(mod.handle_plane_attach(
+    out = json.loads(_dispatch(mod.handle_plane_attach,
         project_id="p", work_item_id="w", url="https://x"))
     assert "laia_plane_bridge" in out["error"]
 
@@ -110,23 +126,23 @@ def test_unavailable_without_workspace(monkeypatch, tmp_path):
 
 def test_create_work_item_calls_client(monkeypatch, tmp_path):
     mod = _load_tools(monkeypatch, tmp_path)
-    out = json.loads(mod.handle_plane_create_work_item(
+    out = json.loads(_dispatch(mod.handle_plane_create_work_item,
         project_id="proj-1", name="Campaña"))
     assert out["id"] == "wi_new"
 
 
 def test_update_state_patches_state(monkeypatch, tmp_path):
     mod = _load_tools(monkeypatch, tmp_path)
-    out = json.loads(mod.handle_plane_update_state(
+    out = json.loads(_dispatch(mod.handle_plane_update_state,
         project_id="proj-1", work_item_id="wi-1", state_id="st-9"))
     assert out["state"] == "st-9"
 
 
 def test_attach_and_comment(monkeypatch, tmp_path):
     mod = _load_tools(monkeypatch, tmp_path)
-    assert "error" not in json.loads(mod.handle_plane_attach(
+    assert "error" not in json.loads(_dispatch(mod.handle_plane_attach,
         project_id="p", work_item_id="w", url="https://r/x.png", title="render"))
-    assert "error" not in json.loads(mod.handle_plane_comment(
+    assert "error" not in json.loads(_dispatch(mod.handle_plane_comment,
         project_id="p", work_item_id="w", comment_html="<p>ok</p>"))
 
 
@@ -134,8 +150,8 @@ def test_attach_and_comment(monkeypatch, tmp_path):
 
 def test_missing_required_args_is_tool_error(monkeypatch, tmp_path):
     mod = _load_tools(monkeypatch, tmp_path)
-    assert "required" in json.loads(mod.handle_plane_create_work_item())["error"]
-    assert "required" in json.loads(mod.handle_plane_update_state(
+    assert "required" in json.loads(_dispatch(mod.handle_plane_create_work_item))["error"]
+    assert "required" in json.loads(_dispatch(mod.handle_plane_update_state,
         project_id="p", work_item_id="w"))["error"]
 
 
@@ -156,7 +172,7 @@ def test_plane_client_error_becomes_tool_error(monkeypatch, tmp_path):
             raise err("auth failed (401)")
 
     monkeypatch.setattr(mod, "_client_factory", lambda: Boom())
-    out = json.loads(mod.handle_plane_comment(
+    out = json.loads(_dispatch(mod.handle_plane_comment,
         project_id="p", work_item_id="w", comment_html="<p>x</p>"))
     assert "Plane API error" in out["error"]
 
@@ -195,3 +211,69 @@ def test_plugin_register_binds_four_tools(monkeypatch, tmp_path):
         "plane_create_work_item", "plane_comment",
         "plane_update_state", "plane_attach"}
     assert all(r["toolset"] == "plane" for r in registered)
+    # is_async MUST be set: the dispatcher only awaits the coroutine when the
+    # entry is async; without this the handler returns an un-awaited coroutine.
+    assert all(r["is_async"] is True for r in registered)
+
+
+def test_dispatch_via_real_registry(monkeypatch, tmp_path):
+    """End-to-end regression for B1+D1: register into a real ToolRegistry and
+    drive the tools through ``registry.dispatch`` — the exact path prod uses
+    (``entry.handler(args, **kwargs)`` + ``_run_async`` for async entries).
+
+    Catches the original bug: handlers took named params, so the dispatcher's
+    single positional ``args`` dict bound to ``project_id`` and every call
+    failed. Skips cleanly when run outside ``.laia-core`` (no real registry).
+    """
+    import pytest
+
+    # The official suite collects only ``.laia-core/tests`` (testpaths); this
+    # plugin test is run by path, so pytest prepends the plugin dir — which
+    # ships its own ``tools.py`` and would shadow the real ``tools`` package.
+    # Put the ``.laia-core`` root first (prod's import root, the way
+    # ``laia_cli.plugins`` loads us) so ``from tools.registry`` resolves to the
+    # package and evict any plugin-dir ``tools`` shadow already imported.
+    laia_core = PLUGIN_DIR.parent.parent
+    if not (laia_core / "tools" / "registry.py").exists():
+        pytest.skip("not running inside a .laia-core checkout (no real registry)")
+    if sys.path[:1] != [str(laia_core)]:
+        sys.path.insert(0, str(laia_core))
+    shadow = sys.modules.get("tools")
+    if shadow is not None and not hasattr(shadow, "__path__"):
+        del sys.modules["tools"]  # plugin-dir tools.py shadow, not the package
+
+    try:
+        from tools.registry import ToolRegistry  # noqa: F401
+        import model_tools  # noqa: F401  (dispatch's async bridge)
+    except Exception:
+        pytest.skip("real tools.registry / model_tools unavailable (run inside .laia-core)")
+
+    _load_tools(monkeypatch, tmp_path)  # stubs + tools module on sys.path
+
+    plugin_init = PLUGIN_DIR / "__init__.py"
+    spec = importlib.util.spec_from_file_location("agora_plane_forwarder", plugin_init)
+    plug = importlib.util.module_from_spec(spec)
+    sys.modules["agora_plane_forwarder"] = plug
+    spec.loader.exec_module(plug)
+
+    from tools.registry import ToolRegistry
+    reg = ToolRegistry()  # fresh instance — no global pollution
+
+    class Ctx:
+        def register_tool(self, **kw):
+            reg.register(**kw)
+
+    plug.register(Ctx())
+
+    out = json.loads(reg.dispatch(
+        "plane_create_work_item", {"project_id": "proj-1", "name": "Campaña"}))
+    assert out["id"] == "wi_new"  # dict reached the client, not bound to project_id
+
+    out = json.loads(reg.dispatch(
+        "plane_update_state",
+        {"project_id": "p", "work_item_id": "w", "state_id": "st-9"}))
+    assert out["state"] == "st-9"
+
+    # missing required args still surfaces a clean tool_error via the dispatcher
+    err = json.loads(reg.dispatch("plane_comment", {"project_id": "p"}))
+    assert "required" in err["error"]
