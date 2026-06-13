@@ -1,0 +1,28 @@
+# Edge gateway de LAIA — Caddy en el LXC laia-edge (HTTP plano; TLS lo pone Cloudflare).
+# cloudflared envía TODO el tráfico del túnel a este Caddy (localhost:80); Caddy enruta por Host.
+{
+	auto_https off
+	admin off
+}
+
+# --- Odoo (la app se sirve sola) → solo proxy ---
+http://odoo.laiajmp.org {
+	reverse_proxy 10.99.0.50:8069
+}
+
+# --- Raíz → UI de AGORA (SPA estática) + /api proxiado al backend de AGORA ---
+http://laiajmp.org {
+	handle /api/* {
+		reverse_proxy 10.99.0.199:8000
+	}
+	handle {
+		root * /srv/web/sites/agora
+		try_files {path} /index.html
+		file_server
+	}
+}
+
+# --- host desconocido → 404 ---
+:80 {
+	respond "not found" 404
+}
